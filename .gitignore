@@ -48,3 +48,9 @@ temp/
 # Local databases
 *.db
 *.sqlite3
+
+# All local data (only data/README.md is tracked)
+data/*
+!data/README.md
+*.parquet
+.ipynb_checkpoints/

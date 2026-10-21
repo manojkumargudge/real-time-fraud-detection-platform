@@ -1,0 +1,5 @@
+# Needed only to run notebooks/01_eda.ipynb (not installed yet).
+-r requirements.txt
+ipykernel==6.29.5
+jupyterlab==4.3.5
+matplotlib==3.9.4

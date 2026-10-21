@@ -1,0 +1,27 @@
+[project]
+name = "fraud-platform"
+version = "0.1.0"
+description = "Real-time financial fraud detection platform (AIML-01)"
+requires-python = ">=3.11,<3.12"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["notebooks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "PD"]
+ignore = ["PD901"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+markers = [
+    "real_data: requires the IEEE-CIS dataset under data/raw/ieee-cis (skipped if absent)",
+]

@@ -1,0 +1,234 @@
+{
+  "dataset": "IEEE-CIS train",
+  "merge_integrity": {
+    "transaction_rows": 590540,
+    "identity_rows": 144233,
+    "merged_rows": 590540,
+    "row_count_preserved": true,
+    "transaction_ids_unique": true,
+    "identity_rows_matched": 144233,
+    "identity_rows_orphaned": 0,
+    "transaction_dt_sorted": true
+  },
+  "overview": {
+    "rows": 590540,
+    "columns": 435,
+    "memory_mb_optimized_dtypes": 1536.2
+  },
+  "class_balance": {
+    "fraud_count": 20663,
+    "legit_count": 569877,
+    "fraud_rate": 0.03499,
+    "neg_pos_ratio": 27.58
+  },
+  "identity_coverage": {
+    "has_identity_rate": 0.2442,
+    "fraud_rate_with_identity": 0.07847,
+    "fraud_rate_without_identity": 0.02094
+  },
+  "transaction_dt": {
+    "min_seconds": 86400,
+    "max_seconds": 15811131,
+    "span_days": 182.0,
+    "distinct_days": 182,
+    "daily_transactions": {
+      "min": 2048,
+      "median": 3049.5,
+      "max": 6852
+    },
+    "daily_fraud_rate": {
+      "min": 0.01097,
+      "median": 0.03564,
+      "max": 0.06994
+    },
+    "fraud_rate_by_30_day_block": {
+      "0": {
+        "rows": 134339,
+        "fraud_rate": 0.02532
+      },
+      "1": {
+        "rows": 89399,
+        "fraud_rate": 0.04001
+      },
+      "2": {
+        "rows": 92189,
+        "fraud_rate": 0.0404
+      },
+      "3": {
+        "rows": 98615,
+        "fraud_rate": 0.03953
+      },
+      "4": {
+        "rows": 83571,
+        "fraud_rate": 0.0341
+      },
+      "5": {
+        "rows": 86934,
+        "fraud_rate": 0.03419
+      },
+      "6": {
+        "rows": 5493,
+        "fraud_rate": 0.04387
+      }
+    }
+  },
+  "missingness": {
+    "columns_with_no_missing": 21,
+    "columns_over_50pct_missing": 214,
+    "columns_over_90pct_missing": 12,
+    "top_10_missing": {
+      "id_24": 0.992,
+      "id_25": 0.9913,
+      "id_07": 0.9913,
+      "id_08": 0.9913,
+      "id_21": 0.9913,
+      "id_26": 0.9913,
+      "id_22": 0.9912,
+      "id_23": 0.9912,
+      "id_27": 0.9912,
+      "dist2": 0.9363
+    },
+    "mean_missing_by_family": {
+      "C": {
+        "columns": 14,
+        "mean_missing": 0.0
+      },
+      "has_identity": {
+        "columns": 1,
+        "mean_missing": 0.0
+      },
+      "TransactionID": {
+        "columns": 1,
+        "mean_missing": 0.0
+      },
+      "TransactionDT": {
+        "columns": 1,
+        "mean_missing": 0.0
+      },
+      "ProductCD": {
+        "columns": 1,
+        "mean_missing": 0.0
+      },
+      "TransactionAmt": {
+        "columns": 1,
+        "mean_missing": 0.0
+      },
+      "isFraud": {
+        "columns": 1,
+        "mean_missing": 0.0
+      },
+      "card": {
+        "columns": 6,
+        "mean_missing": 0.0051
+      },
+      "addr": {
+        "columns": 2,
+        "mean_missing": 0.1113
+      },
+      "P_emaildomain": {
+        "columns": 1,
+        "mean_missing": 0.1599
+      },
+      "V": {
+        "columns": 339,
+        "mean_missing": 0.4304
+      },
+      "M": {
+        "columns": 9,
+        "mean_missing": 0.4992
+      },
+      "D": {
+        "columns": 15,
+        "mean_missing": 0.5815
+      },
+      "DeviceType": {
+        "columns": 1,
+        "mean_missing": 0.7616
+      },
+      "dist": {
+        "columns": 2,
+        "mean_missing": 0.7664
+      },
+      "R_emaildomain": {
+        "columns": 1,
+        "mean_missing": 0.7675
+      },
+      "DeviceInfo": {
+        "columns": 1,
+        "mean_missing": 0.7991
+      },
+      "id": {
+        "columns": 38,
+        "mean_missing": 0.8482
+      }
+    },
+    "key_column_missing_by_class": {
+      "card2": {
+        "legit": 0.0149,
+        "fraud": 0.0205
+      },
+      "addr1": {
+        "legit": 0.1017,
+        "fraud": 0.3746
+      },
+      "dist1": {
+        "legit": 0.5902,
+        "fraud": 0.7699
+      },
+      "P_emaildomain": {
+        "legit": 0.1609,
+        "fraud": 0.135
+      },
+      "R_emaildomain": {
+        "legit": 0.7788,
+        "fraud": 0.4567
+      },
+      "DeviceInfo": {
+        "legit": 0.8069,
+        "fraud": 0.5835
+      },
+      "D1": {
+        "legit": 0.0021,
+        "fraud": 0.0022
+      }
+    }
+  },
+  "feature_availability": {
+    "transaction_velocity": {
+      "all_present_rate": 1.0,
+      "any_present_rate": 1.0
+    },
+    "amount_vs_user_average": {
+      "all_present_rate": 0.8887,
+      "any_present_rate": 1.0
+    },
+    "device_change": {
+      "all_present_rate": 0.2009,
+      "any_present_rate": 0.2385
+    },
+    "location_change": {
+      "all_present_rate": 0.4033,
+      "any_present_rate": 0.8889
+    },
+    "email_domain_risk": {
+      "all_present_rate": 0.2137,
+      "any_present_rate": 0.8588
+    },
+    "graph_entities": {
+      "all_present_rate": 0.1163,
+      "any_present_rate": 1.0
+    }
+  },
+  "transaction_amount_by_class": {
+    "legit": {
+      "p50": 68.5,
+      "p95": 435.0,
+      "p99": 1104.0
+    },
+    "fraud": {
+      "p50": 75.0,
+      "p95": 500.0,
+      "p99": 994.0
+    }
+  }
+}
