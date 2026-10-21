@@ -118,6 +118,16 @@ def day_block_bootstrap_ap_delta(
         ap_a = average_precision(y[idx], scores_a[idx])
         deltas.append(average_precision(y[idx], scores_b[idx]) - ap_a)
     d = np.asarray(deltas)
+    if not len(d):  # resamples=0, or every resample lacked a positive
+        nan = float("nan")
+        return {
+            "resamples": 0,
+            "days": len(days),
+            "delta_mean": nan,
+            "ci95_low": nan,
+            "ci95_high": nan,
+            "share_b_better": nan,
+        }
     return {
         "resamples": len(d),
         "days": len(days),
@@ -125,4 +135,26 @@ def day_block_bootstrap_ap_delta(
         "ci95_low": float(np.quantile(d, 0.025)),
         "ci95_high": float(np.quantile(d, 0.975)),
         "share_b_better": float((d > 0).mean()),
+    }
+
+
+def day_block_bootstrap_ap(
+    y: np.ndarray, scores: np.ndarray, day: np.ndarray, *, resamples: int, seed: int
+) -> dict[str, float | int]:
+    """95% interval for AP, resampling whole days. Resamples without positives are skipped."""
+    days, inverse = np.unique(day, return_inverse=True)
+    members = [np.flatnonzero(inverse == i) for i in range(len(days))]
+    rng = np.random.default_rng(seed)
+    aps = []
+    for _ in range(resamples):
+        idx = np.concatenate([members[i] for i in rng.integers(0, len(days), len(days))])
+        if y[idx].sum() == 0:
+            continue
+        aps.append(average_precision(y[idx], scores[idx]))
+    a = np.asarray(aps)
+    return {
+        "resamples": len(a),
+        "days": len(days),
+        "ci95_low": float(np.quantile(a, 0.025)) if len(a) else float("nan"),
+        "ci95_high": float(np.quantile(a, 0.975)) if len(a) else float("nan"),
     }

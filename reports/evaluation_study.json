@@ -1,0 +1,1693 @@
+{
+  "dataset": "IEEE-CIS train (labelled file only)",
+  "validation": {
+    "valid_start": 12192900,
+    "rows": 118108,
+    "fraud_rate": 0.034409184813899145,
+    "id_digest": "5ee0ab4d5e34f968"
+  },
+  "subgroup_definitions": {
+    "all": "every validation row",
+    "card_seen": "card_id present in the model's training rows",
+    "card_unseen": "card_id absent from training rows (implies uid unseen: uid extends card_id)",
+    "uid_seen": "uid present in the model's training rows",
+    "uid_unseen": "uid absent from training rows (new card, or known card with a new addr1)",
+    "card_seen_uid_unseen": "known card_id but a uid not in training rows (e.g. new addr1)",
+    "no_entity_key": "card1 missing, so no card_id/uid can be formed"
+  },
+  "variants": {
+    "baseline": "current serving feature set (28 inputs)",
+    "no_identifier_codes": "baseline without raw identifier codes ['card1', 'card2', 'card3', 'card5', 'addr1', 'addr2']"
+  },
+  "gap_assumption": "gap lengths are a sensitivity grid, not measured chargeback latency; the gap period is excluded from training and evaluation, and larger gaps also shrink training data",
+  "config": {
+    "gaps_days": [
+      0,
+      7,
+      30,
+      60
+    ],
+    "bootstrap_resamples": 200,
+    "min_positives": 50,
+    "model": {
+      "valid_fraction": 0.2,
+      "holdout_fraction": 0.2,
+      "seed": 42,
+      "max_rounds": 2000,
+      "early_stopping_rounds": 100,
+      "bootstrap_resamples": 500,
+      "xgb_params": {
+        "objective": "binary:logistic",
+        "eval_metric": "aucpr",
+        "max_depth": 8,
+        "eta": 0.05,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "min_child_weight": 1.0,
+        "tree_method": "hist"
+      }
+    },
+    "history_windows": {
+      "1h": 3600,
+      "24h": 86400,
+      "7d": 604800,
+      "30d": 2592000
+    }
+  },
+  "gaps": {
+    "0": {
+      "train_end": 12192900,
+      "train_rows": 472432,
+      "train_fraud_rate": 0.03513521522674162,
+      "gap_rows_excluded": 0,
+      "subgroup_rows": {
+        "all": 118108,
+        "card_seen": 116430,
+        "card_unseen": 1678,
+        "uid_seen": 112366,
+        "uid_unseen": 5742,
+        "card_seen_uid_unseen": 4064,
+        "no_entity_key": 0
+      },
+      "variants": {
+        "baseline": {
+          "n_inputs": 28,
+          "threshold": 0.6721238493919373,
+          "best_rounds": 319,
+          "scale_pos_weight": 27.46147358274595,
+          "train_holdout_average_precision": 0.25131436449578626,
+          "subgroups": {
+            "all": {
+              "rows": 118108,
+              "positives": 4064,
+              "prevalence": 0.034409184813899145,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.2504409401014052,
+                "ci95": [
+                  0.22960050910627444,
+                  0.2716769860401594
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6721238493919373,
+                "tp": 1704,
+                "fp": 4757,
+                "fn": 2360,
+                "precision": 0.26373626373626374,
+                "recall": 0.41929133858267714,
+                "f1": 0.3238004750593824,
+                "flagged": 6461,
+                "flagged_rate": 0.05470416906560097
+              }
+            },
+            "card_seen": {
+              "rows": 116430,
+              "positives": 4002,
+              "prevalence": 0.03437258438546766,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.2507006088146494,
+                "ci95": [
+                  0.22952567358656942,
+                  0.2724427091764353
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6721238493919373,
+                "tp": 1689,
+                "fp": 4724,
+                "fn": 2313,
+                "precision": 0.263371277093404,
+                "recall": 0.42203898050974514,
+                "f1": 0.32433989438310135,
+                "flagged": 6413,
+                "flagged_rate": 0.05508030576311947
+              }
+            },
+            "card_unseen": {
+              "rows": 1678,
+              "positives": 62,
+              "prevalence": 0.03694874851013111,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.24026428909414727,
+                "ci95": [
+                  0.13055446228592876,
+                  0.39676742950696414
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6721238493919373,
+                "tp": 15,
+                "fp": 33,
+                "fn": 47,
+                "precision": 0.3125,
+                "recall": 0.24193548387096775,
+                "f1": 0.2727272727272727,
+                "flagged": 48,
+                "flagged_rate": 0.028605482717520857
+              }
+            },
+            "uid_seen": {
+              "rows": 112366,
+              "positives": 3863,
+              "prevalence": 0.034378726661089654,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.2553750039434515,
+                "ci95": [
+                  0.2348269740695408,
+                  0.2759072559776354
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6721238493919373,
+                "tp": 1666,
+                "fp": 4623,
+                "fn": 2197,
+                "precision": 0.26490698044204164,
+                "recall": 0.4312710328760031,
+                "f1": 0.32821118991331755,
+                "flagged": 6289,
+                "flagged_rate": 0.05596888738586405
+              }
+            },
+            "uid_unseen": {
+              "rows": 5742,
+              "positives": 201,
+              "prevalence": 0.03500522466039707,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.15384758925384098,
+                "ci95": [
+                  0.10796517942740759,
+                  0.22068078077257797
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6721238493919373,
+                "tp": 38,
+                "fp": 134,
+                "fn": 163,
+                "precision": 0.22093023255813954,
+                "recall": 0.1890547263681592,
+                "f1": 0.20375335120643434,
+                "flagged": 172,
+                "flagged_rate": 0.029954719609892023
+              }
+            },
+            "card_seen_uid_unseen": {
+              "rows": 4064,
+              "positives": 139,
+              "prevalence": 0.03420275590551181,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.12636041811551024,
+                "ci95": [
+                  0.0864946810999855,
+                  0.20661109396220786
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6721238493919373,
+                "tp": 23,
+                "fp": 101,
+                "fn": 116,
+                "precision": 0.18548387096774194,
+                "recall": 0.16546762589928057,
+                "f1": 0.17490494296577946,
+                "flagged": 124,
+                "flagged_rate": 0.03051181102362205
+              }
+            },
+            "no_entity_key": {
+              "rows": 0,
+              "positives": 0,
+              "prevalence": null,
+              "reliable": false,
+              "ranking": {
+                "average_precision": null,
+                "ci95": null
+              },
+              "at_threshold": {
+                "threshold": 0.6721238493919373,
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "precision": null,
+                "recall": null,
+                "f1": null,
+                "flagged": 0,
+                "flagged_rate": null
+              }
+            }
+          }
+        },
+        "no_identifier_codes": {
+          "n_inputs": 22,
+          "threshold": 0.7241320013999939,
+          "best_rounds": 196,
+          "scale_pos_weight": 27.46147358274595,
+          "train_holdout_average_precision": 0.2212944847301675,
+          "subgroups": {
+            "all": {
+              "rows": 118108,
+              "positives": 4064,
+              "prevalence": 0.034409184813899145,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.21065249648871145,
+                "ci95": [
+                  0.18906132263267167,
+                  0.23159361567336514
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.7241320013999939,
+                "tp": 1409,
+                "fp": 4279,
+                "fn": 2655,
+                "precision": 0.24771448663853726,
+                "recall": 0.3467027559055118,
+                "f1": 0.288966365873667,
+                "flagged": 5688,
+                "flagged_rate": 0.04815931181630372
+              }
+            },
+            "card_seen": {
+              "rows": 116430,
+              "positives": 4002,
+              "prevalence": 0.03437258438546766,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.2097149921519811,
+                "ci95": [
+                  0.18772929175606984,
+                  0.231255681501815
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.7241320013999939,
+                "tp": 1388,
+                "fp": 4220,
+                "fn": 2614,
+                "precision": 0.24750356633380885,
+                "recall": 0.3468265867066467,
+                "f1": 0.28886576482830384,
+                "flagged": 5608,
+                "flagged_rate": 0.04816628016834149
+              }
+            },
+            "card_unseen": {
+              "rows": 1678,
+              "positives": 62,
+              "prevalence": 0.03694874851013111,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.27899538293347126,
+                "ci95": [
+                  0.16530501812577336,
+                  0.42795821735853123
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.7241320013999939,
+                "tp": 21,
+                "fp": 59,
+                "fn": 41,
+                "precision": 0.2625,
+                "recall": 0.3387096774193548,
+                "f1": 0.29577464788732394,
+                "flagged": 80,
+                "flagged_rate": 0.04767580452920143
+              }
+            },
+            "uid_seen": {
+              "rows": 112366,
+              "positives": 3863,
+              "prevalence": 0.034378726661089654,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.2111174780161533,
+                "ci95": [
+                  0.1896136224699009,
+                  0.23314742549747738
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.7241320013999939,
+                "tp": 1354,
+                "fp": 4112,
+                "fn": 2509,
+                "precision": 0.24771313574826198,
+                "recall": 0.35050478902407456,
+                "f1": 0.2902776288991317,
+                "flagged": 5466,
+                "flagged_rate": 0.04864460779951231
+              }
+            },
+            "uid_unseen": {
+              "rows": 5742,
+              "positives": 201,
+              "prevalence": 0.03500522466039707,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.20313324388959603,
+                "ci95": [
+                  0.14138209228463314,
+                  0.2846606008856475
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.7241320013999939,
+                "tp": 55,
+                "fp": 167,
+                "fn": 146,
+                "precision": 0.24774774774774774,
+                "recall": 0.2736318407960199,
+                "f1": 0.26004728132387706,
+                "flagged": 222,
+                "flagged_rate": 0.038662486938349006
+              }
+            },
+            "card_seen_uid_unseen": {
+              "rows": 4064,
+              "positives": 139,
+              "prevalence": 0.03420275590551181,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.17337555251744904,
+                "ci95": [
+                  0.10927991132996129,
+                  0.27534289445761867
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.7241320013999939,
+                "tp": 34,
+                "fp": 108,
+                "fn": 105,
+                "precision": 0.23943661971830985,
+                "recall": 0.2446043165467626,
+                "f1": 0.24199288256227758,
+                "flagged": 142,
+                "flagged_rate": 0.034940944881889764
+              }
+            },
+            "no_entity_key": {
+              "rows": 0,
+              "positives": 0,
+              "prevalence": null,
+              "reliable": false,
+              "ranking": {
+                "average_precision": null,
+                "ci95": null
+              },
+              "at_threshold": {
+                "threshold": 0.7241320013999939,
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "precision": null,
+                "recall": null,
+                "f1": null,
+                "flagged": 0,
+                "flagged_rate": null
+              }
+            }
+          }
+        }
+      },
+      "ap_delta_restricted_minus_baseline": {
+        "all": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.04032959222397161,
+          "ci95_low": -0.050470767153077765,
+          "ci95_high": -0.031780891950540804,
+          "share_b_better": 0.0
+        },
+        "card_seen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.041548266543402726,
+          "ci95_low": -0.052358165015223106,
+          "ci95_high": -0.03314331279893299,
+          "share_b_better": 0.0
+        },
+        "card_unseen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": 0.04326899203310564,
+          "ci95_low": -0.000356196425156259,
+          "ci95_high": 0.0987039970951023,
+          "share_b_better": 0.97
+        },
+        "uid_seen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.044880701889283545,
+          "ci95_low": -0.05580885430524114,
+          "ci95_high": -0.03566129228851292,
+          "share_b_better": 0.0
+        },
+        "uid_unseen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": 0.04851231669728566,
+          "ci95_low": 0.01391934151899909,
+          "ci95_high": 0.09233478957204887,
+          "share_b_better": 0.995
+        }
+      }
+    },
+    "7": {
+      "train_end": 11588100,
+      "train_rows": 453779,
+      "train_fraud_rate": 0.03524623219673013,
+      "gap_rows_excluded": 18653,
+      "subgroup_rows": {
+        "all": 118108,
+        "card_seen": 116312,
+        "card_unseen": 1796,
+        "uid_seen": 112038,
+        "uid_unseen": 6070,
+        "card_seen_uid_unseen": 4274,
+        "no_entity_key": 0
+      },
+      "variants": {
+        "baseline": {
+          "n_inputs": 28,
+          "threshold": 0.6254322528839111,
+          "best_rounds": 337,
+          "scale_pos_weight": 27.371826935100664,
+          "train_holdout_average_precision": 0.2580464087220774,
+          "subgroups": {
+            "all": {
+              "rows": 118108,
+              "positives": 4064,
+              "prevalence": 0.034409184813899145,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.23766322943199866,
+                "ci95": [
+                  0.21767705276517793,
+                  0.2592424285138084
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6254322528839111,
+                "tp": 1734,
+                "fp": 5520,
+                "fn": 2330,
+                "precision": 0.23904052936311002,
+                "recall": 0.4266732283464567,
+                "f1": 0.30641456087647995,
+                "flagged": 7254,
+                "flagged_rate": 0.06141836285433671
+              }
+            },
+            "card_seen": {
+              "rows": 116312,
+              "positives": 4002,
+              "prevalence": 0.03440745580851503,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.23805103964880409,
+                "ci95": [
+                  0.21785756299022793,
+                  0.2596472834198999
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6254322528839111,
+                "tp": 1721,
+                "fp": 5463,
+                "fn": 2281,
+                "precision": 0.23956013363028952,
+                "recall": 0.4300349825087456,
+                "f1": 0.3077060611478634,
+                "flagged": 7184,
+                "flagged_rate": 0.06176490817800399
+              }
+            },
+            "card_unseen": {
+              "rows": 1796,
+              "positives": 62,
+              "prevalence": 0.034521158129175944,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.2170117467101789,
+                "ci95": [
+                  0.12520508931951752,
+                  0.372560055733402
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6254322528839111,
+                "tp": 13,
+                "fp": 57,
+                "fn": 49,
+                "precision": 0.18571428571428572,
+                "recall": 0.20967741935483872,
+                "f1": 0.196969696969697,
+                "flagged": 70,
+                "flagged_rate": 0.03897550111358575
+              }
+            },
+            "uid_seen": {
+              "rows": 112038,
+              "positives": 3861,
+              "prevalence": 0.0344615219836127,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.2422786111146487,
+                "ci95": [
+                  0.22213722510762854,
+                  0.2643822323071692
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6254322528839111,
+                "tp": 1689,
+                "fp": 5329,
+                "fn": 2172,
+                "precision": 0.24066685665431747,
+                "recall": 0.43745143745143744,
+                "f1": 0.3105064803750345,
+                "flagged": 7018,
+                "flagged_rate": 0.06263946161123904
+              }
+            },
+            "uid_unseen": {
+              "rows": 6070,
+              "positives": 203,
+              "prevalence": 0.033443163097199344,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.14992509546290486,
+                "ci95": [
+                  0.10619932483824056,
+                  0.2043566284147031
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6254322528839111,
+                "tp": 45,
+                "fp": 191,
+                "fn": 158,
+                "precision": 0.1906779661016949,
+                "recall": 0.22167487684729065,
+                "f1": 0.20501138952164008,
+                "flagged": 236,
+                "flagged_rate": 0.03887973640856672
+              }
+            },
+            "card_seen_uid_unseen": {
+              "rows": 4274,
+              "positives": 141,
+              "prevalence": 0.03299017313991577,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.1288467583314557,
+                "ci95": [
+                  0.08928179375180274,
+                  0.19824122073632156
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6254322528839111,
+                "tp": 32,
+                "fp": 134,
+                "fn": 109,
+                "precision": 0.1927710843373494,
+                "recall": 0.22695035460992907,
+                "f1": 0.20846905537459284,
+                "flagged": 166,
+                "flagged_rate": 0.03883949461862424
+              }
+            },
+            "no_entity_key": {
+              "rows": 0,
+              "positives": 0,
+              "prevalence": null,
+              "reliable": false,
+              "ranking": {
+                "average_precision": null,
+                "ci95": null
+              },
+              "at_threshold": {
+                "threshold": 0.6254322528839111,
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "precision": null,
+                "recall": null,
+                "f1": null,
+                "flagged": 0,
+                "flagged_rate": null
+              }
+            }
+          }
+        },
+        "no_identifier_codes": {
+          "n_inputs": 22,
+          "threshold": 0.6813496351242065,
+          "best_rounds": 304,
+          "scale_pos_weight": 27.371826935100664,
+          "train_holdout_average_precision": 0.21863544905506627,
+          "subgroups": {
+            "all": {
+              "rows": 118108,
+              "positives": 4064,
+              "prevalence": 0.034409184813899145,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.2032074492965877,
+                "ci95": [
+                  0.1848218424249634,
+                  0.2243563066634157
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6813496351242065,
+                "tp": 1431,
+                "fp": 4700,
+                "fn": 2633,
+                "precision": 0.23340401239602024,
+                "recall": 0.35211614173228345,
+                "f1": 0.2807258460029426,
+                "flagged": 6131,
+                "flagged_rate": 0.05191011616486606
+              }
+            },
+            "card_seen": {
+              "rows": 116312,
+              "positives": 4002,
+              "prevalence": 0.03440745580851503,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.20296387328362683,
+                "ci95": [
+                  0.18307197352730403,
+                  0.22432268683674803
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6813496351242065,
+                "tp": 1406,
+                "fp": 4630,
+                "fn": 2596,
+                "precision": 0.23293571901921803,
+                "recall": 0.35132433783108447,
+                "f1": 0.2801354851564057,
+                "flagged": 6036,
+                "flagged_rate": 0.051894903363367495
+              }
+            },
+            "card_unseen": {
+              "rows": 1796,
+              "positives": 62,
+              "prevalence": 0.034521158129175944,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.24113534065019213,
+                "ci95": [
+                  0.13452805937150825,
+                  0.4017960010676875
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6813496351242065,
+                "tp": 25,
+                "fp": 70,
+                "fn": 37,
+                "precision": 0.2631578947368421,
+                "recall": 0.4032258064516129,
+                "f1": 0.3184713375796178,
+                "flagged": 95,
+                "flagged_rate": 0.05289532293986637
+              }
+            },
+            "uid_seen": {
+              "rows": 112038,
+              "positives": 3861,
+              "prevalence": 0.0344615219836127,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.20444194297734614,
+                "ci95": [
+                  0.18425609220307299,
+                  0.22651861042269725
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6813496351242065,
+                "tp": 1371,
+                "fp": 4467,
+                "fn": 2490,
+                "precision": 0.23484069886947584,
+                "recall": 0.3550893550893551,
+                "f1": 0.2827095576863594,
+                "flagged": 5838,
+                "flagged_rate": 0.05210732073046645
+              }
+            },
+            "uid_unseen": {
+              "rows": 6070,
+              "positives": 203,
+              "prevalence": 0.033443163097199344,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.1841119240549805,
+                "ci95": [
+                  0.13176414146270476,
+                  0.2635692776624222
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6813496351242065,
+                "tp": 60,
+                "fp": 233,
+                "fn": 143,
+                "precision": 0.20477815699658702,
+                "recall": 0.2955665024630542,
+                "f1": 0.24193548387096775,
+                "flagged": 293,
+                "flagged_rate": 0.04827018121911038
+              }
+            },
+            "card_seen_uid_unseen": {
+              "rows": 4274,
+              "positives": 141,
+              "prevalence": 0.03299017313991577,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.16424825095385523,
+                "ci95": [
+                  0.10415301741433938,
+                  0.25167990796955914
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6813496351242065,
+                "tp": 35,
+                "fp": 163,
+                "fn": 106,
+                "precision": 0.17676767676767677,
+                "recall": 0.24822695035460993,
+                "f1": 0.20648967551622419,
+                "flagged": 198,
+                "flagged_rate": 0.04632662611137108
+              }
+            },
+            "no_entity_key": {
+              "rows": 0,
+              "positives": 0,
+              "prevalence": null,
+              "reliable": false,
+              "ranking": {
+                "average_precision": null,
+                "ci95": null
+              },
+              "at_threshold": {
+                "threshold": 0.6813496351242065,
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "precision": null,
+                "recall": null,
+                "f1": null,
+                "flagged": 0,
+                "flagged_rate": null
+              }
+            }
+          }
+        }
+      },
+      "ap_delta_restricted_minus_baseline": {
+        "all": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.03486729815333744,
+          "ci95_low": -0.04518411532190048,
+          "ci95_high": -0.025171479356441307,
+          "share_b_better": 0.0
+        },
+        "card_seen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.035583900793271235,
+          "ci95_low": -0.04540621780626772,
+          "ci95_high": -0.025223155553998573,
+          "share_b_better": 0.0
+        },
+        "card_unseen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": 0.028963256561990062,
+          "ci95_low": -0.04788080970132118,
+          "ci95_high": 0.10836326785633532,
+          "share_b_better": 0.765
+        },
+        "uid_seen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.0383509342965815,
+          "ci95_low": -0.04878997474834771,
+          "ci95_high": -0.027572628536709828,
+          "share_b_better": 0.0
+        },
+        "uid_unseen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": 0.03466744355791858,
+          "ci95_low": 0.0029641138228960035,
+          "ci95_high": 0.07077886038359019,
+          "share_b_better": 0.99
+        }
+      }
+    },
+    "30": {
+      "train_end": 9600900,
+      "train_rows": 383586,
+      "train_fraud_rate": 0.03418529351957579,
+      "gap_rows_excluded": 88846,
+      "subgroup_rows": {
+        "all": 118108,
+        "card_seen": 115832,
+        "card_unseen": 2276,
+        "uid_seen": 110714,
+        "uid_unseen": 7394,
+        "card_seen_uid_unseen": 5118,
+        "no_entity_key": 0
+      },
+      "variants": {
+        "baseline": {
+          "n_inputs": 28,
+          "threshold": 0.6857146620750427,
+          "best_rounds": 444,
+          "scale_pos_weight": 28.252345001143905,
+          "train_holdout_average_precision": 0.23558485994683967,
+          "subgroups": {
+            "all": {
+              "rows": 118108,
+              "positives": 4064,
+              "prevalence": 0.034409184813899145,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.2112295859884134,
+                "ci95": [
+                  0.19409288344690417,
+                  0.23267718776226445
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6857146620750427,
+                "tp": 1196,
+                "fp": 2982,
+                "fn": 2868,
+                "precision": 0.286261369076113,
+                "recall": 0.29429133858267714,
+                "f1": 0.2902208201892744,
+                "flagged": 4178,
+                "flagged_rate": 0.03537440308869848
+              }
+            },
+            "card_seen": {
+              "rows": 115832,
+              "positives": 3969,
+              "prevalence": 0.03426514262034671,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.20833226482402029,
+                "ci95": [
+                  0.18934574911358343,
+                  0.22969976478244963
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6857146620750427,
+                "tp": 1163,
+                "fp": 2956,
+                "fn": 2806,
+                "precision": 0.2823500849720806,
+                "recall": 0.2930209120685311,
+                "f1": 0.28758654797230465,
+                "flagged": 4119,
+                "flagged_rate": 0.03556012155535603
+              }
+            },
+            "card_unseen": {
+              "rows": 2276,
+              "positives": 95,
+              "prevalence": 0.04173989455184534,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.3875603121457918,
+                "ci95": [
+                  0.27523529871027047,
+                  0.541078242780655
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6857146620750427,
+                "tp": 33,
+                "fp": 26,
+                "fn": 62,
+                "precision": 0.559322033898305,
+                "recall": 0.3473684210526316,
+                "f1": 0.42857142857142855,
+                "flagged": 59,
+                "flagged_rate": 0.02592267135325132
+              }
+            },
+            "uid_seen": {
+              "rows": 110714,
+              "positives": 3787,
+              "prevalence": 0.03420524956193435,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.21282338107325457,
+                "ci95": [
+                  0.19392195928313774,
+                  0.23349419140745795
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6857146620750427,
+                "tp": 1143,
+                "fp": 2883,
+                "fn": 2644,
+                "precision": 0.28390461997019373,
+                "recall": 0.30182202270926856,
+                "f1": 0.29258927428644566,
+                "flagged": 4026,
+                "flagged_rate": 0.03636396481023177
+              }
+            },
+            "uid_unseen": {
+              "rows": 7394,
+              "positives": 277,
+              "prevalence": 0.03746280768190425,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.19098856615032825,
+                "ci95": [
+                  0.1430353040496938,
+                  0.2488518274319576
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6857146620750427,
+                "tp": 53,
+                "fp": 99,
+                "fn": 224,
+                "precision": 0.34868421052631576,
+                "recall": 0.19133574007220217,
+                "f1": 0.2470862470862471,
+                "flagged": 152,
+                "flagged_rate": 0.020557208547470923
+              }
+            },
+            "card_seen_uid_unseen": {
+              "rows": 5118,
+              "positives": 182,
+              "prevalence": 0.035560765924189136,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.11447224520814993,
+                "ci95": [
+                  0.08141015981732487,
+                  0.17371323061131821
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6857146620750427,
+                "tp": 20,
+                "fp": 73,
+                "fn": 162,
+                "precision": 0.21505376344086022,
+                "recall": 0.10989010989010989,
+                "f1": 0.14545454545454548,
+                "flagged": 93,
+                "flagged_rate": 0.01817116060961313
+              }
+            },
+            "no_entity_key": {
+              "rows": 0,
+              "positives": 0,
+              "prevalence": null,
+              "reliable": false,
+              "ranking": {
+                "average_precision": null,
+                "ci95": null
+              },
+              "at_threshold": {
+                "threshold": 0.6857146620750427,
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "precision": null,
+                "recall": null,
+                "f1": null,
+                "flagged": 0,
+                "flagged_rate": null
+              }
+            }
+          }
+        },
+        "no_identifier_codes": {
+          "n_inputs": 22,
+          "threshold": 0.6942742466926575,
+          "best_rounds": 208,
+          "scale_pos_weight": 28.252345001143905,
+          "train_holdout_average_precision": 0.2092286460837308,
+          "subgroups": {
+            "all": {
+              "rows": 118108,
+              "positives": 4064,
+              "prevalence": 0.034409184813899145,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.18680452654004576,
+                "ci95": [
+                  0.170598590641466,
+                  0.20591060278595696
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6942742466926575,
+                "tp": 1339,
+                "fp": 4550,
+                "fn": 2725,
+                "precision": 0.22737306843267108,
+                "recall": 0.32947834645669294,
+                "f1": 0.2690646036370944,
+                "flagged": 5889,
+                "flagged_rate": 0.04986114403766045
+              }
+            },
+            "card_seen": {
+              "rows": 115832,
+              "positives": 3969,
+              "prevalence": 0.03426514262034671,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.18583312423303885,
+                "ci95": [
+                  0.16963078368486284,
+                  0.20532799182666092
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6942742466926575,
+                "tp": 1306,
+                "fp": 4466,
+                "fn": 2663,
+                "precision": 0.22626472626472627,
+                "recall": 0.3290501385739481,
+                "f1": 0.2681449543168053,
+                "flagged": 5772,
+                "flagged_rate": 0.049830789419158784
+              }
+            },
+            "card_unseen": {
+              "rows": 2276,
+              "positives": 95,
+              "prevalence": 0.04173989455184534,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.24399803911503762,
+                "ci95": [
+                  0.15954633027520054,
+                  0.3675097357012563
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6942742466926575,
+                "tp": 33,
+                "fp": 84,
+                "fn": 62,
+                "precision": 0.28205128205128205,
+                "recall": 0.3473684210526316,
+                "f1": 0.3113207547169811,
+                "flagged": 117,
+                "flagged_rate": 0.05140597539543058
+              }
+            },
+            "uid_seen": {
+              "rows": 110714,
+              "positives": 3787,
+              "prevalence": 0.03420524956193435,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.18710802740463536,
+                "ci95": [
+                  0.17109755364937312,
+                  0.20763188170562197
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6942742466926575,
+                "tp": 1267,
+                "fp": 4319,
+                "fn": 2520,
+                "precision": 0.22681704260651628,
+                "recall": 0.3345656192236599,
+                "f1": 0.2703510082150859,
+                "flagged": 5586,
+                "flagged_rate": 0.050454323753093555
+              }
+            },
+            "uid_unseen": {
+              "rows": 7394,
+              "positives": 277,
+              "prevalence": 0.03746280768190425,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.18573073601000076,
+                "ci95": [
+                  0.13958352665354,
+                  0.2545743964093735
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6942742466926575,
+                "tp": 72,
+                "fp": 231,
+                "fn": 205,
+                "precision": 0.2376237623762376,
+                "recall": 0.259927797833935,
+                "f1": 0.24827586206896549,
+                "flagged": 303,
+                "flagged_rate": 0.04097917230186638
+              }
+            },
+            "card_seen_uid_unseen": {
+              "rows": 5118,
+              "positives": 182,
+              "prevalence": 0.035560765924189136,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.16090914617440694,
+                "ci95": [
+                  0.11330930214790874,
+                  0.24150589900427796
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6942742466926575,
+                "tp": 39,
+                "fp": 147,
+                "fn": 143,
+                "precision": 0.20967741935483872,
+                "recall": 0.21428571428571427,
+                "f1": 0.21195652173913043,
+                "flagged": 186,
+                "flagged_rate": 0.03634232121922626
+              }
+            },
+            "no_entity_key": {
+              "rows": 0,
+              "positives": 0,
+              "prevalence": null,
+              "reliable": false,
+              "ranking": {
+                "average_precision": null,
+                "ci95": null
+              },
+              "at_threshold": {
+                "threshold": 0.6942742466926575,
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "precision": null,
+                "recall": null,
+                "f1": null,
+                "flagged": 0,
+                "flagged_rate": null
+              }
+            }
+          }
+        }
+      },
+      "ap_delta_restricted_minus_baseline": {
+        "all": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.024599981244781233,
+          "ci95_low": -0.03376135081085033,
+          "ci95_high": -0.015351360609049052,
+          "share_b_better": 0.0
+        },
+        "card_seen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.02269325618834341,
+          "ci95_low": -0.032490031989263674,
+          "ci95_high": -0.013657133599835993,
+          "share_b_better": 0.0
+        },
+        "card_unseen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.14064351134758857,
+          "ci95_low": -0.23821853362926332,
+          "ci95_high": -0.0529510542816067,
+          "share_b_better": 0.0
+        },
+        "uid_seen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.025971358003879345,
+          "ci95_low": -0.03549670056451189,
+          "ci95_high": -0.016163136202118837,
+          "share_b_better": 0.0
+        },
+        "uid_unseen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.004210743782324211,
+          "ci95_low": -0.04545607508571188,
+          "ci95_high": 0.03498128262135378,
+          "share_b_better": 0.405
+        }
+      }
+    },
+    "60": {
+      "train_end": 7008900,
+      "train_rows": 285910,
+      "train_fraud_rate": 0.03352803329719142,
+      "gap_rows_excluded": 186522,
+      "subgroup_rows": {
+        "all": 118108,
+        "card_seen": 114545,
+        "card_unseen": 3563,
+        "uid_seen": 107658,
+        "uid_unseen": 10450,
+        "card_seen_uid_unseen": 6887,
+        "no_entity_key": 0
+      },
+      "variants": {
+        "baseline": {
+          "n_inputs": 28,
+          "threshold": 0.6394839882850647,
+          "best_rounds": 670,
+          "scale_pos_weight": 28.825787606926767,
+          "train_holdout_average_precision": 0.37378175370761124,
+          "subgroups": {
+            "all": {
+              "rows": 118108,
+              "positives": 4064,
+              "prevalence": 0.034409184813899145,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.1693081649475566,
+                "ci95": [
+                  0.15557571923014915,
+                  0.18564906943549658
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6394839882850647,
+                "tp": 837,
+                "fp": 2159,
+                "fn": 3227,
+                "precision": 0.2793724966622163,
+                "recall": 0.2059547244094488,
+                "f1": 0.23711048158640224,
+                "flagged": 2996,
+                "flagged_rate": 0.02536661360788431
+              }
+            },
+            "card_seen": {
+              "rows": 114545,
+              "positives": 3937,
+              "prevalence": 0.03437077131258457,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.17034858731599817,
+                "ci95": [
+                  0.15532585774731555,
+                  0.18840820326234267
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6394839882850647,
+                "tp": 806,
+                "fp": 2039,
+                "fn": 3131,
+                "precision": 0.28330404217926186,
+                "recall": 0.2047244094488189,
+                "f1": 0.23768799764081391,
+                "flagged": 2845,
+                "flagged_rate": 0.024837400148413288
+              }
+            },
+            "card_unseen": {
+              "rows": 3563,
+              "positives": 127,
+              "prevalence": 0.03564412012349144,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.15920893110965215,
+                "ci95": [
+                  0.07472621878798524,
+                  0.3735640560930308
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6394839882850647,
+                "tp": 31,
+                "fp": 120,
+                "fn": 96,
+                "precision": 0.2052980132450331,
+                "recall": 0.2440944881889764,
+                "f1": 0.22302158273381295,
+                "flagged": 151,
+                "flagged_rate": 0.04238001683974179
+              }
+            },
+            "uid_seen": {
+              "rows": 107658,
+              "positives": 3718,
+              "prevalence": 0.03453528767021494,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.17403640208088328,
+                "ci95": [
+                  0.15814093502516538,
+                  0.19179645970630707
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6394839882850647,
+                "tp": 781,
+                "fp": 1957,
+                "fn": 2937,
+                "precision": 0.2852447041636231,
+                "recall": 0.21005917159763313,
+                "f1": 0.24194547707558856,
+                "flagged": 2738,
+                "flagged_rate": 0.02543238774638206
+              }
+            },
+            "uid_unseen": {
+              "rows": 10450,
+              "positives": 346,
+              "prevalence": 0.03311004784688995,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.13008157640852858,
+                "ci95": [
+                  0.08241203661548405,
+                  0.19887652562683283
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6394839882850647,
+                "tp": 56,
+                "fp": 202,
+                "fn": 290,
+                "precision": 0.21705426356589147,
+                "recall": 0.16184971098265896,
+                "f1": 0.18543046357615897,
+                "flagged": 258,
+                "flagged_rate": 0.024688995215311003
+              }
+            },
+            "card_seen_uid_unseen": {
+              "rows": 6887,
+              "positives": 219,
+              "prevalence": 0.031799041672716716,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.11848229272470298,
+                "ci95": [
+                  0.07833677308187828,
+                  0.17648819880686467
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.6394839882850647,
+                "tp": 25,
+                "fp": 82,
+                "fn": 194,
+                "precision": 0.2336448598130841,
+                "recall": 0.1141552511415525,
+                "f1": 0.15337423312883436,
+                "flagged": 107,
+                "flagged_rate": 0.015536518077537389
+              }
+            },
+            "no_entity_key": {
+              "rows": 0,
+              "positives": 0,
+              "prevalence": null,
+              "reliable": false,
+              "ranking": {
+                "average_precision": null,
+                "ci95": null
+              },
+              "at_threshold": {
+                "threshold": 0.6394839882850647,
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "precision": null,
+                "recall": null,
+                "f1": null,
+                "flagged": 0,
+                "flagged_rate": null
+              }
+            }
+          }
+        },
+        "no_identifier_codes": {
+          "n_inputs": 22,
+          "threshold": 0.5660210251808167,
+          "best_rounds": 6,
+          "scale_pos_weight": 28.825787606926767,
+          "train_holdout_average_precision": 0.2870519261568273,
+          "subgroups": {
+            "all": {
+              "rows": 118108,
+              "positives": 4064,
+              "prevalence": 0.034409184813899145,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.15275911315520335,
+                "ci95": [
+                  0.13999277023808496,
+                  0.1674659951617287
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.5660210251808167,
+                "tp": 965,
+                "fp": 3361,
+                "fn": 3099,
+                "precision": 0.22306981044845123,
+                "recall": 0.2374507874015748,
+                "f1": 0.23003575685339692,
+                "flagged": 4326,
+                "flagged_rate": 0.036627493480543234
+              }
+            },
+            "card_seen": {
+              "rows": 114545,
+              "positives": 3937,
+              "prevalence": 0.03437077131258457,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.15258183847082718,
+                "ci95": [
+                  0.1389881441622533,
+                  0.16794475568039555
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.5660210251808167,
+                "tp": 930,
+                "fp": 3263,
+                "fn": 3007,
+                "precision": 0.22179823515382782,
+                "recall": 0.23622047244094488,
+                "f1": 0.22878228782287824,
+                "flagged": 4193,
+                "flagged_rate": 0.03660570081627308
+              }
+            },
+            "card_unseen": {
+              "rows": 3563,
+              "positives": 127,
+              "prevalence": 0.03564412012349144,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.16842363366966298,
+                "ci95": [
+                  0.11492346143995127,
+                  0.2507301363209321
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.5660210251808167,
+                "tp": 35,
+                "fp": 98,
+                "fn": 92,
+                "precision": 0.2631578947368421,
+                "recall": 0.2755905511811024,
+                "f1": 0.2692307692307692,
+                "flagged": 133,
+                "flagged_rate": 0.03732809430255403
+              }
+            },
+            "uid_seen": {
+              "rows": 107658,
+              "positives": 3718,
+              "prevalence": 0.03453528767021494,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.1541046599897157,
+                "ci95": [
+                  0.14069895588185652,
+                  0.17053828337029114
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.5660210251808167,
+                "tp": 892,
+                "fp": 3118,
+                "fn": 2826,
+                "precision": 0.22244389027431422,
+                "recall": 0.23991393222162452,
+                "f1": 0.2308488612836439,
+                "flagged": 4010,
+                "flagged_rate": 0.03724758030058147
+              }
+            },
+            "uid_unseen": {
+              "rows": 10450,
+              "positives": 346,
+              "prevalence": 0.03311004784688995,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.14176192639266127,
+                "ci95": [
+                  0.10981517766416554,
+                  0.1842604730401949
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.5660210251808167,
+                "tp": 73,
+                "fp": 243,
+                "fn": 273,
+                "precision": 0.2310126582278481,
+                "recall": 0.21098265895953758,
+                "f1": 0.22054380664652568,
+                "flagged": 316,
+                "flagged_rate": 0.030239234449760767
+              }
+            },
+            "card_seen_uid_unseen": {
+              "rows": 6887,
+              "positives": 219,
+              "prevalence": 0.031799041672716716,
+              "reliable": true,
+              "ranking": {
+                "average_precision": 0.1345981437546224,
+                "ci95": [
+                  0.09582333168110083,
+                  0.19663752248959443
+                ]
+              },
+              "at_threshold": {
+                "threshold": 0.5660210251808167,
+                "tp": 38,
+                "fp": 145,
+                "fn": 181,
+                "precision": 0.20765027322404372,
+                "recall": 0.1735159817351598,
+                "f1": 0.1890547263681592,
+                "flagged": 183,
+                "flagged_rate": 0.02657180194569479
+              }
+            },
+            "no_entity_key": {
+              "rows": 0,
+              "positives": 0,
+              "prevalence": null,
+              "reliable": false,
+              "ranking": {
+                "average_precision": null,
+                "ci95": null
+              },
+              "at_threshold": {
+                "threshold": 0.5660210251808167,
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "precision": null,
+                "recall": null,
+                "f1": null,
+                "flagged": 0,
+                "flagged_rate": null
+              }
+            }
+          }
+        }
+      },
+      "ap_delta_restricted_minus_baseline": {
+        "all": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.016616617366081173,
+          "ci95_low": -0.028082318524743036,
+          "ci95_high": -0.006164525647054807,
+          "share_b_better": 0.0
+        },
+        "card_seen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.01819171566433619,
+          "ci95_low": -0.029570624868797267,
+          "ci95_high": -0.009405770825870116,
+          "share_b_better": 0.0
+        },
+        "card_unseen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.002682232904526827,
+          "ci95_low": -0.18128438048698375,
+          "ci95_high": 0.0935783147295711,
+          "share_b_better": 0.58
+        },
+        "uid_seen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": -0.02046844492139783,
+          "ci95_low": -0.03248794978076218,
+          "ci95_high": -0.010892385581084216,
+          "share_b_better": 0.0
+        },
+        "uid_unseen": {
+          "resamples": 200,
+          "days": 42,
+          "delta_mean": 0.013147059885037019,
+          "ci95_low": -0.04823248843647531,
+          "ci95_high": 0.05633070600199321,
+          "share_b_better": 0.72
+        }
+      }
+    }
+  },
+  "environment": {
+    "python": "3.11.9",
+    "numpy": "1.26.4",
+    "pandas": "2.2.3",
+    "xgboost": "2.1.4"
+  }
+}

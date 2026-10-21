@@ -117,6 +117,11 @@ class TestMetrics:
         assert m.flagged == 3 and m.flagged_rate == 0.6 and m.prevalence == 0.4
         assert m.precision == pytest.approx(1 / 3) and m.recall == 0.5
 
+    def test_bootstrap_with_no_usable_resamples_returns_nan(self) -> None:
+        y, s, day = np.array([1, 0]), np.array([0.6, 0.4]), np.array([0, 1])
+        b = day_block_bootstrap_ap_delta(y, s, s, day, resamples=0, seed=0)
+        assert b["resamples"] == 0 and np.isnan(b["delta_mean"]) and np.isnan(b["ci95_low"])
+
     def test_bootstrap_identical_scores_give_zero_delta(self) -> None:
         rng = np.random.default_rng(0)
         y = rng.integers(0, 2, 200)
