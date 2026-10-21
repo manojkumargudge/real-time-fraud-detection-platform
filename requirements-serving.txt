@@ -1,0 +1,11 @@
+# Container runtime for the API and Kafka consumer (Linux).
+# xgboost-cpu: same 2.1.4 library without the CUDA/NCCL dependency of the Linux xgboost wheel.
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.17.1
+xgboost-cpu==2.1.4
+fastapi==0.115.6
+pydantic==2.14.1
+uvicorn==0.34.0
+psycopg[binary]==3.2.3
+confluent-kafka==2.6.1

@@ -43,6 +43,9 @@ Dataset download instructions: [data/README.md](data/README.md).
 - Milestone 2 experiment: XGBoost comparison of default vs D1-based entity keys
   ([reports/model_comparison.md](reports/model_comparison.md)). Run:
   `.venv\Scripts\python -m src.models.compare` and `python -m src.models.robustness`.
+- Milestone 3: real-time scoring slice: baseline model training, FastAPI `/health` and
+  `/score`, Kafka producer/consumer, PostgreSQL persistence with duplicate handling, Docker
+  Compose ([docs/serving.md](docs/serving.md)). Local demo only; see its limitations.
 
 ## Documentation
 

@@ -24,4 +24,5 @@ pythonpath = ["."]
 addopts = "-ra --strict-markers"
 markers = [
     "real_data: requires the IEEE-CIS dataset under data/raw/ieee-cis (skipped if absent)",
+    "integration: needs live services (TEST_DATABASE_URL / TEST_KAFKA_BOOTSTRAP); skipped if unset",
 ]

@@ -43,6 +43,7 @@ START_DAY = "account_start_day"
 SECONDS_PER_DAY = 86_400
 MISSING_TOKEN = "<NA>"
 SEPARATOR = "|"
+SMALL_FRAME_ROWS = 64
 
 
 def _component_to_str(s: pd.Series) -> pd.Series:
@@ -75,15 +76,22 @@ def build_entity_key(
         raise ValueError(f"required components {required} must be a subset of {columns}")
     if df.empty:
         return pd.Series(np.nan, index=df.index, dtype=object, name=name)
-    # Render strings once per distinct combination (~14x fewer rows on IEEE-CIS), then broadcast.
     sub = df[list(columns)]
+    if len(sub) <= SMALL_FRAME_ROWS:  # online path: grouping costs more than it saves
+        return _render_keys(sub, columns, required).rename(name)
+    # Render strings once per distinct combination (~14x fewer rows on IEEE-CIS), then broadcast.
     group = sub.groupby(list(columns), dropna=False, sort=False, observed=True).ngroup()
     _, first = np.unique(group.to_numpy(), return_index=True)
-    uniq = sub.iloc[first]
-    parts = [_component_to_str(uniq[c]) for c in columns]
-    uniq_key = parts[0].str.cat(parts[1:], sep=SEPARATOR) if len(parts) > 1 else parts[0]
-    uniq_key = uniq_key.where(uniq[list(required)].notna().all(axis=1).to_numpy())
+    uniq_key = _render_keys(sub.iloc[first], columns, required)
     return pd.Series(uniq_key.to_numpy()[group.to_numpy()], index=df.index, name=name)
+
+
+def _render_keys(
+    sub: pd.DataFrame, columns: tuple[str, ...], required: tuple[str, ...]
+) -> pd.Series:
+    parts = [_component_to_str(sub[c]) for c in columns]
+    key = parts[0].str.cat(parts[1:], sep=SEPARATOR) if len(parts) > 1 else parts[0]
+    return key.where(sub[list(required)].notna().all(axis=1).to_numpy())
 
 
 def build_entity_keys(df: pd.DataFrame) -> pd.DataFrame:

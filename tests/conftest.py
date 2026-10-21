@@ -68,3 +68,22 @@ def raw_dir(tmp_path: Path) -> Path:
     return write_split(
         tmp_path / "ieee-cis", make_transactions(), make_identity([1001, 1003, 1005])
     )
+
+
+@pytest.fixture(scope="session")
+def synthetic_frame(tmp_path_factory: pytest.TempPathFactory) -> pd.DataFrame:
+    """Loader-shaped synthetic frame with a learnable signal (see tests/test_models.py)."""
+    from src.data.load import load_ieee_cis
+    from tests.test_models import synthetic_split
+
+    return load_ieee_cis(synthetic_split(tmp_path_factory.mktemp("serving_raw")), usecols=[])
+
+
+@pytest.fixture(scope="session")
+def bundle_dir(synthetic_frame: pd.DataFrame, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A real saved model bundle trained by ``src.models.train`` on synthetic data."""
+    from src.models.train import save_bundle, train_baseline
+    from tests.test_models import FAST
+
+    trained, metadata = train_baseline(synthetic_frame, FAST)
+    return save_bundle(trained, metadata, tmp_path_factory.mktemp("bundle"))

@@ -139,6 +139,13 @@ class TestEntityKey:
         got = build_entity_key(df, cols)
         pd.testing.assert_series_equal(got, pd.Series(expected, index=df.index, dtype=object))
 
+    def test_small_and_large_frame_paths_agree(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        df = random_frame(seed=12)
+        cols = ("card1", "card2", "card4", "addr1")
+        large = build_entity_key(df, cols)
+        monkeypatch.setattr("src.features.entity.SMALL_FRAME_ROWS", len(df))
+        pd.testing.assert_series_equal(build_entity_key(df, cols), large)
+
     def test_missing_column_is_rejected(self) -> None:
         with pytest.raises(SchemaError, match="addr1"):
             build_entity_key(frame([{}]).drop(columns="addr1"), ("card1", "addr1"))
