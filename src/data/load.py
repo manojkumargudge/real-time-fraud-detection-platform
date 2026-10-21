@@ -11,6 +11,8 @@ transactions have identity rows, so missing device fields after the merge are ex
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import os
 from collections.abc import Iterable
@@ -154,6 +156,7 @@ def _read_csv(
 ) -> pd.DataFrame:
     """Read in chunks, downcasting floats per chunk to bound peak memory on the 683 MB file."""
     _require_file(path)
+    _check_last_row(path)
     wanted = None if usecols is None else {c.replace("-", "_") for c in usecols} | set(required)
     try:
         reader = pd.read_csv(
@@ -168,8 +171,44 @@ def _read_csv(
             chunks.append(chunk.astype(dict.fromkeys(floats, "float32")))
     except pd.errors.EmptyDataError as exc:
         raise SchemaError(f"{path.name} is empty") from exc
+    except pd.errors.ParserError as exc:
+        raise SchemaError(f"{path.name} is malformed CSV: {str(exc).strip()}") from exc
+    except UnicodeDecodeError as exc:
+        raise SchemaError(f"{path.name} is not a readable UTF-8 CSV file") from exc
+    if not chunks or all(c.empty for c in chunks):
+        raise SchemaError(f"{path.name} has a header but no data rows")
     df = pd.concat(chunks, ignore_index=True) if len(chunks) > 1 else chunks[0]
     return _normalize_columns(df)
+
+
+TAIL_BYTES = 1 << 16
+
+
+def _check_last_row(path: Path) -> None:
+    """Reject files whose final row has fewer fields than the header (interrupted download).
+
+    pandas silently pads short rows with NaN, so truncation would otherwise go unnoticed.
+    Only the last ~64 KB is read. Compressed inputs are skipped (pandas decompresses them).
+    """
+    if path.suffix.lower() != ".csv":
+        return
+    try:
+        with path.open(encoding="utf-8", newline="") as fh:
+            header = next(csv.reader(fh), None)
+        with path.open("rb") as fh:
+            size = fh.seek(0, io.SEEK_END)
+            fh.seek(max(0, size - TAIL_BYTES))
+            tail = fh.read().decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SchemaError(f"{path.name} is not a readable UTF-8 CSV file") from exc
+    lines = [line for line in tail.splitlines() if line.strip()]
+    if not header or len(lines) < 2:  # empty/header-only, or one row longer than the window
+        return
+    fields = next(csv.reader([lines[-1]]))
+    if len(fields) < len(header):
+        raise SchemaError(
+            f"{path.name} looks truncated: last row has {len(fields)} of {len(header)} fields"
+        )
 
 
 def load_transactions(

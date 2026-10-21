@@ -2,8 +2,10 @@
 
 > **Status: measured on 2026-10-21.** Every number below comes from
 > `python -m src.data.eda` on the Kaggle `train_transaction.csv` + `train_identity.csv`,
-> recorded in [`eda_metrics.json`](eda_metrics.json). Figures (`notebooks/01_eda.ipynb`) are
-> still **pending**: matplotlib/Jupyter are not installed yet.
+> recorded in [`eda_metrics.json`](eda_metrics.json). Figures come from
+> `notebooks/01_eda.ipynb`, which was executed from a clean kernel; its final cell asserts that
+> all metric sections equal `eda_metrics.json`. Data-quality checks are in
+> [`data_quality.md`](data_quality.md).
 
 Dataset: IEEE-CIS train split, transactions left-joined with identity on `TransactionID`.
 
@@ -19,8 +21,8 @@ Dataset: IEEE-CIS train split, transactions left-joined with identity on `Transa
 | Identity rows matched / orphaned | 144,233 / 0 |
 | Rows already sorted by `TransactionDT` | yes |
 | In-memory size, optimized dtypes | 1,536 MB |
-| Peak process memory, full EDA run | ~5.1 GB (Windows peak working set) |
-| EDA runtime (warm disk cache) | ~30 s |
+| Peak process memory, full load + checks | 5,079 MB measured (`data_quality.json`) |
+| Load + checks runtime (warm disk cache) | 46.3 s measured (`data_quality.json`) |
 
 ## 2. Class imbalance
 
@@ -138,4 +140,11 @@ to help. This is a hypothesis to test in Milestone 2/3, not a finding.
 - Many columns (`C*`, `D*`, `M*`, `V*`, `id_*`) are anonymised; their meaning is not disclosed.
 - Labels follow Kaggle's definition (a card is marked fraud after a reported chargeback, and
   subsequent linked transactions inherit the label), which may inflate user-level signal.
-- Figures are not yet generated (see status note).
+- Figures: [class balance](figures/class_balance.png),
+  [amount distribution](figures/amount_distribution.png),
+  [amount by class](figures/amount_by_class.png), [fraud over time](figures/fraud_over_time.png),
+  [missingness by family](figures/missingness.png),
+  [missingness by class](figures/missingness_by_class.png),
+  [fraud rate by category](figures/categorical_fraud_rates.png). Category rates for small
+  groups are noisy; for example, `card6` "charge card" has n = 15. Read rates together with
+  the group sizes shown in the chart.

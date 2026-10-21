@@ -152,6 +152,86 @@ class TestSchemaValidation:
             load_transactions(path)
 
 
+class TestCorruptInputs:
+    def write(self, tmp_path: Path, text: str | bytes) -> Path:
+        path = tmp_path / "train_transaction.csv"
+        if isinstance(text, bytes):
+            path.write_bytes(text)
+        else:
+            path.write_text(text, encoding="utf-8")
+        return path
+
+    def csv_text(self) -> str:
+        return make_transactions().to_csv(index=False, lineterminator="\n")
+
+    def test_header_only_file(self, tmp_path: Path) -> None:
+        path = self.write(tmp_path, self.csv_text().splitlines()[0] + "\n")
+        with pytest.raises(SchemaError, match="no data rows"):
+            load_transactions(path)
+
+    def test_row_with_extra_fields(self, tmp_path: Path) -> None:
+        path = self.write(tmp_path, self.csv_text().rstrip("\n") + ",1,2,3\n")
+        with pytest.raises(SchemaError, match="malformed CSV"):
+            load_transactions(path)
+
+    @pytest.mark.parametrize("newline", ["", "\n"])
+    def test_truncated_last_row(self, tmp_path: Path, newline: str) -> None:
+        lines = self.csv_text().splitlines()
+        cut = lines[-1].rsplit(",", 5)[0]  # simulate an interrupted download
+        path = self.write(tmp_path, "\n".join([*lines[:-1], cut]) + newline)
+        with pytest.raises(SchemaError, match="truncated"):
+            load_transactions(path)
+
+    def test_binary_file(self, tmp_path: Path) -> None:
+        path = self.write(tmp_path, bytes(range(256)) * 50)
+        with pytest.raises(SchemaError, match="not a readable UTF-8 CSV"):
+            load_transactions(path)
+
+    def test_complete_file_without_trailing_newline_is_valid(self, tmp_path: Path) -> None:
+        path = self.write(tmp_path, self.csv_text().rstrip("\n"))
+        assert len(load_transactions(path)) == 6
+
+
+class TestIncompatibleSchemas:
+    def test_identity_file_passed_as_transactions(self, tmp_path: Path) -> None:
+        path = tmp_path / "i.csv"
+        make_identity([1]).to_csv(path, index=False)
+        with pytest.raises(SchemaError, match="missing required columns"):
+            load_transactions(path)
+
+    def test_transaction_file_passed_as_identity(self, tmp_path: Path) -> None:
+        path = tmp_path / "t.csv"
+        make_transactions().to_csv(path, index=False)
+        with pytest.raises(SchemaError, match="DeviceType"):
+            load_identity(path)
+
+    def test_non_numeric_identity_key(self, tmp_path: Path) -> None:
+        df = make_identity([1, 2])
+        df["TransactionID"] = ["a", "b"]
+        path = tmp_path / "i.csv"
+        df.to_csv(path, index=False)
+        with pytest.raises(SchemaError, match="non-numeric.*TransactionID"):
+            load_identity(path)
+
+    def test_fractional_label(self, tmp_path: Path) -> None:
+        df = make_transactions()
+        df["isFraud"] = df["isFraud"].astype(float)
+        df.loc[0, "isFraud"] = 0.5
+        path = tmp_path / "t.csv"
+        df.to_csv(path, index=False)
+        with pytest.raises(SchemaError, match="invalid isFraud"):
+            load_transactions(path)
+
+    def test_text_label(self, tmp_path: Path) -> None:
+        df = make_transactions()
+        df["isFraud"] = df["isFraud"].astype(object)
+        df.loc[0, "isFraud"] = "yes"
+        path = tmp_path / "t.csv"
+        df.to_csv(path, index=False)
+        with pytest.raises(SchemaError, match="non-numeric.*isFraud"):
+            load_transactions(path)
+
+
 class TestDuplicateKeys:
     def test_duplicate_transaction_ids(self, tmp_path: Path) -> None:
         df = make_transactions()

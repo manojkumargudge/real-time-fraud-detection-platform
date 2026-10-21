@@ -1,4 +1,4 @@
-# Needed only to run notebooks/01_eda.ipynb (not installed yet).
+# Needed only to run notebooks/01_eda.ipynb (verified install on 2026-10-21).
 -r requirements.txt
 ipykernel==6.29.5
 jupyterlab==4.3.5

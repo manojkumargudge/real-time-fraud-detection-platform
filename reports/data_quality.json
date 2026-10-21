@@ -1,0 +1,148 @@
+{
+  "dataset": "IEEE-CIS train split",
+  "files": {
+    "transaction": {
+      "file": "train_transaction.csv",
+      "size_bytes": 683351067,
+      "rows": 590540,
+      "columns": 394,
+      "transaction_id_unique": true,
+      "exact_duplicate_rows_ignoring_id": 3,
+      "cell_missing_rate": 0.410734,
+      "columns_fully_present": 20,
+      "columns_over_50pct_missing": 174,
+      "columns_over_90pct_missing": 2,
+      "columns_fully_missing": 0
+    },
+    "identity": {
+      "file": "train_identity.csv",
+      "size_bytes": 26529680,
+      "rows": 144233,
+      "columns": 41,
+      "transaction_id_unique": true,
+      "exact_duplicate_rows_ignoring_id": 3767,
+      "cell_missing_rate": 0.355811,
+      "columns_fully_present": 3,
+      "columns_over_50pct_missing": 12,
+      "columns_over_90pct_missing": 9,
+      "columns_fully_missing": 0
+    }
+  },
+  "values": {
+    "label_values": {
+      "0": 569877,
+      "1": 20663
+    },
+    "fraud_rate": 0.03499,
+    "transaction_dt_min": 86400,
+    "transaction_dt_max": 15811131,
+    "transaction_dt_sorted": true,
+    "rows_sharing_a_timestamp": 33932,
+    "amount_min": 0.251,
+    "amount_max": 31937.39,
+    "amount_zero_rows": 0,
+    "amount_negative_rows": 0
+  },
+  "merge": {
+    "join": "left join of identity onto transactions on TransactionID (one-to-one validated)",
+    "transaction_rows": 590540,
+    "identity_rows": 144233,
+    "merged_rows": 590540,
+    "row_count_preserved": true,
+    "transaction_ids_unique": true,
+    "identity_rows_matched": 144233,
+    "identity_rows_orphaned": 0,
+    "transaction_dt_sorted": true,
+    "merged_columns": 435,
+    "has_identity_rate": 0.244239,
+    "merged_memory_mb_optimized_dtypes": 1536.2
+  },
+  "missingness_by_family_merged": {
+    "C": {
+      "columns": 14,
+      "mean_missing": 0.0
+    },
+    "has_identity": {
+      "columns": 1,
+      "mean_missing": 0.0
+    },
+    "TransactionID": {
+      "columns": 1,
+      "mean_missing": 0.0
+    },
+    "TransactionDT": {
+      "columns": 1,
+      "mean_missing": 0.0
+    },
+    "ProductCD": {
+      "columns": 1,
+      "mean_missing": 0.0
+    },
+    "TransactionAmt": {
+      "columns": 1,
+      "mean_missing": 0.0
+    },
+    "isFraud": {
+      "columns": 1,
+      "mean_missing": 0.0
+    },
+    "card": {
+      "columns": 6,
+      "mean_missing": 0.005053
+    },
+    "addr": {
+      "columns": 2,
+      "mean_missing": 0.111264
+    },
+    "P_emaildomain": {
+      "columns": 1,
+      "mean_missing": 0.159949
+    },
+    "V": {
+      "columns": 339,
+      "mean_missing": 0.430385
+    },
+    "M": {
+      "columns": 9,
+      "mean_missing": 0.499233
+    },
+    "D": {
+      "columns": 15,
+      "mean_missing": 0.581513
+    },
+    "DeviceType": {
+      "columns": 1,
+      "mean_missing": 0.761557
+    },
+    "dist": {
+      "columns": 2,
+      "mean_missing": 0.766404
+    },
+    "R_emaildomain": {
+      "columns": 1,
+      "mean_missing": 0.767516
+    },
+    "DeviceInfo": {
+      "columns": 1,
+      "mean_missing": 0.799055
+    },
+    "id": {
+      "columns": 38,
+      "mean_missing": 0.848233
+    }
+  },
+  "execution": {
+    "seconds": {
+      "load_transactions": 33.7,
+      "load_identity": 1.0,
+      "merge": 1.8,
+      "checks": 9.8,
+      "total": 46.3
+    },
+    "peak_memory_mb": 5078.9,
+    "peak_memory_method": "Windows PeakWorkingSetSize of this process",
+    "python": "3.11.9",
+    "pandas": "2.2.3",
+    "platform": "Windows-10-10.0.26200-SP0"
+  }
+}
