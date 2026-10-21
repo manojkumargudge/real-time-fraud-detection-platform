@@ -12,11 +12,12 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from src.data.load import DEFAULT_RAW_DIR, load_ieee_cis
 from src.features.history import HistoryConfig
 from src.models.compare import build_model_frame
 from src.serving.api import create_app
 from src.serving.model import ModelBundle, ModelBundleError
-from src.serving.online_features import entity_keys, online_model_row
+from src.serving.online_features import entity_keys, events_to_frame, online_model_row
 from src.serving.schema import TransactionEvent
 from src.serving.scorer import Scorer
 from src.serving.store import InMemoryStore
@@ -26,6 +27,7 @@ from src.streaming.processor import process_message
 
 NAMES = HistoryConfig().feature_names()
 PARITY_EVENTS = 800
+REAL_PARITY_EVENTS = 300
 
 
 def event(**overrides: Any) -> dict[str, Any]:
@@ -189,6 +191,81 @@ class TestTrainServeParity:
             )
         )
         assert res.history_rows == 0 and 0 <= res.score <= 1
+
+
+class TestParityEdgeCases:
+    """Exact parity holds for chronological replay; late arrival and cold start diverge."""
+
+    def replay(self, bundle: ModelBundle, arrivals: list[dict[str, Any]]) -> dict[int, dict]:
+        scorer = Scorer(bundle, InMemoryStore())
+        out = {}
+        for e in arrivals:
+            res = scorer.score_event(TransactionEvent.model_validate(e))
+            out[res.transaction_id] = res.history_features
+        return out
+
+    def batch(self, bundle: ModelBundle, events: list[dict[str, Any]]) -> dict[int, dict]:
+        records = [TransactionEvent.model_validate(e).to_record() for e in events]
+        frame = build_model_frame(events_to_frame(records), "baseline", bundle.history_config)
+        feats = frame.set_index("TransactionID")[NAMES].astype("float64")
+        return {
+            int(i): {k: (None if np.isnan(v) else float(v)) for k, v in row.items()}
+            for i, row in feats.iterrows()
+        }
+
+    EDGE_EVENTS = [
+        event(TransactionID=1, TransactionDT=1_000, DeviceInfo="a", has_identity=True),
+        event(TransactionID=2, TransactionDT=1_000, DeviceInfo="b", has_identity=True),  # tie
+        event(TransactionID=3, TransactionDT=1_000, card1=None),  # missing entity key
+        event(TransactionID=4, TransactionDT=2_000, addr1=None),  # coarse uid, same card_id
+        event(TransactionID=5, TransactionDT=3_000, DeviceInfo="a", has_identity=True),
+        event(TransactionID=6, TransactionDT=3_000, card1=2222),  # unseen entity
+        event(TransactionID=7, TransactionDT=4_600, TransactionAmt=500.0),  # exactly 1h after 1, 2
+        event(TransactionID=8, TransactionDT=4_600, card1=None),
+    ]
+
+    @pytest.mark.parametrize("tie_order", ["by_id", "reversed"])
+    def test_chronological_replay_matches_batch_on_edge_cases(
+        self, bundle: ModelBundle, tie_order: str
+    ) -> None:
+        arrivals = sorted(
+            self.EDGE_EVENTS,
+            key=lambda e: (
+                e["TransactionDT"],
+                e["TransactionID"] if tie_order == "by_id" else -e["TransactionID"],
+            ),
+        )
+        assert self.replay(bundle, arrivals) == self.batch(bundle, self.EDGE_EVENTS)
+
+    def test_edge_case_values(self, bundle: ModelBundle) -> None:
+        f = self.batch(bundle, self.EDGE_EVENTS)
+        assert f[1]["uid_prior_txn_count"] == f[2]["uid_prior_txn_count"] == 0  # ties unseen
+        assert f[3]["uid_prior_txn_count"] is None  # no card1 -> no entity -> NaN
+        assert f[4]["uid_prior_txn_count"] == 0  # addr1 missing -> different uid
+        assert f[4]["card_addr1_changed"] is None  # current addr1 unknown -> no flag
+        # Tied rows at t=1000 are ordered by TransactionID, so the last known device is "b"
+        # (id 2), not "a"; the device-less t=2000 row does not overwrite it.
+        assert f[5]["uid_prior_txn_count"] == 2 and f[5]["card_deviceinfo_changed"] == 1.0
+        assert f[6]["uid_prior_txn_count"] == 0 and f[6]["uid_prior_amt_mean"] is None
+        assert f[7]["uid_txn_count_1h"] == 3  # [1000, 4600) includes the t=1000 ties and t=3000
+
+    def test_late_arrival_diverges_from_batch_without_using_future_data(
+        self, bundle: ModelBundle
+    ) -> None:
+        x, y, z = (event(TransactionID=i, TransactionDT=100 * i) for i in (1, 2, 3))
+        batch = self.batch(bundle, [x, y, z])
+        online = self.replay(bundle, [y, x, z])  # x arrives after y was already scored
+        assert batch[2]["uid_prior_txn_count"] == 1
+        assert online[2]["uid_prior_txn_count"] == 0  # y never sees late x: a known divergence
+        assert online[1] == batch[1]  # x is not affected by the already-stored, later y
+        assert online[3] == batch[3]  # z arrives after both and matches batch exactly
+
+    def test_cold_start_has_no_history_until_replayed(self, bundle: ModelBundle) -> None:
+        history = [event(TransactionID=i, TransactionDT=100 * i) for i in (1, 2)]
+        scored = event(TransactionID=3, TransactionDT=300)
+        assert self.batch(bundle, [*history, scored])[3]["uid_prior_txn_count"] == 2
+        assert self.replay(bundle, [scored])[3]["uid_prior_txn_count"] == 0  # empty store
+        assert self.replay(bundle, [*history, scored])[3]["uid_prior_txn_count"] == 2
 
 
 class TestDuplicates:
@@ -379,3 +456,25 @@ class TestConsumerLoop:
     def test_idle_timeout_stops(self, scorer: Scorer) -> None:
         counts = consumer_mod.run(FakeConsumer([]), scorer, "t", idle_timeout=0)  # type: ignore[arg-type]
         assert sum(counts.values()) == 0
+
+
+@pytest.mark.real_data
+@pytest.mark.skipif(
+    not (DEFAULT_RAW_DIR / "train_transaction.csv").is_file(),
+    reason="IEEE-CIS dataset not downloaded",
+)
+def test_real_data_online_replay_matches_batch(bundle: ModelBundle) -> None:
+    """First N real transactions replayed in time order == batch features from the full file."""
+    df = load_ieee_cis(DEFAULT_RAW_DIR, usecols=[])
+    cfg = bundle.history_config
+    events = replay_events(df.iloc[: REAL_PARITY_EVENTS * 2])[:REAL_PARITY_EVENTS]
+    ids = [e["TransactionID"] for e in events]
+    batch = build_model_frame(df, "baseline", cfg).set_index("TransactionID").loc[ids]
+
+    scorer = Scorer(bundle, InMemoryStore())
+    results = [scorer.score_event(TransactionEvent.model_validate(e)) for e in events]
+    online = pd.DataFrame([r.history_features for r in results], index=ids, columns=NAMES)
+    pd.testing.assert_frame_equal(
+        online, batch[NAMES].astype("float64"), check_names=False, check_index_type=False
+    )
+    np.testing.assert_allclose([r.score for r in results], bundle.predict(batch), rtol=1e-6)

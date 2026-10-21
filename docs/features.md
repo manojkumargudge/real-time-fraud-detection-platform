@@ -253,6 +253,10 @@ later activity, or labels, into earlier rows.
 
 ## 7. Known limitations and risks
 
+The audit in [`audit_milestone2.md`](audit_milestone2.md) adds measured entity overlap and an
+identifier-input ablation: validation PR-AUC falls from 0.2504 to 0.2107 without the raw card
+and address codes.
+
 - **Coarse proxy (§1).** The high change rates (54% address, 62% device) mostly reflect several
   customers sharing one `card_id`, not real behaviour changes. These flags may carry little
   signal. That is a hypothesis for Milestone 3, not a finding.

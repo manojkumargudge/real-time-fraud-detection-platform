@@ -232,3 +232,62 @@ def test_same_seed_is_deterministic(data: pd.DataFrame) -> None:
     for v in compare.VARIANTS:
         assert a[v]["average_precision"] == b[v]["average_precision"]
         assert a[v]["at_threshold"] == b[v]["at_threshold"]
+
+
+class TestEncoderFitScope:
+    """Encoders must be fitted on training rows only (labels are not needed to leak features)."""
+
+    MARKER = "validation-only.example"
+
+    def with_validation_only_category(self, data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+        from src.features.split import time_cutoff
+
+        valid = data["TransactionDT"] >= time_cutoff(data["TransactionDT"], FAST.valid_fraction)
+        marked = data.copy()
+        domain = marked["P_emaildomain"].astype(object)
+        domain[valid.to_numpy()] = self.MARKER
+        marked["P_emaildomain"] = domain
+        return marked, valid
+
+    def test_train_variant_vocab_excludes_validation_only_values(self, data: pd.DataFrame) -> None:
+        marked, valid = self.with_validation_only_category(data)
+        cfg = compare.HistoryConfig()
+        frame = compare.build_model_frame(marked, "baseline", cfg)
+        trained = compare.train_variant(frame[~valid], compare.feature_columns(cfg), FAST)
+        assert self.MARKER not in trained.encoder.vocab_["P_emaildomain"]
+        codes = trained.encoder.transform(frame[valid])["P_emaildomain"]
+        assert (codes == -1).all()  # unseen at training time -> the documented UNSEEN code
+
+    def test_saved_bundle_vocab_excludes_validation_only_values(self, data: pd.DataFrame) -> None:
+        from src.models.train import train_baseline
+
+        marked, _ = self.with_validation_only_category(data)
+        _, metadata = train_baseline(marked, FAST)
+        assert self.MARKER not in metadata["encoder"]["vocab"]["P_emaildomain"]
+
+
+class TestLeakageAudit:
+    def test_entity_overlap_hand_computed(self) -> None:
+        from src.models.leakage_audit import entity_overlap
+
+        train_key = pd.Series(["a", "a", "b", None])
+        train_y = pd.Series([0, 1, 0, 1])  # "a" had fraud; the None-key fraud is ignored
+        valid_key = pd.Series(["a", "b", "c", None])
+        valid_y = pd.Series([1, 0, 0, 0])
+        o = entity_overlap(train_key, valid_key, train_y, valid_y)
+        assert o["valid_rows_entity_seen_in_train"] == 0.5  # a, b of 4 rows
+        assert o["valid_entities"] == 3 and o["valid_entities_seen_in_train"] == round(2 / 3, 4)
+        assert o["valid_rows_entity_had_train_fraud"] == 0.25
+        assert o["valid_fraud_rate_if_entity_had_train_fraud"] == 1.0
+        assert o["valid_fraud_rate_otherwise"] == 0.0
+
+    def test_audit_runs_and_removes_only_identifier_inputs(self, data: pd.DataFrame) -> None:
+        from src.models.leakage_audit import IDENTIFIER_INPUTS, run_audit
+
+        r = run_audit(data, FAST)
+        a = r["identifier_ablation"]
+        assert a["all_inputs"]["n_inputs"] - a["without_identifier_inputs"]["n_inputs"] == len(
+            IDENTIFIER_INPUTS
+        )
+        assert set(r["entity_overlap"]) == {"card_id", "uid"}
+        assert "|" not in json.dumps(r)  # no entity key strings in the report

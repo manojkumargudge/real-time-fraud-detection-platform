@@ -1,0 +1,56 @@
+{
+  "dataset": "IEEE-CIS train",
+  "split": {
+    "train_end": 12192900,
+    "valid_start": 12192900,
+    "train_rows": 472432,
+    "valid_rows": 118108
+  },
+  "seed": 42,
+  "identifier_inputs_removed": [
+    "card1",
+    "card2",
+    "card3",
+    "card5",
+    "addr1",
+    "addr2"
+  ],
+  "entity_overlap": {
+    "card_id": {
+      "valid_rows_entity_seen_in_train": 0.9858,
+      "valid_entities": 7474,
+      "valid_entities_seen_in_train": 0.8527,
+      "valid_rows_entity_had_train_fraud": 0.7428,
+      "valid_fraud_rate_if_entity_had_train_fraud": 0.0415,
+      "valid_fraud_rate_otherwise": 0.0139
+    },
+    "uid": {
+      "valid_rows_entity_seen_in_train": 0.9514,
+      "valid_entities": 16889,
+      "valid_entities_seen_in_train": 0.7672,
+      "valid_rows_entity_had_train_fraud": 0.4976,
+      "valid_fraud_rate_if_entity_had_train_fraud": 0.053,
+      "valid_fraud_rate_otherwise": 0.016
+    }
+  },
+  "identifier_ablation": {
+    "all_inputs": {
+      "n_inputs": 28,
+      "valid_average_precision": 0.2504,
+      "holdout_average_precision": 0.2513,
+      "precision": 0.2637,
+      "recall": 0.4193,
+      "flagged_rate": 0.0547,
+      "seconds": 39.8
+    },
+    "without_identifier_inputs": {
+      "n_inputs": 22,
+      "valid_average_precision": 0.2107,
+      "holdout_average_precision": 0.2213,
+      "precision": 0.2477,
+      "recall": 0.3467,
+      "flagged_rate": 0.0482,
+      "seconds": 32.8
+    }
+  }
+}
