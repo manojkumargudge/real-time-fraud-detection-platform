@@ -1,0 +1,177 @@
+{
+  "dataset": "IEEE-CIS train (labelled file only)",
+  "split": {
+    "train_end": 12192900,
+    "valid_start": 12192900,
+    "train_rows": 472432,
+    "valid_rows": 118108,
+    "valid_fraud_prevalence": 0.034409184813899145,
+    "valid_id_digest": "5ee0ab4d5e34f968"
+  },
+  "config": {
+    "valid_fraction": 0.2,
+    "holdout_fraction": 0.2,
+    "seed": 42,
+    "max_rounds": 2000,
+    "early_stopping_rounds": 100,
+    "bootstrap_resamples": 500,
+    "xgb_params": {
+      "objective": "binary:logistic",
+      "eval_metric": "aucpr",
+      "max_depth": 8,
+      "eta": 0.05,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "min_child_weight": 1.0,
+      "tree_method": "hist"
+    },
+    "history_windows": {
+      "1h": 3600,
+      "24h": 86400,
+      "7d": 604800,
+      "30d": 2592000
+    }
+  },
+  "features": {
+    "model_inputs": [
+      "TransactionAmt",
+      "card1",
+      "card2",
+      "card3",
+      "card5",
+      "addr1",
+      "addr2",
+      "dist1",
+      "has_identity",
+      "ProductCD",
+      "card4",
+      "card6",
+      "P_emaildomain",
+      "R_emaildomain",
+      "DeviceType",
+      "DeviceInfo",
+      "uid_prior_txn_count",
+      "uid_txn_count_1h",
+      "uid_txn_count_24h",
+      "uid_txn_count_7d",
+      "uid_txn_count_30d",
+      "uid_seconds_since_prev_txn",
+      "uid_prior_amt_mean",
+      "uid_amt_to_prior_mean",
+      "card_deviceinfo_changed",
+      "card_devicetype_changed",
+      "card_addr1_changed",
+      "card_addr2_changed"
+    ],
+    "excluded": [
+      "TransactionID",
+      "TransactionDT",
+      "isFraud",
+      "D1",
+      "card_id",
+      "uid"
+    ]
+  },
+  "variants": {
+    "baseline": "history keys card_id / uid",
+    "candidate": "history keys card_d1 / uid_d1 (estimated account-start day from D1)"
+  },
+  "feature_audit": {
+    "TransactionAmt, card1-3, card5, addr1, addr2, dist1, categorical fields": "fields of the scored transaction itself; known at authorisation; no labels",
+    "has_identity": "identity row exists for this transaction; assumed captured at authorisation",
+    "uid_* history": "strictly earlier rows of the same entity; no labels (tested)",
+    "card_*_changed": "last known value among strictly earlier rows; no labels (tested)",
+    "candidate keys (D1)": "UNRESOLVED: D1 is undocumented by the provider. It is assumed to be a backward-looking day count delivered with the transaction. If the provider derived it with hindsight, the candidate keys could carry future information. Raw D1 is excluded from model inputs."
+  },
+  "results": {
+    "baseline": {
+      "average_precision": 0.2504409401014052,
+      "at_threshold": {
+        "threshold": 0.6721238493919373,
+        "tp": 1704,
+        "fp": 4757,
+        "tn": 109287,
+        "fn": 2360,
+        "precision": 0.26373626373626374,
+        "recall": 0.41929133858267714,
+        "f1": 0.3238004750593824,
+        "flagged": 6461,
+        "flagged_rate": 0.05470416906560097,
+        "prevalence": 0.034409184813899145
+      },
+      "threshold_source": "max F1 on chronological training holdout (stage 1)",
+      "holdout_average_precision": 0.25131436449578626,
+      "best_rounds": 319,
+      "scale_pos_weight": 27.46147358274595,
+      "top10_gain_features": [
+        "R_emaildomain",
+        "addr2",
+        "card6",
+        "ProductCD",
+        "card3",
+        "TransactionAmt",
+        "DeviceType",
+        "P_emaildomain",
+        "uid_seconds_since_prev_txn",
+        "card2"
+      ],
+      "seconds": {
+        "features": 2.8,
+        "train": 33.8,
+        "evaluate": 0.5
+      }
+    },
+    "candidate": {
+      "average_precision": 0.26853028776411897,
+      "at_threshold": {
+        "threshold": 0.7280752658843994,
+        "tp": 1425,
+        "fp": 3214,
+        "tn": 110830,
+        "fn": 2639,
+        "precision": 0.30717827117913343,
+        "recall": 0.35063976377952755,
+        "f1": 0.3274732850741124,
+        "flagged": 4639,
+        "flagged_rate": 0.039277610322755445,
+        "prevalence": 0.034409184813899145
+      },
+      "threshold_source": "max F1 on chronological training holdout (stage 1)",
+      "holdout_average_precision": 0.2885500395648724,
+      "best_rounds": 437,
+      "scale_pos_weight": 27.46147358274595,
+      "top10_gain_features": [
+        "addr2",
+        "R_emaildomain",
+        "uid_txn_count_7d",
+        "card6",
+        "card3",
+        "ProductCD",
+        "DeviceType",
+        "uid_seconds_since_prev_txn",
+        "TransactionAmt",
+        "uid_txn_count_30d"
+      ],
+      "seconds": {
+        "features": 5.0,
+        "train": 43.4,
+        "evaluate": 1.2
+      }
+    }
+  },
+  "ap_delta_candidate_minus_baseline_day_bootstrap": {
+    "resamples": 500,
+    "days": 42,
+    "delta_mean": 0.018189393621582072,
+    "ci95_low": 0.006650016665692424,
+    "ci95_high": 0.030563343675944602,
+    "share_b_better": 1.0
+  },
+  "environment": {
+    "python": "3.11.9",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "numpy": "1.26.4",
+    "pandas": "2.2.3",
+    "xgboost": "2.1.4"
+  }
+}

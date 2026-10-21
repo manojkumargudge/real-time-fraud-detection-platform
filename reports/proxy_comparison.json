@@ -1,0 +1,250 @@
+{
+  "dataset": "IEEE-CIS train",
+  "rows": 590540,
+  "train_rows_for_fraud_rate_tables": 472432,
+  "d1": {
+    "missing_rate": 0.00215,
+    "min": 0.0,
+    "max": 640.0,
+    "zero_rate": 0.4744,
+    "zero_rate_by_product": {
+      "C": 0.7263,
+      "H": 0.9484,
+      "R": 0.8857,
+      "S": 0.4133,
+      "W": 0.3658
+    },
+    "missing_rate_by_30_day_block": {
+      "0": 0.0,
+      "1": 2e-05,
+      "2": 2e-05,
+      "3": 0.00274,
+      "4": 0.01142,
+      "5": 0.0,
+      "6": 0.00746
+    }
+  },
+  "group_sizes": {
+    "card_id": {
+      "entities": 14893,
+      "singletons": 4103,
+      "size_p50": 4.0,
+      "size_p90": 41.0,
+      "size_p99": 674.3,
+      "size_max": 14112,
+      "row_weighted_size_p50": 838.0,
+      "pct_rows_in_groups_gt_100": 76.86,
+      "pct_rows_in_groups_gt_500": 57.62,
+      "pct_rows_in_groups_gt_1000": 45.87
+    },
+    "uid": {
+      "entities": 43018,
+      "singletons": 17358,
+      "size_p50": 2.0,
+      "size_p90": 21.0,
+      "size_p99": 187.0,
+      "size_max": 9900,
+      "row_weighted_size_p50": 114.0,
+      "pct_rows_in_groups_gt_100": 52.18,
+      "pct_rows_in_groups_gt_500": 28.25,
+      "pct_rows_in_groups_gt_1000": 17.88
+    },
+    "card_d1": {
+      "entities": 154233,
+      "singletons": 74001,
+      "size_p50": 2.0,
+      "size_p90": 8.0,
+      "size_p99": 32.0,
+      "size_max": 1414,
+      "row_weighted_size_p50": 8.0,
+      "pct_rows_in_groups_gt_100": 2.18,
+      "pct_rows_in_groups_gt_500": 0.24,
+      "pct_rows_in_groups_gt_1000": 0.24
+    },
+    "uid_d1": {
+      "entities": 222493,
+      "singletons": 128982,
+      "size_p50": 1.0,
+      "size_p90": 6.0,
+      "size_p99": 20.0,
+      "size_max": 1414,
+      "row_weighted_size_p50": 5.0,
+      "pct_rows_in_groups_gt_100": 0.87,
+      "pct_rows_in_groups_gt_500": 0.24,
+      "pct_rows_in_groups_gt_1000": 0.24
+    },
+    "card_d1_null": {
+      "entities": 277989,
+      "singletons": 193049,
+      "size_p50": 1.0,
+      "size_p90": 4.0,
+      "size_p99": 18.0,
+      "size_max": 382,
+      "row_weighted_size_p50": 3.0,
+      "pct_rows_in_groups_gt_100": 0.87,
+      "pct_rows_in_groups_gt_500": 0.0,
+      "pct_rows_in_groups_gt_1000": 0.0
+    },
+    "uid_d1_null": {
+      "entities": 398173,
+      "singletons": 315359,
+      "size_p50": 1.0,
+      "size_p90": 2.0,
+      "size_p99": 8.0,
+      "size_max": 400,
+      "row_weighted_size_p50": 1.0,
+      "pct_rows_in_groups_gt_100": 0.3,
+      "pct_rows_in_groups_gt_500": 0.0,
+      "pct_rows_in_groups_gt_1000": 0.0
+    }
+  },
+  "non_key_purity": {
+    "card_id": {
+      "P_emaildomain": 0.5072,
+      "DeviceInfo": 0.4551
+    },
+    "uid": {
+      "P_emaildomain": 0.5488,
+      "DeviceInfo": 0.5037
+    },
+    "card_d1": {
+      "P_emaildomain": 0.7547,
+      "DeviceInfo": 0.6343
+    },
+    "uid_d1": {
+      "P_emaildomain": 0.841,
+      "DeviceInfo": 0.7088
+    },
+    "card_d1_null": {
+      "P_emaildomain": 0.5914,
+      "DeviceInfo": 0.5708
+    },
+    "uid_d1_null": {
+      "P_emaildomain": 0.6595,
+      "DeviceInfo": 0.6369
+    }
+  },
+  "change_flags": {
+    "card_id": {
+      "flag_deviceinfo_changed": {
+        "null_rate": 0.8125,
+        "change_rate_non_null": 0.6098,
+        "train_fraud_rate_when_1": 0.0615,
+        "train_fraud_rate_when_0": 0.0891
+      },
+      "flag_devicetype_changed": {
+        "null_rate": 0.7761,
+        "change_rate_non_null": 0.3525,
+        "train_fraud_rate_when_1": 0.0745,
+        "train_fraud_rate_when_0": 0.0826
+      },
+      "flag_addr1_changed": {
+        "null_rate": 0.1337,
+        "change_rate_non_null": 0.5321,
+        "train_fraud_rate_when_1": 0.0236,
+        "train_fraud_rate_when_0": 0.0268
+      },
+      "flag_addr2_changed": {
+        "null_rate": 0.1337,
+        "change_rate_non_null": 0.0007,
+        "train_fraud_rate_when_1": 0.0809,
+        "train_fraud_rate_when_0": 0.025
+      }
+    },
+    "card_d1": {
+      "flag_deviceinfo_changed": {
+        "null_rate": 0.8789,
+        "change_rate_non_null": 0.4879,
+        "train_fraud_rate_when_1": 0.0563,
+        "train_fraud_rate_when_0": 0.094
+      },
+      "flag_devicetype_changed": {
+        "null_rate": 0.8501,
+        "change_rate_non_null": 0.2834,
+        "train_fraud_rate_when_1": 0.0697,
+        "train_fraud_rate_when_0": 0.09
+      },
+      "flag_addr1_changed": {
+        "null_rate": 0.3454,
+        "change_rate_non_null": 0.3099,
+        "train_fraud_rate_when_1": 0.0221,
+        "train_fraud_rate_when_0": 0.0298
+      },
+      "flag_addr2_changed": {
+        "null_rate": 0.3454,
+        "change_rate_non_null": 0.0005,
+        "train_fraud_rate_when_1": 0.0993,
+        "train_fraud_rate_when_0": 0.0272
+      }
+    },
+    "card_d1_null": {
+      "flag_deviceinfo_changed": {
+        "null_rate": 0.9076,
+        "change_rate_non_null": 0.6102,
+        "train_fraud_rate_when_1": 0.0637,
+        "train_fraud_rate_when_0": 0.0953
+      },
+      "flag_devicetype_changed": {
+        "null_rate": 0.8834,
+        "change_rate_non_null": 0.3567,
+        "train_fraud_rate_when_1": 0.0796,
+        "train_fraud_rate_when_0": 0.0901
+      },
+      "flag_addr1_changed": {
+        "null_rate": 0.5457,
+        "change_rate_non_null": 0.6568,
+        "train_fraud_rate_when_1": 0.0269,
+        "train_fraud_rate_when_0": 0.0303
+      },
+      "flag_addr2_changed": {
+        "null_rate": 0.5457,
+        "change_rate_non_null": 0.0006,
+        "train_fraud_rate_when_1": 0.1007,
+        "train_fraud_rate_when_0": 0.028
+      }
+    },
+    "uid": {
+      "flag_deviceinfo_changed": {
+        "null_rate": 0.8338,
+        "change_rate_non_null": 0.5812,
+        "train_fraud_rate_when_1": 0.0664,
+        "train_fraud_rate_when_0": 0.0913
+      },
+      "flag_devicetype_changed": {
+        "null_rate": 0.7982,
+        "change_rate_non_null": 0.3401,
+        "train_fraud_rate_when_1": 0.0774,
+        "train_fraud_rate_when_0": 0.0878
+      }
+    },
+    "uid_d1": {
+      "flag_deviceinfo_changed": {
+        "null_rate": 0.9063,
+        "change_rate_non_null": 0.4061,
+        "train_fraud_rate_when_1": 0.0715,
+        "train_fraud_rate_when_0": 0.0993
+      },
+      "flag_devicetype_changed": {
+        "null_rate": 0.8791,
+        "change_rate_non_null": 0.2465,
+        "train_fraud_rate_when_1": 0.0837,
+        "train_fraud_rate_when_0": 0.1006
+      }
+    },
+    "uid_d1_null": {
+      "flag_deviceinfo_changed": {
+        "null_rate": 0.9319,
+        "change_rate_non_null": 0.539,
+        "train_fraud_rate_when_1": 0.0768,
+        "train_fraud_rate_when_0": 0.1069
+      },
+      "flag_devicetype_changed": {
+        "null_rate": 0.909,
+        "change_rate_non_null": 0.3237,
+        "train_fraud_rate_when_1": 0.0891,
+        "train_fraud_rate_when_0": 0.1055
+      }
+    }
+  },
+  "runtime_seconds": 41.0
+}

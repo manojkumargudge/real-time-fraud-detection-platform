@@ -35,6 +35,15 @@ python -m venv .venv
 
 Dataset download instructions: [data/README.md](data/README.md).
 
+## Progress
+
+- Milestone 1: validated IEEE-CIS loader and EDA ([reports/eda_summary.md](reports/eda_summary.md)).
+- Milestone 2: leakage-safe entity features, chronological split, train-only encoding
+  ([docs/features.md](docs/features.md)). Run: `.venv\Scripts\python -m src.features.build`.
+- Milestone 2 experiment: XGBoost comparison of default vs D1-based entity keys
+  ([reports/model_comparison.md](reports/model_comparison.md)). Run:
+  `.venv\Scripts\python -m src.models.compare` and `python -m src.models.robustness`.
+
 ## Documentation
 
 Architecture, installation instructions, API documentation, test results,

@@ -1,0 +1,171 @@
+{
+  "dataset": "IEEE-CIS train",
+  "rows": 590540,
+  "distinct_uid": 43018,
+  "distinct_card_id": 14893,
+  "rows_missing_uid": 0,
+  "split": {
+    "boundary": {
+      "train_end": 12192900,
+      "valid_start": 12192900,
+      "gap_seconds": 0
+    },
+    "rows": {
+      "train": 472432,
+      "valid": 118108
+    },
+    "fraud_rate": {
+      "train": 0.03514,
+      "valid": 0.03441
+    },
+    "max_train_dt_lt_min_valid_dt": true,
+    "valid_rows_with_uid_unseen_in_train": 0.0486,
+    "valid_rows_with_no_prior_uid_history": 0.0333,
+    "encoder_vocab_sizes": {
+      "ProductCD": 5,
+      "card4": 4,
+      "card6": 4,
+      "P_emaildomain": 59,
+      "R_emaildomain": 60,
+      "DeviceType": 2,
+      "DeviceInfo": 1639
+    },
+    "valid_unseen_category_rate": {
+      "ProductCD": 0.0,
+      "card4": 0.0,
+      "card6": 0.0,
+      "P_emaildomain": 0.0,
+      "R_emaildomain": 0.0,
+      "DeviceType": 0.0,
+      "DeviceInfo": 0.0032
+    },
+    "features_train": {
+      "uid_prior_txn_count": {
+        "null_rate": 0.0,
+        "mean": 302.8208,
+        "p50": 34.0
+      },
+      "uid_txn_count_1h": {
+        "null_rate": 0.0,
+        "mean": 0.4788,
+        "p50": 0.0
+      },
+      "uid_txn_count_24h": {
+        "null_rate": 0.0,
+        "mean": 5.3181,
+        "p50": 1.0
+      },
+      "uid_txn_count_7d": {
+        "null_rate": 0.0,
+        "mean": 33.3481,
+        "p50": 5.0
+      },
+      "uid_txn_count_30d": {
+        "null_rate": 0.0,
+        "mean": 120.2656,
+        "p50": 17.0
+      },
+      "uid_seconds_since_prev_txn": {
+        "null_rate": 0.0827,
+        "mean": 322690.25,
+        "p50": 32990.0
+      },
+      "uid_prior_amt_mean": {
+        "null_rate": 0.0827,
+        "mean": 126.946,
+        "p50": 108.1941
+      },
+      "uid_amt_to_prior_mean": {
+        "null_rate": 0.0827,
+        "mean": 1.1637,
+        "p50": 0.7273
+      },
+      "card_deviceinfo_changed": {
+        "null_rate": 0.8051,
+        "mean": 0.6191,
+        "p50": 1.0
+      },
+      "card_devicetype_changed": {
+        "null_rate": 0.7679,
+        "mean": 0.3581,
+        "p50": 0.0
+      },
+      "card_addr1_changed": {
+        "null_rate": 0.1399,
+        "mean": 0.5386,
+        "p50": 1.0
+      },
+      "card_addr2_changed": {
+        "null_rate": 0.1399,
+        "mean": 0.0008,
+        "p50": 0.0
+      }
+    },
+    "features_valid": {
+      "uid_prior_txn_count": {
+        "null_rate": 0.0,
+        "mean": 679.5463,
+        "p50": 106.0
+      },
+      "uid_txn_count_1h": {
+        "null_rate": 0.0,
+        "mean": 1.3012,
+        "p50": 0.0
+      },
+      "uid_txn_count_24h": {
+        "null_rate": 0.0,
+        "mean": 8.1853,
+        "p50": 1.0
+      },
+      "uid_txn_count_7d": {
+        "null_rate": 0.0,
+        "mean": 32.5757,
+        "p50": 5.0
+      },
+      "uid_txn_count_30d": {
+        "null_rate": 0.0,
+        "mean": 120.7043,
+        "p50": 20.0
+      },
+      "uid_seconds_since_prev_txn": {
+        "null_rate": 0.0333,
+        "mean": 554088.0,
+        "p50": 48674.0
+      },
+      "uid_prior_amt_mean": {
+        "null_rate": 0.0333,
+        "mean": 132.2438,
+        "p50": 114.1094
+      },
+      "uid_amt_to_prior_mean": {
+        "null_rate": 0.0333,
+        "mean": 1.0868,
+        "p50": 0.682
+      },
+      "card_deviceinfo_changed": {
+        "null_rate": 0.8425,
+        "mean": 0.5642,
+        "p50": 1.0
+      },
+      "card_devicetype_changed": {
+        "null_rate": 0.8088,
+        "mean": 0.3255,
+        "p50": 0.0
+      },
+      "card_addr1_changed": {
+        "null_rate": 0.1089,
+        "mean": 0.5071,
+        "p50": 1.0
+      },
+      "card_addr2_changed": {
+        "null_rate": 0.1089,
+        "mean": 0.0006,
+        "p50": 0.0
+      }
+    }
+  },
+  "runtime_seconds": {
+    "load_and_features": 14.5,
+    "total": 17.0
+  }
+}

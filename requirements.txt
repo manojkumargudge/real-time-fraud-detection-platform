@@ -2,3 +2,6 @@
 # Pinned conservatively for later compatibility with Feast, Evidently and torch.
 numpy==1.26.4
 pandas==2.2.3
+# Milestone 2: model comparison (native XGBoost API; scikit-learn not required).
+xgboost==2.1.4
+scipy==1.17.1

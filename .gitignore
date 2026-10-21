@@ -21,7 +21,7 @@ data/raw/
 data/processed/
 mlruns/
 artifacts/
-models/
+/models/
 *.pkl
 *.joblib
 *.pt
