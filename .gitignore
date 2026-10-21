@@ -1,0 +1,50 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Datasets and generated ML artifacts
+data/raw/
+data/processed/
+mlruns/
+artifacts/
+models/
+*.pkl
+*.joblib
+*.pt
+*.pth
+*.onnx
+
+# Frontend
+node_modules/
+dist/
+build/
+coverage/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# Local databases
+*.db
+*.sqlite3
