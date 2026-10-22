@@ -1,6 +1,10 @@
 # Local development stack: single-node Kafka (KRaft, no ZooKeeper), PostgreSQL, API, consumer.
 # Prerequisites: `python -m src.models.train` (creates artifacts/baseline) and a .env file
 # with POSTGRES_PASSWORD (see .env.example). Not a hardened production deployment.
+#
+# Lifecycle: Compose here otherwise creates containers with StopTimeout=1, so every service
+# sets stop_grace_period explicitly. `unless-stopped` restarts after a crash or a Docker
+# restart but respects an intentional `docker compose stop`.
 name: fraud-platform
 
 x-app-env: &app-env
@@ -31,6 +35,14 @@ services:
       KAFKA_NUM_PARTITIONS: 3
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+      # Without this the broker writes to /tmp/kafka-logs inside the container layer, so
+      # recreating the container discards every topic and committed consumer offset.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafkadata:/var/lib/kafka/data
+    # Controlled shutdown flushes and closes all partition logs; a kill forces log recovery.
+    stop_grace_period: 60s
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 10s
@@ -47,6 +59,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # The image stops with SIGINT (fast shutdown: roll back sessions, final checkpoint);
+    # the checkpoint needs time to flush dirty buffers, a kill forces crash recovery.
+    stop_grace_period: 60s
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fraud -d fraud"]
       interval: 5s
@@ -63,6 +79,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Stateless: uvicorn and the store close in about 1 s.
+    stop_grace_period: 10s
+    # If PostgreSQL is still unavailable the API exits at startup and is retried with
+    # Docker's growing back-off until it is.
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 10s
@@ -80,7 +101,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    restart: on-failure
+    # SIGTERM finishes and commits the in-flight message, then leaves the consumer group.
+    stop_grace_period: 30s
+    # Not on-failure: a graceful SIGTERM exits 0, so on-failure would leave the consumer down
+    # after a Docker restart while Kafka, PostgreSQL and the API come back.
+    restart: unless-stopped
 
 volumes:
   pgdata:
+  kafkadata:

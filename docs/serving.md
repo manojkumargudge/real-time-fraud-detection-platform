@@ -53,6 +53,19 @@ Field names follow IEEE-CIS, so the batch code and online code read the same col
 Unknown fields are **rejected**, including `isFraud` and `D1`. A client therefore cannot pass
 the label or experimental inputs into scoring.
 
+**Range limits** (added in the hardening audit; out-of-range events get HTTP 422 or are skipped
+as invalid by the consumer):
+
+- `TransactionID` and `card1` must be within ±(2^53 − 1). IDs pass through float64 in the
+  feature path, so larger IDs failed with an error. Larger `card1` values collided on one card
+  key, sharing history between unrelated cards.
+- `TransactionDT` must be at most 2^40 seconds. This keeps the history index's int64 keys
+  in range, and it also rejects millisecond timestamps.
+- Text fields must not contain NUL (`\u0000`), which PostgreSQL `JSONB` cannot store.
+
+Before these limits, such events passed validation and then failed on every attempt. For the
+consumer that meant a crash loop on one uncommitted message.
+
 **Kafka message format:**
 
 - value: JSON of the event;
@@ -102,10 +115,110 @@ The score row and its alert row are written in one database transaction using
 - **Not exactly-once.** This is idempotent at-least-once processing, not Kafka exactly-once.
 - **Conflicting payloads:** a redelivered ID returns the stored score. If the payload differs,
   a warning is logged.
-- **Invalid messages** (bad JSON or schema violations) are logged and skipped, so they cannot
-  block a partition. There is no dead-letter topic yet.
-- **Infrastructure errors** (for example, the database is down) stop the consumer *without*
-  committing the offset.
+- **Invalid messages and failed events** go to the dead-letter topic, and database outages are
+  retried. See *Reliability* below.
+- **Shutdown:** on SIGTERM/SIGINT (`docker stop`, Ctrl+C), the consumer finishes and commits
+  the current message, leaves the consumer group and closes the database connection. During
+  a retry wait the message is left uncommitted instead and is redelivered after restart. The API
+  closes the store it opened when it shuts down.
+  - Python runs as PID 1 in the container, and the kernel ignores SIGTERM for PID 1 unless a
+    handler is installed. Before the fix, `docker stop` always waited the full grace period
+    and then SIGKILLed the consumer.
+  - Measured on 2026-10-22 against a throwaway topic:
+    - old code: 21.2 s, exit code 137, still listed as a group member;
+    - new code: 1.0 s, exit code 0, group left with offsets committed (lag 0).
+  - The images were rebuilt on 2026-10-22 and include this fix.
+- **Deterministic scoring errors** are retried 3 times and then dead-lettered, so they can
+  no longer block a partition.
+
+### Reliability: retries, dead-letter topic, offsets (`streaming/reliability.py`)
+
+**Error classes:**
+
+| Class | Examples | Handling |
+|---|---|---|
+| invalid | bad JSON, schema violation | dead-lettered on the first attempt |
+| transient | `psycopg.OperationalError` / `InterfaceError`, `ConnectionError`, `TimeoutError` | retried **indefinitely**, never dead-lettered |
+| permanent | anything else (model error, `DataError`, ...) | first attempt + **3 retries**, then dead-lettered |
+
+**Backoff:** 0.5 s, doubling, capped at 30 s, with "equal jitter" (each wait is between half
+and all of the capped delay).
+
+**While waiting:**
+- The consumer pauses its partitions but keeps calling `poll()`, so it stays in its group
+  (`max.poll.interval.ms`) and keeps serving rebalance callbacks.
+- A message that arrives while paused is rewound with `seek`.
+- A rebalance that revokes the in-flight partition abandons that message uncommitted; its new
+  owner processes it, and the primary key deduplicates.
+- SIGTERM interrupts the wait without committing.
+- A database outage therefore stalls consumption. It never skips events or floods the
+  dead-letter topic.
+
+**Dead-letter topic:** `transactions.dlq` (override with `KAFKA_DLQ_TOPIC`):
+- 1 partition, `retention.ms=2592000000` (30 days), `cleanup.policy=delete`.
+- The consumer creates it at startup, before the first write. Broker auto-creation would
+  otherwise apply the 7-day default.
+- An existing topic is never altered. A different retention is logged as a warning.
+
+**Each dead-letter record:**
+- the original key, value bytes and headers, unchanged;
+- `dlq.reason` (`invalid` or `processing_error`);
+- `dlq.source.topic`, `dlq.source.partition`, `dlq.source.offset`, `dlq.source.timestamp_ms`;
+- `dlq.attempts` and `dlq.failed_at` (UTC);
+- `dlq.error.type` and `dlq.error.detail`.
+
+Error details are sanitised: validation field locations and types, SQLSTATE, or the JSON
+parser position only, never exception text, which can echo card fields. The record still
+contains the **full original event**, including card and address fields, so access to the
+topic must be restricted in any real deployment. Its 30-day retention bounds how long they
+are kept.
+
+**Offsets:**
+- An offset is committed only after the database write or a **confirmed** dead-letter write.
+  The producer is idempotent with `acks=all`, and delivery must be confirmed.
+- If the dead-letter write fails, it is retried with backoff and nothing is committed.
+- A commit rejected by a rebalance (`ILLEGAL_GENERATION`, `UNKNOWN_MEMBER_ID`,
+  `REBALANCE_IN_PROGRESS`) is logged; the message is redelivered and deduplicated.
+- The dead-letter topic is at-least-once: a crash between its acknowledgement and the commit
+  writes a second copy, identifiable by the same `dlq.source.*` headers.
+
+**Consumer counts:** the stop log line, `consumer stopped counts=...`, reports:
+- `scored`, `duplicate`, `invalid` and `failed`: one per message;
+- `dead_lettered`: confirmed dead-letter writes;
+- `retries`;
+- `interrupted`: left uncommitted;
+- `commit_rejected`.
+
+**Operations and recovery.** In Git Bash, prefix `docker exec` with `MSYS_NO_PATHCONV=1`.
+
+- **Inspect dead letters:**
+  `docker exec fraud-platform-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic transactions.dlq --from-beginning --property print.key=true --property print.headers=true --timeout-ms 10000`
+- **Verify the retention:**
+  `docker exec fraud-platform-kafka-1 /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 --entity-type topics --entity-name transactions.dlq --describe --all | grep retention.ms`
+  It should show `2592000000`.
+- **Detect a stall:** look for rising lag in
+  `kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group fraud-scorer`
+  together with `processing failed kind=transient attempt=N` in the consumer log.
+  - This means a database or network outage. Restore the dependency and consumption resumes
+    on its own.
+  - Do not reset offsets or restart the consumer in a loop.
+- **Dead-letter topic unavailable:** the log shows `DLQ write failed attempt=N`. The consumer
+  holds that one message uncommitted until Kafka accepts the write, then continues.
+- **Replay after a fix:** review the record, then produce its value back to `transactions` with
+  the same key. IDs that are already stored become no-ops, and dead-letter records stay for
+  audit until retention removes them.
+- **Never do this to "unstick" the consumer:**
+  - delete the dead-letter topic;
+  - reset `fraud-scorer` offsets;
+  - truncate tables.
+
+  First find the cause in the logs.
+
+**Deploying:** the running consumer image predates this milestone. Apply it with
+`docker compose build consumer && docker compose up -d --no-deps consumer`. The effects:
+- a graceful restart of a few seconds;
+- `transactions.dlq` is created on first start;
+- invalid messages are dead-lettered instead of only logged.
 
 ## 5. Running it locally
 
@@ -167,5 +280,56 @@ run and are **not** a production latency claim.
   retention policy in any real deployment.
 - **Proxy entities:** `card_id`/`uid` remain the coarse proxies documented in `features.md`, so
   the history features inherit their collisions.
+- **Float precision:** training loads float columns as float32, while the API receives float64.
+  For decimal amounts the online history features can differ from training by float32
+  rounding. Measured on the saved model over 2,000 random histories (2026-10-22), feature rows
+  differed in 736 cases, but scores differed in 0 and no alert decision changed.
+- **Stop timeout:** containers created by Docker Compose v2.40.3-desktop on this machine got
+  `StopTimeout=1`, so a plain `docker stop` or a Docker Desktop shutdown SIGKILLs them after
+  1 s. This caused the API's exit code 137 on 2026-10-21, after a graceful uvicorn shutdown.
+  Every service now sets `stop_grace_period`:
+  - Kafka 60 s: controlled shutdown flushes and closes the partition logs.
+  - PostgreSQL 60 s: SIGINT fast shutdown with a final checkpoint.
+  - Consumer 30 s.
+  - API 10 s.
+
+  A container gets the new value only when it is recreated. All four containers were
+  recreated on 2026-10-22 and now carry these timeouts.
+
+  Measured shutdowns, all well inside their grace periods:
+  - Kafka: 1.8 s, exit 143, LogManager and broker report a clean shutdown.
+  - PostgreSQL: recreate in 2.6 s, fast shutdown with checkpoint.
+  - Consumer and API: about 1 s each, exit 0.
+- **Kafka data location (migrated 2026-10-22):** the broker used to write to
+  `/tmp/kafka-logs` inside the container layer. Recreating the container would have discarded
+  all topics, committed consumer offsets and cluster metadata. It now uses
+  `KAFKA_LOG_DIRS=/var/lib/kafka/data` on the named volume `kafkadata`.
+
+  Migration method, rehearsed first on a throwaway broker:
+  1. Clean stop with `docker stop -t 60`.
+  2. `docker cp` the log directory out as a tar, which keeps owners and modes.
+  3. Extract it into the volume as `appuser`.
+  4. Compare per-file SHA-256 manifests: 305 of 305 files identical.
+  5. Recreate the broker.
+
+  After migration the broker had the same `directory.id`, TopicId and end/committed offsets.
+  The image formats an empty log dir with the same default cluster ID, so the cluster ID
+  alone cannot detect an accidental re-initialisation; `directory.id` and TopicId can.
+
+  Backups kept: image `fraud-platform-kafka-premigration:2026-10-22` and a tar in the
+  session scratchpad.
+- **API logging:** the API configures root logging at startup, so `src.*` records reach the
+  container log alongside uvicorn's lines: model version, store, per-score lines and shutdown.
+- **Restart policy:** all four services use `unless-stopped`. A graceful SIGTERM makes the
+  consumer exit 0, so `on-failure` would have left it down after a Docker restart while the
+  other services came back. `unless-stopped` still respects an intentional
+  `docker compose stop`.
+
+  Before this change only the consumer had a restart policy. After a Docker restart it looped
+  while Kafka and PostgreSQL stayed down: more than 230 restarts with
+  `postgres: Name or service not known`, observed on 2026-10-22.
+- **Served model scope:** the bundle is trained on the first 80% of time only, so its stored
+  validation metrics stay a genuine held-out estimate. A deployment would retrain on all
+  labelled data under a documented procedure.
 - **No monitoring yet:** no drift monitoring (Evidently) and no alert-review UI. The model is
   the untuned Milestone 2 baseline.
