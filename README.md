@@ -31,6 +31,7 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements-dev.txt
 .venv\Scripts\python -m pytest
 .venv\Scripts\ruff check .
+.venv\Scripts\python -m mypy        # strict type check of src/ and tests/ (pyproject.toml)
 ```
 
 Dataset download instructions: [data/README.md](data/README.md).

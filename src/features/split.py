@@ -28,7 +28,7 @@ class SplitBoundary:
         return self.valid_start - self.train_end
 
 
-def time_cutoff(dt: pd.Series, valid_fraction: float) -> int:
+def time_cutoff(dt: pd.Series[int], valid_fraction: float) -> int:
     """Smallest timestamp such that roughly ``valid_fraction`` of rows are at or after it."""
     if not 0 < valid_fraction < 1:
         raise ValueError(f"valid_fraction must be in (0, 1), got {valid_fraction}")

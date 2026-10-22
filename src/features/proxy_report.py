@@ -17,7 +17,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -48,7 +48,7 @@ def _r(x: float, nd: int = 4) -> float | None:
     return None if pd.isna(x) else round(float(x), nd)
 
 
-def group_size_stats(key: pd.Series) -> dict[str, Any]:
+def group_size_stats(key: pd.Series[Any]) -> dict[str, Any]:
     vc = key.value_counts()
     n = len(key)
     return {
@@ -65,7 +65,7 @@ def group_size_stats(key: pd.Series) -> dict[str, Any]:
     }
 
 
-def modal_purity(key: pd.Series, values: pd.Series) -> float | None:
+def modal_purity(key: pd.Series[Any], values: pd.Series[Any]) -> float | None:
     """Share of rows matching their group's most common value (groups with >= 2 such rows)."""
     m = key.notna() & values.notna()
     g = pd.DataFrame({"k": key[m], "v": values[m].astype(str)})
@@ -76,7 +76,7 @@ def modal_purity(key: pd.Series, values: pd.Series) -> float | None:
     return _r(top.sum() / len(g))
 
 
-def shuffle_within(values: pd.Series, groups: pd.Series, seed: int) -> pd.Series:
+def shuffle_within(values: pd.Series[Any], groups: pd.Series[Any], seed: int) -> pd.Series[Any]:
     """Permute ``values`` inside each group (vectorised, deterministic for a seed)."""
     codes, _ = pd.factorize(groups, use_na_sentinel=True)
     rng = np.random.default_rng(seed)
@@ -87,7 +87,9 @@ def shuffle_within(values: pd.Series, groups: pd.Series, seed: int) -> pd.Series
     return pd.Series(out, index=values.index, name=values.name)
 
 
-def flag_stats(flags: pd.DataFrame, label: pd.Series, train: pd.Series) -> dict[str, Any]:
+def flag_stats(
+    flags: pd.DataFrame, label: pd.Series[int], train: pd.Series[bool]
+) -> dict[str, Any]:
     stats = {}
     for col in flags.columns:
         f = flags[col]
@@ -115,12 +117,14 @@ def d1_profile(df: pd.DataFrame) -> dict[str, Any]:
             for k, v in (d1 == 0).groupby(df["ProductCD"], observed=True).mean().items()
         },
         "missing_rate_by_30_day_block": {
-            int(k): _r(v, 5) for k, v in d1.isna().groupby(block).mean().items()
+            int(cast(int, k)): _r(v, 5) for k, v in d1.isna().groupby(block).mean().items()
         },
     }
 
 
-def compare_proxies(df: pd.DataFrame, *, valid_fraction: float = 0.2, seed: int = 0) -> dict:
+def compare_proxies(
+    df: pd.DataFrame, *, valid_fraction: float = 0.2, seed: int = 0
+) -> dict[str, Any]:
     keys = pd.concat([build_entity_keys(df), build_account_start_keys(df)], axis=1)
     for base, cand in ((CARD_ID, CARD_START_ID), (USER_ID, USER_START_ID)):
         null_df = df.assign(D1=shuffle_within(df["D1"], keys[base], seed))

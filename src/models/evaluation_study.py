@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 
+from src.array_types import BoolArray, FloatArray, NumArray
 from src.data.load import DEFAULT_RAW_DIR, KEY, LABEL, load_ieee_cis
 from src.features.entity import CARD_ID, SECONDS_PER_DAY, USER_ID, build_entity_keys
 from src.features.history import TIME, HistoryConfig
@@ -92,7 +93,7 @@ def gap_split(
     return chronological_split(frame, train_end=valid_start - gap_seconds, gap_seconds=gap_seconds)
 
 
-def subgroup_masks(train_keys: pd.DataFrame, valid_keys: pd.DataFrame) -> dict[str, np.ndarray]:
+def subgroup_masks(train_keys: pd.DataFrame, valid_keys: pd.DataFrame) -> dict[str, BoolArray]:
     """Boolean masks over validation rows; "seen" means present in ``train_keys`` only."""
     seen_card = set(train_keys[CARD_ID].dropna())
     seen_uid = set(train_keys[USER_ID].dropna())
@@ -117,10 +118,10 @@ def _ratio(num: float, den: float) -> float | None:
 
 
 def group_metrics(
-    y: np.ndarray,
-    scores: np.ndarray,
+    y: NumArray,
+    scores: NumArray,
     threshold: float,
-    day: np.ndarray,
+    day: NumArray,
     *,
     min_positives: int,
     resamples: int,
@@ -186,7 +187,8 @@ def run_study(df: pd.DataFrame, cfg: StudyConfig | None = None) -> dict[str, Any
         masks = subgroup_masks(keys.loc[train.index], keys.loc[valid.index])
         x_valid = valid.drop(columns=LABEL)  # scoring never sees validation labels
 
-        results, scores = {}, {}
+        results: dict[str, dict[str, Any]] = {}
+        scores: dict[str, FloatArray] = {}
         for name, cols in variants.items():
             trained = train_variant(train, cols, cfg.model)
             s = score(trained, x_valid, cols)

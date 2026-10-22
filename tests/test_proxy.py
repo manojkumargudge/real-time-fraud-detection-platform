@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -24,7 +25,7 @@ from tests.test_features import frame, random_frame
 DAY = 86_400
 
 
-def with_d1(rows: list[dict]) -> pd.DataFrame:
+def with_d1(rows: list[dict[str, Any]]) -> pd.DataFrame:
     return frame([{"D1": 0.0, **r} for r in rows])
 
 
@@ -39,7 +40,7 @@ class TestAccountStartDay:
         )
         keys = build_account_start_keys(df)
         assert keys.loc[0, USER_START_ID] == keys.loc[1, USER_START_ID]
-        assert keys.loc[0, USER_START_ID].endswith("|315|3")
+        assert isinstance(k := keys.loc[0, USER_START_ID], str) and k.endswith("|315|3")
 
     def test_different_start_days_split_a_uid(self) -> None:
         df = with_d1([{"TransactionDT": 5 * DAY, "D1": 2.0}, {"TransactionDT": 5 * DAY, "D1": 4.0}])
@@ -51,7 +52,8 @@ class TestAccountStartDay:
     def test_missing_d1_falls_back_to_token(self) -> None:
         df = with_d1([{"D1": np.nan}])
         assert np.isnan(account_start_day(df).iloc[0])
-        assert build_account_start_keys(df).loc[0, CARD_START_ID].endswith(f"|{MISSING_TOKEN}")
+        key = build_account_start_keys(df).loc[0, CARD_START_ID]
+        assert isinstance(key, str) and key.endswith(f"|{MISSING_TOKEN}")
 
     def test_missing_card1_gives_no_entity(self) -> None:
         keys = build_account_start_keys(with_d1([{"card1": np.nan, "D1": 1.0}]))
@@ -108,7 +110,7 @@ class TestChangeFlagsOnAnyEntity:
         coarse = compute_change_flags(df, keys["card_id"], ("DeviceInfo",), "f")
         fine = compute_change_flags(df, keys[CARD_START_ID], ("DeviceInfo",), "f")
         assert coarse.loc[1, "f_deviceinfo_changed"] == 1.0
-        assert np.isnan(fine.loc[1, "f_deviceinfo_changed"])
+        assert pd.isna(fine.loc[1, "f_deviceinfo_changed"])
 
     def test_misaligned_entity_rejected(self) -> None:
         df = random_frame(seed=11)

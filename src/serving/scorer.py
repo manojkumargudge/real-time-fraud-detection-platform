@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from src.serving.model import ModelBundle
 from src.serving.online_features import (
@@ -23,7 +24,9 @@ class Scorer:
     bundle: ModelBundle
     store: TransactionStore
 
-    def _duplicate(self, record: ScoredRecord, event: dict, started: float) -> ScoreResponse:
+    def _duplicate(
+        self, record: ScoredRecord, event: dict[str, Any], started: float
+    ) -> ScoreResponse:
         if record.event != event:
             logger.warning(
                 "duplicate transaction_id with different payload id=%d; returning stored score",

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -27,7 +29,7 @@ def frame(synthetic_frame: pd.DataFrame) -> pd.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def report(synthetic_frame: pd.DataFrame) -> dict:
+def report(synthetic_frame: pd.DataFrame) -> dict[str, Any]:
     return es.run_study(synthetic_frame, STUDY)
 
 
@@ -73,7 +75,7 @@ class TestGapSplit:
 
 
 class TestSubgroups:
-    def keys(self, cards: list, uids: list) -> pd.DataFrame:
+    def keys(self, cards: Sequence[str | None], uids: Sequence[str | None]) -> pd.DataFrame:
         return pd.DataFrame({CARD_ID: cards, USER_ID: uids})
 
     def test_definitions(self) -> None:
@@ -91,7 +93,7 @@ class TestSubgroups:
         m = es.subgroup_masks(self.keys(["c1"], ["c1|a"]), self.keys(["gap_only"], ["gap_only|a"]))
         assert m["card_unseen"].tolist() == [True] and m["uid_unseen"].tolist() == [True]
 
-    def test_partitions_and_implications(self, report: dict) -> None:
+    def test_partitions_and_implications(self, report: dict[str, Any]) -> None:
         rows = report["gaps"]["0"]["subgroup_rows"]
         assert rows["card_seen"] + rows["card_unseen"] + rows["no_entity_key"] == rows["all"]
         assert rows["uid_seen"] + rows["uid_unseen"] + rows["no_entity_key"] == rows["all"]
@@ -149,7 +151,7 @@ class TestGroupMetrics:
 
 
 class TestStudy:
-    def test_same_rows_and_consistent_protocol(self, report: dict) -> None:
+    def test_same_rows_and_consistent_protocol(self, report: dict[str, Any]) -> None:
         g0, g2 = report["gaps"]["0"], report["gaps"]["2"]
         assert (
             g0["subgroup_rows"]["all"] == g2["subgroup_rows"]["all"] == report["validation"]["rows"]
@@ -160,7 +162,7 @@ class TestStudy:
         assert v[es.BASELINE]["n_inputs"] - v[es.RESTRICTED]["n_inputs"] == len(IDENTIFIER_INPUTS)
 
     def test_validation_labels_do_not_change_training_outcomes(
-        self, synthetic_frame: pd.DataFrame, report: dict
+        self, synthetic_frame: pd.DataFrame, report: dict[str, Any]
     ) -> None:
         cutoff = time_cutoff(synthetic_frame["TransactionDT"], 0.2)
         valid = synthetic_frame["TransactionDT"] >= cutoff
@@ -177,7 +179,7 @@ class TestStudy:
                 fa = a["subgroups"]["all"]["at_threshold"]["flagged"]
                 assert fa == b["subgroups"]["all"]["at_threshold"]["flagged"]  # same scores
 
-    def test_report_is_aggregate_only(self, report: dict) -> None:
+    def test_report_is_aggregate_only(self, report: dict[str, Any]) -> None:
         text = json.dumps(report)
         assert "|" not in text  # no entity key strings
 
@@ -191,7 +193,7 @@ class TestStudy:
         # Row-level arrays (scores, IDs, labels) would be as long as the validation set.
         assert longest_list(report) < 50 < report["validation"]["rows"]
 
-    def test_markdown_and_main(self, tmp_path: Path, report: dict) -> None:
+    def test_markdown_and_main(self, tmp_path: Path, report: dict[str, Any]) -> None:
         md = es.render_markdown(report)
         assert "Seen vs unseen" in md and "Label-delay" in md and "not measured chargeback" in md
         raw = synthetic_split(tmp_path / "raw", n=1_500, seed=2)
@@ -200,7 +202,7 @@ class TestStudy:
         assert (tmp_path / "out" / "evaluation_study.md").is_file()
 
 
-def test_markdown_flags_low_round_models_and_formats_empty_groups(report: dict) -> None:
+def test_markdown_flags_low_round_models_and_formats_empty_groups(report: dict[str, Any]) -> None:
     import copy
 
     r = copy.deepcopy(report)

@@ -33,6 +33,7 @@ from src.features.split import chronological_split
 from src.models.compare import (
     EXCLUDED,
     ComparisonConfig,
+    TrainedVariant,
     build_model_frame,
     evaluate,
     feature_columns,
@@ -48,7 +49,9 @@ METADATA_FILE = "metadata.json"
 SCHEMA_VERSION = 1
 
 
-def train_baseline(df: pd.DataFrame, cfg: ComparisonConfig | None = None) -> tuple[Any, dict]:
+def train_baseline(
+    df: pd.DataFrame, cfg: ComparisonConfig | None = None
+) -> tuple[TrainedVariant, dict[str, Any]]:
     """Return ``(trained_variant, metadata)`` for the baseline variant."""
     cfg = cfg or ComparisonConfig()
     hist_cfg = HistoryConfig()
@@ -100,7 +103,7 @@ def train_baseline(df: pd.DataFrame, cfg: ComparisonConfig | None = None) -> tup
     return trained, metadata
 
 
-def save_bundle(trained: Any, metadata: dict, out_dir: Path) -> Path:
+def save_bundle(trained: TrainedVariant, metadata: dict[str, Any], out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / MODEL_FILE
     trained.model.save_model(model_path)
@@ -115,12 +118,13 @@ def main(
     raw_dir: Path = DEFAULT_RAW_DIR,
     out_dir: Path = ARTIFACTS_DIR,
     cfg: ComparisonConfig | None = None,
-) -> dict:
+) -> dict[str, Any]:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     df = load_ieee_cis(raw_dir, usecols=[])
     trained, metadata = train_baseline(df, cfg)
     save_bundle(trained, metadata, out_dir)
-    return json.loads((out_dir / METADATA_FILE).read_text(encoding="utf-8"))
+    saved: dict[str, Any] = json.loads((out_dir / METADATA_FILE).read_text(encoding="utf-8"))
+    return saved
 
 
 if __name__ == "__main__":

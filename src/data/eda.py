@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -111,7 +111,7 @@ def compute_eda_metrics(df: pd.DataFrame) -> dict[str, Any]:
             "max": _r(daily["mean"].max()),
         },
         "fraud_rate_by_30_day_block": {
-            int(k): {"rows": int(v["size"]), "fraud_rate": _r(v["mean"])}
+            int(cast(int, k)): {"rows": int(v["size"]), "fraud_rate": _r(v["mean"])}
             for k, v in df.groupby(month)[LABEL].agg(["size", "mean"]).iterrows()
         },
     }
@@ -147,7 +147,8 @@ def compute_eda_metrics(df: pd.DataFrame) -> dict[str, Any]:
 
     m["transaction_amount_by_class"] = {
         ("fraud" if k == 1 else "legit"): {
-            f"p{int(q * 100)}": _r(v, 2) for q, v in amounts.quantile([0.5, 0.95, 0.99]).items()
+            f"p{int(cast(float, q) * 100)}": _r(v, 2)
+            for q, v in amounts.quantile([0.5, 0.95, 0.99]).items()
         }
         for k, amounts in df.groupby(LABEL)["TransactionAmt"]
     }

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from src.array_types import FloatArray, IntArray, NumArray
 from src.data.load import KEY, SchemaError
 from src.features.entity import CARD_ID, USER_COLUMNS, USER_ID, build_entity_keys
 
@@ -62,14 +64,14 @@ class HistoryConfig:
 class _PointInTimeIndex:
     """Sorted view of one entity level. Arrays other than ``order`` are in sorted space."""
 
-    order: np.ndarray  # input positions in sorted order
-    entity: np.ndarray  # entity code + 1 (0 = missing entity)
-    keys: np.ndarray  # composite (entity, time) keys
-    start: np.ndarray  # index of the entity's first row
-    left: np.ndarray  # index of the entity's first row at the same timestamp
+    order: IntArray  # input positions in sorted order
+    entity: IntArray  # entity code + 1 (0 = missing entity)
+    keys: IntArray  # composite (entity, time) keys
+    start: IntArray  # index of the entity's first row
+    left: IntArray  # index of the entity's first row at the same timestamp
 
     @classmethod
-    def build(cls, entity: pd.Series, t: np.ndarray, tid: np.ndarray) -> _PointInTimeIndex:
+    def build(cls, entity: pd.Series[Any], t: IntArray, tid: IntArray) -> _PointInTimeIndex:
         codes, _ = pd.factorize(entity, use_na_sentinel=True)
         order = np.lexsort((tid, t, codes))
         t0 = int(t.min())
@@ -83,19 +85,21 @@ class _PointInTimeIndex:
         return cls(order=order, entity=ent, keys=keys, start=start, left=left)
 
     @property
-    def prior_count(self) -> np.ndarray:
+    def prior_count(self) -> IntArray:
         return self.left - self.start
 
-    def window_count(self, seconds: int) -> np.ndarray:
+    def window_count(self, seconds: int) -> IntArray:
         """Rows in ``[t - seconds, t)`` for the same entity."""
-        lo = np.maximum(np.searchsorted(self.keys, self.keys - seconds, side="left"), self.start)
+        lo: IntArray = np.maximum(
+            np.searchsorted(self.keys, self.keys - seconds, side="left"), self.start
+        )
         return self.left - lo
 
-    def prior_sum(self, values: np.ndarray) -> np.ndarray:
-        prefix = np.concatenate(([0.0], np.cumsum(values, dtype=np.float64)))
+    def prior_sum(self, values: FloatArray) -> FloatArray:
+        prefix: FloatArray = np.concatenate(([0.0], np.cumsum(values, dtype=np.float64)))
         return prefix[self.left] - prefix[self.start]
 
-    def last_known_before(self, values: np.ndarray) -> np.ndarray:
+    def last_known_before(self, values: FloatArray) -> FloatArray:
         """Most recent non-NaN value among strictly earlier rows (ties by TransactionID)."""
         filled = pd.Series(values).groupby(self.entity).ffill().to_numpy(dtype=np.float64)
         out = np.full(len(values), np.nan)
@@ -103,7 +107,7 @@ class _PointInTimeIndex:
         out[has] = filled[self.left[has] - 1]
         return out
 
-    def to_input_order(self, sorted_values: np.ndarray) -> np.ndarray:
+    def to_input_order(self, sorted_values: NumArray) -> FloatArray:
         out = np.empty(len(sorted_values), dtype=np.float64)
         out[self.order] = sorted_values
         # Rows without an entity have no history.
@@ -131,7 +135,7 @@ def _validate(df: pd.DataFrame, config: HistoryConfig) -> None:
         raise SchemaError(f"{KEY} must be unique")
 
 
-def _value_codes(s: pd.Series) -> np.ndarray:
+def _value_codes(s: pd.Series[Any]) -> FloatArray:
     """Equality-preserving float encoding with NaN for missing (no fitted state)."""
     if pd.api.types.is_numeric_dtype(s):
         return s.to_numpy(dtype=np.float64, na_value=np.nan)
@@ -141,12 +145,12 @@ def _value_codes(s: pd.Series) -> np.ndarray:
 
 def _change_flags(
     df: pd.DataFrame,
-    entity: pd.Series,
-    t: np.ndarray,
-    tid: np.ndarray,
+    entity: pd.Series[Any],
+    t: IntArray,
+    tid: IntArray,
     columns: tuple[str, ...],
     prefix: str,
-) -> dict[str, np.ndarray]:
+) -> dict[str, FloatArray]:
     idx = _PointInTimeIndex.build(entity, t, tid)
     out = {}
     for col in columns:
@@ -159,7 +163,7 @@ def _change_flags(
 
 
 def compute_change_flags(
-    df: pd.DataFrame, entity: pd.Series, columns: tuple[str, ...], prefix: str
+    df: pd.DataFrame, entity: pd.Series[Any], columns: tuple[str, ...], prefix: str
 ) -> pd.DataFrame:
     """``<prefix>_<col>_changed`` flags for an arbitrary entity key aligned to ``df.index``.
 
@@ -219,7 +223,7 @@ def compute_history_features(
 
     t = df[TIME].to_numpy(dtype=np.int64)
     tid = df[KEY].to_numpy(dtype=np.int64)
-    feats: dict[str, np.ndarray] = {}
+    feats: dict[str, FloatArray] = {}
 
     uid = _PointInTimeIndex.build(keys[USER_ID], t, tid)
     prior = uid.prior_count.astype(np.float64)

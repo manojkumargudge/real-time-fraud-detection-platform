@@ -18,6 +18,24 @@ extend-exclude = ["notebooks"]
 select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "PD"]
 ignore = ["PD901"]
 
+[tool.mypy]
+# Run: python -m mypy   (checks `files`; listed with the other checks in README "Setup")
+python_version = "3.11"
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# confluent-kafka ships no type information (no py.typed, no stub package on PyPI).
+module = ["confluent_kafka", "confluent_kafka.*"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

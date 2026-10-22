@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 
+from src.array_types import FloatArray, NumArray
 from src.data.load import DEFAULT_RAW_DIR, HAS_IDENTITY, KEY, LABEL, load_ieee_cis
 from src.features.entity import (
     CARD_ID,
@@ -143,7 +144,7 @@ def _matrix(frame: pd.DataFrame, encoder: CategoricalEncoder, cols: list[str]) -
     return encoder.transform(frame[cols]).astype("float32")
 
 
-def _scale_pos_weight(y: pd.Series) -> float:
+def _scale_pos_weight(y: pd.Series[int]) -> float:
     pos = int(y.sum())
     if pos == 0:
         raise ValueError("training labels contain no positives")
@@ -154,7 +155,7 @@ def _params(cfg: ComparisonConfig, spw: float) -> dict[str, Any]:
     return {**cfg.xgb_params, "scale_pos_weight": spw, "seed": cfg.seed}
 
 
-def _dmatrix(x: pd.DataFrame, y: pd.Series | None = None) -> xgb.DMatrix:
+def _dmatrix(x: pd.DataFrame, y: pd.Series[int] | None = None) -> xgb.DMatrix:
     return xgb.DMatrix(x, label=None if y is None else y.to_numpy(), missing=np.nan)
 
 
@@ -194,19 +195,19 @@ def train_variant(train: pd.DataFrame, cols: list[str], cfg: ComparisonConfig) -
     )
 
 
-def score(trained: TrainedVariant, frame: pd.DataFrame, cols: list[str]) -> np.ndarray:
+def score(trained: TrainedVariant, frame: pd.DataFrame, cols: list[str]) -> FloatArray:
     """Scores for every row of ``frame`` (labels are not read). NaN inputs are kept."""
     return trained.model.predict(_dmatrix(_matrix(frame, trained.encoder, cols)))
 
 
-def evaluate(y: np.ndarray, scores: np.ndarray, threshold: float) -> dict[str, Any]:
+def evaluate(y: NumArray, scores: NumArray, threshold: float) -> dict[str, Any]:
     return {
         "average_precision": average_precision(y, scores),
         "at_threshold": threshold_metrics(y, scores, threshold).to_dict(),
     }
 
 
-def _id_digest(ids: pd.Series) -> str:
+def _id_digest(ids: pd.Series[int]) -> str:
     return hashlib.sha256(np.sort(ids.to_numpy(dtype=np.int64)).tobytes()).hexdigest()[:16]
 
 
@@ -223,7 +224,7 @@ def run_comparison(df: pd.DataFrame, cfg: ComparisonConfig | None = None) -> dic
     y_valid = df.loc[valid_index, LABEL].to_numpy()
 
     results: dict[str, Any] = {}
-    valid_scores: dict[str, np.ndarray] = {}
+    valid_scores: dict[str, FloatArray] = {}
     digests = set()
     for variant in VARIANTS:
         t0 = time.perf_counter()
@@ -240,7 +241,9 @@ def run_comparison(df: pd.DataFrame, cfg: ComparisonConfig | None = None) -> dic
         valid_scores[variant] = s
         metrics = evaluate(y_valid, s, trained.threshold)
         importance = trained.model.get_score(importance_type="gain")
-        top = sorted(importance.items(), key=lambda kv: -kv[1])[:10]
+        # "gain" scores are floats; the list form only exists for multi-output models
+        gains = {k: v for k, v in importance.items() if isinstance(v, float)}
+        top = sorted(gains.items(), key=lambda kv: -kv[1])[:10]
         results[variant] = {
             **metrics,
             "threshold_source": "max F1 on chronological training holdout (stage 1)",

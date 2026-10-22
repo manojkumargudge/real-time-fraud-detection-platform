@@ -11,7 +11,8 @@ from tests.conftest import make_identity, make_transactions, write_split
 
 def test_duplicate_rows_ignoring_key() -> None:
     df = make_transactions(4)
-    df.loc[3, df.columns.drop("TransactionID")] = df.loc[2, df.columns.drop("TransactionID")]
+    for col in df.columns.drop("TransactionID"):  # row 3 duplicates row 2 except the key
+        df.loc[3, col] = df.loc[2, col]
     assert quality.duplicate_rows_ignoring_key(df) == 1
     assert quality.duplicate_rows_ignoring_key(make_transactions(4)) == 0
 

@@ -16,7 +16,7 @@ import platform
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -67,12 +67,13 @@ def peak_memory_mb() -> float | None:
             kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
         )
         return round(counters.PeakWorkingSetSize / 1e6, 1) if ok else None
-    try:
-        import resource
-    except ImportError:
-        return None
-    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return round(rss / 1e6 if sys.platform == "darwin" else rss / 1e3, 1)  # bytes vs KB
+    else:
+        try:
+            import resource
+        except ImportError:
+            return None
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return round(rss / 1e6 if sys.platform == "darwin" else rss / 1e3, 1)  # bytes vs KB
 
 
 # Rates keep 6 decimals so 1-decimal percentages in the markdown are not double-rounded.
@@ -107,7 +108,7 @@ def value_checks(txn: pd.DataFrame) -> dict[str, Any]:
     labels = txn[LABEL].value_counts().sort_index()
     dt, amt = txn["TransactionDT"], txn["TransactionAmt"]
     return {
-        "label_values": {str(int(k)): int(v) for k, v in labels.items()},
+        "label_values": {str(int(cast(int, k))): int(v) for k, v in labels.items()},
         "fraud_rate": _r(txn[LABEL].mean()),
         "transaction_dt_min": int(dt.min()),
         "transaction_dt_max": int(dt.max()),
@@ -123,7 +124,7 @@ def value_checks(txn: pd.DataFrame) -> dict[str, Any]:
 def missingness_by_family(merged: pd.DataFrame) -> dict[str, dict[str, float | int]]:
     by_family = merged.isna().mean().groupby(column_family).agg(["size", "mean"])
     return {
-        fam: {"columns": int(r["size"]), "mean_missing": _r(r["mean"])}
+        cast(str, fam): {"columns": int(r["size"]), "mean_missing": _r(r["mean"])}
         for fam, r in by_family.sort_values("mean").iterrows()
     }
 

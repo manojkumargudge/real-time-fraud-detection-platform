@@ -46,7 +46,10 @@ def _r(x: float) -> float | None:
 
 
 def entity_overlap(
-    train_key: pd.Series, valid_key: pd.Series, train_y: pd.Series, valid_y: pd.Series
+    train_key: pd.Series[Any],
+    valid_key: pd.Series[Any],
+    train_y: pd.Series[int],
+    valid_y: pd.Series[int],
 ) -> dict[str, Any]:
     """Row- and entity-level overlap of ``valid_key`` with ``train_key`` (NaN keys excluded)."""
     seen = set(train_key.dropna())
