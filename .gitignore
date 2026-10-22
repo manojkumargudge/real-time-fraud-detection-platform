@@ -54,3 +54,6 @@ data/*
 !data/README.md
 *.parquet
 .ipynb_checkpoints/
+# Generated report JSON (large; regenerate with the src.models CLIs). Files already
+# committed stay tracked; this only keeps new ones out by default.
+reports/*.json

@@ -10,22 +10,24 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
+from src.array_types import BoolArray, FloatArray, IntArray, NumArray
 
-def _check(y: np.ndarray, scores: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    y = np.asarray(y)
-    scores = np.asarray(scores, dtype=np.float64)
-    if y.shape != scores.shape or y.ndim != 1:
+
+def _check(y: NumArray, scores: NumArray) -> tuple[IntArray, FloatArray]:
+    labels = np.asarray(y)
+    s = np.asarray(scores, dtype=np.float64)
+    if labels.shape != s.shape or labels.ndim != 1:
         raise ValueError("labels and scores must be 1-D arrays of equal length")
-    if not np.isin(y, (0, 1)).all():
+    if not np.isin(labels, (0, 1)).all():
         raise ValueError("labels must be 0/1")
-    if np.isnan(scores).any():
+    if np.isnan(s).any():
         raise ValueError("scores must not contain NaN")
-    if y.sum() == 0:
+    if labels.sum() == 0:
         raise ValueError("at least one positive label is required")
-    return y.astype(np.int64), scores
+    return labels.astype(np.int64), s
 
 
-def _curve(y: np.ndarray, scores: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _curve(y: IntArray, scores: FloatArray) -> tuple[IntArray, IntArray, FloatArray]:
     """Cumulative TP/FP at each distinct threshold (descending) and those thresholds."""
     order = np.argsort(-scores, kind="mergesort")
     s, ys = scores[order], y[order]
@@ -35,7 +37,7 @@ def _curve(y: np.ndarray, scores: np.ndarray) -> tuple[np.ndarray, np.ndarray, n
     return tp, fp, s[last_of_tie]
 
 
-def average_precision(y: np.ndarray, scores: np.ndarray) -> float:
+def average_precision(y: NumArray, scores: NumArray) -> float:
     y, scores = _check(y, scores)
     tp, fp, _ = _curve(y, scores)
     precision = tp / (tp + fp)
@@ -43,7 +45,7 @@ def average_precision(y: np.ndarray, scores: np.ndarray) -> float:
     return float(np.sum(np.diff(np.r_[0.0, recall]) * precision))
 
 
-def select_threshold_max_f1(y: np.ndarray, scores: np.ndarray) -> float:
+def select_threshold_max_f1(y: NumArray, scores: NumArray) -> float:
     """Score threshold maximising F1 for the rule ``score >= threshold``.
 
     Ties in F1 resolve to the highest threshold (fewest alerts).
@@ -72,7 +74,7 @@ class ThresholdMetrics:
         return asdict(self)
 
 
-def threshold_metrics(y: np.ndarray, scores: np.ndarray, threshold: float) -> ThresholdMetrics:
+def threshold_metrics(y: NumArray, scores: NumArray, threshold: float) -> ThresholdMetrics:
     y, scores = _check(y, scores)
     pred = scores >= threshold
     tp = int((pred & (y == 1)).sum())
@@ -98,10 +100,10 @@ def threshold_metrics(y: np.ndarray, scores: np.ndarray, threshold: float) -> Th
 
 
 def day_block_bootstrap_ap_delta(
-    y: np.ndarray,
-    scores_a: np.ndarray,
-    scores_b: np.ndarray,
-    day: np.ndarray,
+    y: NumArray,
+    scores_a: NumArray,
+    scores_b: NumArray,
+    day: NumArray,
     *,
     resamples: int,
     seed: int,
@@ -139,7 +141,7 @@ def day_block_bootstrap_ap_delta(
 
 
 def day_block_bootstrap_ap(
-    y: np.ndarray, scores: np.ndarray, day: np.ndarray, *, resamples: int, seed: int
+    y: NumArray, scores: NumArray, day: NumArray, *, resamples: int, seed: int
 ) -> dict[str, float | int]:
     """95% interval for AP, resampling whole days. Resamples without positives are skipped."""
     days, inverse = np.unique(day, return_inverse=True)
@@ -158,3 +160,77 @@ def day_block_bootstrap_ap(
         "ci95_low": float(np.quantile(a, 0.025)) if len(a) else float("nan"),
         "ci95_high": float(np.quantile(a, 0.975)) if len(a) else float("nan"),
     }
+
+
+def budget_size(n: int, rate: float) -> int:
+    """Alerts allowed for ``n`` rows at ``rate``: ``ceil(rate * n)``, robust to float artefacts."""
+    if not 0 < rate <= 1:
+        raise ValueError("rate must be in (0, 1]")
+    # round() guards against float artefacts such as 0.07 * 100 = 7.000000000000001.
+    return int(np.ceil(round(rate * n, 9))) if n else 0
+
+
+def budget_alert_mask(scores: NumArray, rate: float) -> BoolArray:
+    """Boolean mask of the top ``budget_size`` scores; ties broken by input order (stable)."""
+    s = np.asarray(scores, dtype=np.float64)
+    mask = np.zeros(len(s), dtype=bool)
+    mask[np.argsort(-s, kind="stable")[: budget_size(len(s), rate)]] = True
+    return mask
+
+
+def alert_budget_metrics(
+    y: NumArray, scores: NumArray, rates: tuple[float, ...] | list[float]
+) -> list[dict[str, float | int | None]]:
+    """Precision@k / recall@k when alerting on the top ``ceil(rate * n)`` scores.
+
+    The alert set depends only on ``scores`` (labels are read afterwards to count hits). Ties are
+    broken deterministically by input order (stable sort); ``boundary_ties`` counts rows sharing
+    the cut-off score and ``tied_excluded`` how many of those fell outside the budget. Empty
+    inputs and groups without positives are allowed (undefined metrics are ``None``).
+    """
+    y = np.asarray(y)
+    s = np.asarray(scores, dtype=np.float64)
+    if y.shape != s.shape or y.ndim != 1:
+        raise ValueError("labels and scores must be 1-D arrays of equal length")
+    if len(y) and not np.isin(y, (0, 1)).all():
+        raise ValueError("labels must be 0/1")
+    if np.isnan(s).any():
+        raise ValueError("scores must not contain NaN")
+    if not rates or any(not 0 < k <= 1 for k in rates):
+        raise ValueError("rates must be non-empty and each in (0, 1]")
+
+    n, pos = len(y), int(y.sum())
+    out: list[dict[str, float | int | None]] = []
+    for k in rates:
+        mask = budget_alert_mask(s, k)
+        m = int(mask.sum())
+        row: dict[str, float | int | None] = {"rate": float(k), "rows": n, "positives": pos}
+        if m == 0:
+            row.update(
+                alerts=0,
+                tp=0,
+                fp=0,
+                precision=None,
+                recall=None,
+                cutoff_score=None,
+                boundary_ties=0,
+                tied_excluded=0,
+            )
+            out.append(row)
+            continue
+        chosen = s[mask]
+        cutoff = chosen.min()
+        tp = int(y[mask].sum())
+        ties = int((s == cutoff).sum())
+        row.update(
+            alerts=m,
+            tp=tp,
+            fp=m - tp,
+            precision=tp / m,
+            recall=tp / pos if pos else None,
+            cutoff_score=float(cutoff),
+            boundary_ties=ties,
+            tied_excluded=ties - int((chosen == cutoff).sum()),
+        )
+        out.append(row)
+    return out
