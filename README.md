@@ -24,8 +24,21 @@ Work in progress: a tested local demo, not a production system.
 - MLflow tracking and model registry (local SQLite `mlflow.db`, `python -m src.models.train`;
   registered as `fraud-xgboost`; alias `champion` = best candidate (version 2, no class
   weight), `production` = currently deployed (version 1, `baseline-6026acdc8e2e`))
-- 355 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 14 integration
+- 368 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 14 integration
   tests ([docs/test-results-integration.txt](docs/test-results-integration.txt))
+
+#### Experiment: class imbalance
+
+- Removing class weighting (`scale_pos_weight` 27.46 -> none) raised mean validation PR-AUC
+  from 0.2517 to 0.2935 over 3 seeds; the gain (+0.0418) is about 3 times the seed spread
+  (0.0134).
+- Confirmed on two other time windows with seed 42: W1 +0.0137 (small), W2 +0.0430.
+- Trade-off: on W1 at the 1% alert budget, `none` was slightly worse; it was better at 5%.
+- The served model is still version 1 (`production`); version 2 (`champion`) is not deployed
+  yet.
+- Details: [reports/imbalance_comparison.md](reports/imbalance_comparison.md). Rerun with
+  `python -m src.models.imbalance_comparison` and
+  `python -m src.models.imbalance_comparison --confirm`.
 
 ### Planned
 
