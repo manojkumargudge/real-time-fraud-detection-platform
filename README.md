@@ -29,7 +29,6 @@ Work in progress: a tested local demo, not a production system.
 ### Planned
 
 - Feast feature store
-- MLflow experiment tracking
 - PyTorch Geometric GNN for fraud rings
 - Evidently drift reports and a retraining trigger
 - Analyst dashboard
