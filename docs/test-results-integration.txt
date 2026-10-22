@@ -1,0 +1,26 @@
+Integration test results (live local stack)
+===========================================
+
+Command (Git Bash, repo root):
+  TEST_DATABASE_URL=postgresql://fraud:***@localhost:15432/fraud TEST_KAFKA_BOOTSTRAP=localhost:9092 .venv/Scripts/python.exe -m pytest tests/test_integration.py -rfEs -p no:cacheprovider
+  (run via a local launcher that builds TEST_DATABASE_URL from .env; password masked here, never committed)
+
+Commit tested: f429a2ab17850617998d9affbb9aea28fe4d2e7a
+Started:       2026-10-22T15:48:02+05:30
+Finished:      2026-10-22T15:50:11+05:30
+Python:        Python 3.11.9 (pytest 8.3.5, win32)
+
+Summary:
+  14 passed, 1 warning in 126.37s (0:02:06)
+
+Warning: starlette testclient DeprecationWarning (anyio.abc.BlockingPortal alias); third-party.
+Failed: none. Skipped: none.
+
+Isolation: each test uses a throwaway schema test_<12 hex> (dropped afterwards), topics
+test-src-<tag>/test-dlq-<tag> (deleted afterwards) and groups test-<tag>/probe-<tag>;
+never the live group fraud-scorer or topics transactions / transactions.dlq.
+
+Live data, read-only before -> after:
+  scored_transactions 2001 -> 2001, alerts 79 -> 79
+  schemas, topic list, consumer-group list and fraud-scorer offsets: identical
+  No new topics or schemas left behind.
