@@ -10,20 +10,36 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from collections.abc import Iterator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 import psycopg
 import pytest
+from confluent_kafka import Consumer, KafkaError, KafkaException, Producer, TopicPartition
+from confluent_kafka.admin import AdminClient, NewTopic
 from psycopg.conninfo import make_conninfo
+from pydantic import ValidationError
 
 from src.serving.config import Settings
 from src.serving.model import ModelBundle
-from src.serving.schema import TransactionEvent
+from src.serving.schema import ScoreResponse, TransactionEvent
 from src.serving.scorer import Scorer
 from src.serving.store import InMemoryStore, PostgresStore, ScoredRecord
+from src.streaming import consumer as consumer_mod
+from src.streaming.events import SCHEMA_HEADER, encode
+from src.streaming.producer import publish
+from src.streaming.reliability import (
+    DLQ_RETENTION_MS,
+    DeadLetter,
+    KafkaDeadLetterSink,
+    RetryPolicy,
+    build_dlq_producer,
+    ensure_dlq_topic,
+)
 from tests.test_serving import event
 
 DB_URL = os.environ.get("TEST_DATABASE_URL")
@@ -79,7 +95,8 @@ class TestPostgresStore:
     def test_duplicate_insert_is_noop(self, pg_store: PostgresStore) -> None:
         assert pg_store.save(record(1, 100, alert=True)) is True
         assert pg_store.save(record(1, 999, alert=True)) is False
-        assert pg_store.get(1).transaction_dt == 100
+        stored = pg_store.get(1)
+        assert stored is not None and stored.transaction_dt == 100
         assert pg_store.counts() == {"scored_transactions": 1, "alerts": 1}
 
     def test_alert_only_for_alerting_scores(self, pg_store: PostgresStore) -> None:
@@ -114,6 +131,26 @@ class TestPostgresStore:
 
 
 @needs_db
+@pytest.mark.parametrize(
+    ("overrides", "db_error"),
+    [
+        ({"ProductCD": "W\x00"}, psycopg.errors.UntranslatableCharacter),
+        ({"TransactionID": 2**63}, psycopg.errors.NumericValueOutOfRange),
+    ],
+)
+def test_values_postgres_cannot_store_are_rejected_by_the_schema(
+    pg_store: PostgresStore, overrides: dict[str, Any], db_error: type[Exception]
+) -> None:
+    """Why the schema limits exist: PostgreSQL rejects these on every attempt."""
+    ev = {**event(), **overrides}
+    with pytest.raises(db_error):
+        pg_store.save(replace(record(1, 100), transaction_id=ev["TransactionID"], event=ev))
+    assert pg_store.ping() and pg_store.save(record(2, 100))  # store still usable
+    with pytest.raises(ValidationError):
+        TransactionEvent.model_validate(ev)
+
+
+@needs_db
 def test_scorer_on_postgres_matches_in_memory(bundle_dir: Path, pg_store: PostgresStore) -> None:
     bundle = ModelBundle.load(bundle_dir)
     events = [
@@ -129,46 +166,318 @@ def test_scorer_on_postgres_matches_in_memory(bundle_dir: Path, pg_store: Postgr
     assert pg.score_event(TransactionEvent.model_validate(events[0])).duplicate
 
 
-@needs_kafka
-def test_kafka_round_trip_with_duplicate_and_poison(bundle_dir: Path) -> None:
-    from confluent_kafka import Producer
-    from confluent_kafka.admin import AdminClient, NewTopic
+@dataclass
+class KafkaEnv:
+    """Throwaway source + DLQ topics and consumer group on the live broker."""
 
-    from src.streaming import consumer as consumer_mod
-    from src.streaming.events import SCHEMA_HEADER, encode
-    from src.streaming.producer import publish
+    admin: Any
+    settings: Settings
+    retention: str  # DLQ retention.ms as provisioned by ensure_dlq_topic
+    partitions: int = 2
 
+    @property
+    def topic(self) -> str:
+        return self.settings.kafka_topic
+
+    @property
+    def dlq(self) -> str:
+        return self.settings.kafka_dlq_topic
+
+    def sink(self) -> KafkaDeadLetterSink:
+        assert KAFKA
+        return KafkaDeadLetterSink(build_dlq_producer(KAFKA), self.dlq)
+
+    def consumer(self) -> Any:
+        return consumer_mod.build_consumer(self.settings)
+
+    def read_dlq(self, expected: int, timeout: float = 15.0) -> list[Any]:
+        """All DLQ records: wait for ``expected``, then 2 s more to catch any extras."""
+        c = Consumer(
+            {
+                "bootstrap.servers": KAFKA,
+                "group.id": f"probe-{uuid.uuid4().hex[:8]}",
+                "auto.offset.reset": "earliest",
+                "enable.auto.commit": False,
+            }
+        )
+        c.subscribe([self.dlq])
+        out: list[Any] = []
+        deadline = time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline:
+                msg = c.poll(0.5)
+                if msg is not None and not msg.error():
+                    out.append(msg)
+                if len(out) >= expected:
+                    deadline = min(deadline, time.monotonic() + 2.0)
+        finally:
+            c.close()
+        return out
+
+    def offsets(self) -> list[tuple[int, int]]:
+        """(committed, end) per source partition; committed < 0 means nothing committed."""
+        tps = [TopicPartition(self.topic, p) for p in range(self.partitions)]
+        c = Consumer({"bootstrap.servers": KAFKA, "group.id": self.settings.kafka_group_id})
+        try:
+            committed = [tp.offset for tp in c.committed(tps, timeout=10)]
+            ends = [c.get_watermark_offsets(tp, timeout=10)[1] for tp in tps]
+        finally:
+            c.close()
+        return list(zip(committed, ends, strict=True))
+
+    def fully_committed(self) -> bool:
+        return all(c == e or (e == 0 and c < 0) for c, e in self.offsets())
+
+
+@pytest.fixture
+def kafka_env() -> Iterator[KafkaEnv]:
     assert KAFKA
-    topic = f"test-transactions-{uuid.uuid4().hex[:8]}"
+    tag = uuid.uuid4().hex[:8]
+    topic, dlq = f"test-src-{tag}", f"test-dlq-{tag}"
     admin = AdminClient({"bootstrap.servers": KAFKA})
     admin.create_topics([NewTopic(topic, num_partitions=2, replication_factor=1)])[topic].result(30)
     try:
-        events = [event(TransactionID=i, TransactionDT=100_000 + 60 * i) for i in range(1, 6)]
-        producer = Producer({"bootstrap.servers": KAFKA, "acks": "all"})
-        assert publish(producer, topic, [*events, events[0]]) == 6  # one duplicate
-        producer.produce(topic, value=b"{not json", headers=[SCHEMA_HEADER])
-        producer.produce(topic, value=json.dumps(event(TransactionID=99, isFraud=1)).encode())
-        producer.flush(10)
-
+        retention = ensure_dlq_topic(admin, dlq)
         settings = replace(
             Settings.from_env(),
             kafka_bootstrap_servers=KAFKA,
             kafka_topic=topic,
-            kafka_group_id=f"test-{uuid.uuid4().hex[:8]}",
+            kafka_group_id=f"test-{tag}",
+            kafka_dlq_topic=dlq,
         )
-        store = InMemoryStore()
-        scorer = Scorer(ModelBundle.load(bundle_dir), store)
-        counts = consumer_mod.run(
-            consumer_mod.build_consumer(settings), scorer, topic, max_messages=8, idle_timeout=20
-        )
-        assert counts["scored"] == 5 and counts["duplicate"] == 1 and counts["invalid"] == 2
-        assert sorted(store._records) == [1, 2, 3, 4, 5]
-
-        # Offsets were committed: a new consumer in the same group sees nothing new.
-        again = consumer_mod.run(
-            consumer_mod.build_consumer(settings), scorer, topic, idle_timeout=5
-        )
-        assert sum(again.values()) == 0
-        assert encode(events[0])[0].decode().startswith("1111|")
+        yield KafkaEnv(admin, settings, retention)
     finally:
-        admin.delete_topics([topic])[topic].result(30)
+        # Delete unconditionally: a just-created topic can be missing from list_topics()
+        # for a moment, which leaked empty DLQ topics when cleanup filtered on it.
+        for t in (topic, dlq):
+            try:
+                admin.delete_topics([t])[t].result(30)
+            except KafkaException as exc:  # never created (setup failed first)
+                if exc.args[0].code() != KafkaError.UNKNOWN_TOPIC_OR_PART:
+                    raise
+
+
+def produce(topic: str, values: list[bytes], keys: list[bytes | None] | None = None) -> None:
+    assert KAFKA
+    producer = Producer({"bootstrap.servers": KAFKA, "acks": "all"})
+    for i, v in enumerate(values):
+        producer.produce(topic, key=None if keys is None else keys[i], value=v)
+    assert producer.flush(10) == 0
+
+
+@dataclass
+class FailingFor(Scorer):
+    """A scorer whose model fails deterministically for one transaction."""
+
+    fail_id: int = 0
+
+    def score_event(self, event: TransactionEvent) -> ScoreResponse:
+        if event.TransactionID == self.fail_id:
+            raise RuntimeError("model failure for this event")
+        return super().score_event(event)
+
+
+class OutageStore:
+    """Delegates to a real store, but the database is 'down' for its first lookups."""
+
+    name = "postgres-with-outage"
+
+    def __init__(self, inner: PostgresStore, failures: int) -> None:
+        self.inner, self.failures = inner, failures
+
+    def get(self, transaction_id: int) -> ScoredRecord | None:
+        if self.failures:
+            self.failures -= 1
+            raise psycopg.OperationalError("connection to server failed: Connection refused")
+        return self.inner.get(transaction_id)
+
+    def card_history(self, card_id: str, before_dt: int) -> list[dict[str, Any]]:
+        return self.inner.card_history(card_id, before_dt)
+
+    def save(self, record: ScoredRecord) -> bool:
+        return self.inner.save(record)
+
+    def ping(self) -> bool:
+        return self.inner.ping()
+
+    def close(self) -> None:
+        self.inner.close()
+
+
+QUICK = RetryPolicy(base_delay=0.05, max_delay=0.2)
+
+
+@needs_kafka
+def test_kafka_round_trip_with_duplicate_and_poison(bundle_dir: Path, kafka_env: KafkaEnv) -> None:
+    topic = kafka_env.topic
+    events = [event(TransactionID=i, TransactionDT=100_000 + 60 * i) for i in range(1, 6)]
+    producer = Producer({"bootstrap.servers": KAFKA, "acks": "all"})
+    assert publish(producer, topic, [*events, events[0]]) == 6  # one duplicate
+    producer.produce(topic, value=b"{not json", headers=[SCHEMA_HEADER])
+    producer.produce(topic, value=json.dumps(event(TransactionID=99, isFraud=1)).encode())
+    producer.flush(10)
+
+    store = InMemoryStore()
+    scorer = Scorer(ModelBundle.load(bundle_dir), store)
+    counts = consumer_mod.run(
+        kafka_env.consumer(),
+        scorer,
+        topic,
+        dead_letters=kafka_env.sink(),
+        max_messages=8,
+        idle_timeout=20,
+    )
+    assert counts["scored"] == 5 and counts["duplicate"] == 1 and counts["invalid"] == 2
+    assert sorted(store._records) == [1, 2, 3, 4, 5]
+    assert len(kafka_env.read_dlq(expected=2)) == 2  # the two invalid messages, nothing else
+
+    # Offsets were committed: a new consumer in the same group sees nothing new.
+    again = consumer_mod.run(
+        kafka_env.consumer(), scorer, topic, dead_letters=kafka_env.sink(), idle_timeout=5
+    )
+    assert sum(again.values()) == 0 and kafka_env.fully_committed()
+    assert encode(events[0])[0].decode().startswith("1111|")
+
+
+@needs_kafka
+@needs_db
+def test_consumer_survives_former_poison_messages(
+    bundle_dir: Path, pg_store: PostgresStore, kafka_env: KafkaEnv
+) -> None:
+    """Regression: these events used to crash the consumer before commit, on every restart."""
+    poison = [
+        event(TransactionID=2**53 + 1),  # lost precision in the float64 feature path
+        event(TransactionID=2**63),  # beyond BIGINT
+        event(TransactionID=3, card1=10**400),  # float overflow
+        event(TransactionID=4, ProductCD="W\x00"),  # JSONB cannot store NUL
+    ]
+    good = [event(TransactionID=i, TransactionDT=100_000 + 60 * i) for i in (1, 2)]
+    # Poison first, then valid events: the consumer must get past the poison to score them.
+    produce(kafka_env.topic, [json.dumps(e).encode() for e in poison])
+    produce(kafka_env.topic, [encode(e)[1] for e in good], [encode(e)[0] for e in good])
+
+    scorer = Scorer(ModelBundle.load(bundle_dir), pg_store)
+    counts = consumer_mod.run(
+        kafka_env.consumer(),
+        scorer,
+        kafka_env.topic,
+        dead_letters=kafka_env.sink(),
+        max_messages=6,
+        idle_timeout=20,
+    )
+    assert counts["invalid"] == 4 and counts["scored"] == 2
+    assert pg_store.counts()["scored_transactions"] == 2
+    assert len(kafka_env.read_dlq(expected=4)) == 4
+    again = consumer_mod.run(
+        kafka_env.consumer(), scorer, kafka_env.topic, dead_letters=kafka_env.sink(), idle_timeout=5
+    )
+    assert sum(again.values()) == 0 and kafka_env.fully_committed()  # poison included
+
+
+@needs_kafka
+def test_dlq_topic_is_provisioned_with_30_day_retention(kafka_env: KafkaEnv) -> None:
+    assert kafka_env.retention == str(DLQ_RETENTION_MS) == "2592000000"
+    assert ensure_dlq_topic(kafka_env.admin, kafka_env.dlq) == "2592000000"  # idempotent
+    assert len(kafka_env.admin.list_topics(timeout=10).topics[kafka_env.dlq].partitions) == 1
+
+
+@needs_kafka
+@needs_db
+def test_failed_and_invalid_events_reach_the_dlq_with_metadata(
+    bundle_dir: Path, pg_store: PostgresStore, kafka_env: KafkaEnv
+) -> None:
+    evs = [event(TransactionID=i, TransactionDT=100_000 + 60 * i) for i in (1, 2, 3)]
+    raw = [encode(e)[1] for e in evs]
+    # One key, so all four land on one partition at offsets 0..3.
+    produce(kafka_env.topic, [raw[0], raw[1], b'{"TransactionID": 9, oops', raw[2]], [b"k"] * 4)
+
+    scorer = FailingFor(ModelBundle.load(bundle_dir), pg_store, fail_id=2)
+    counts = consumer_mod.run(
+        kafka_env.consumer(),
+        scorer,
+        kafka_env.topic,
+        dead_letters=kafka_env.sink(),
+        policy=QUICK,
+        max_messages=4,
+        idle_timeout=20,
+    )
+    assert counts["scored"] == 2 and counts["failed"] == 1 and counts["invalid"] == 1
+    assert counts["retries"] == 3 and counts["dead_lettered"] == 2
+    assert pg_store.counts()["scored_transactions"] == 2  # events 1 and 3; nothing skipped
+
+    letters = {dict(m.headers())["dlq.reason"]: m for m in kafka_env.read_dlq(expected=2)}
+    failed, invalid = letters[b"processing_error"], letters[b"invalid"]
+    fh, ih = dict(failed.headers()), dict(invalid.headers())
+    assert failed.value() == raw[1] and failed.key() == b"k"  # the full original event
+    assert (fh["dlq.attempts"], fh["dlq.source.topic"]) == (b"4", kafka_env.topic.encode())
+    assert fh["dlq.source.offset"] == b"1" and fh["dlq.error.type"] == b"RuntimeError"
+    assert (ih["dlq.attempts"], ih["dlq.source.offset"]) == (b"1", b"2")
+    assert ih["dlq.error.detail"].startswith(b"json:")
+    assert kafka_env.fully_committed()
+
+
+@needs_kafka
+@needs_db
+def test_database_outage_is_retried_without_dlq_or_skipped_events(
+    bundle_dir: Path, pg_store: PostgresStore, kafka_env: KafkaEnv
+) -> None:
+    evs = [event(TransactionID=i, TransactionDT=100_000 + 60 * i) for i in (1, 2, 3)]
+    produce(kafka_env.topic, [encode(e)[1] for e in evs], [b"k"] * 3)
+    store = OutageStore(pg_store, failures=8)  # longer than the 3-retry limit
+    counts = consumer_mod.run(
+        kafka_env.consumer(),
+        Scorer(ModelBundle.load(bundle_dir), store),
+        kafka_env.topic,
+        dead_letters=kafka_env.sink(),
+        policy=QUICK,
+        max_messages=3,
+        idle_timeout=20,
+    )
+    assert counts["scored"] == 3 and counts["retries"] == 8 and counts["dead_lettered"] == 0
+    assert pg_store.counts()["scored_transactions"] == 3
+    assert kafka_env.read_dlq(expected=0, timeout=4) == [] and kafka_env.fully_committed()
+
+
+@needs_kafka
+def test_unreachable_dlq_blocks_the_commit_and_a_restart_recovers(
+    bundle_dir: Path, kafka_env: KafkaEnv
+) -> None:
+    produce(kafka_env.topic, [b"{poison"], [b"k"])
+    stop = threading.Event()
+    dead_broker = Producer({"bootstrap.servers": "127.0.0.1:1", "message.timeout.ms": 1000})
+    inner = KafkaDeadLetterSink(dead_broker, kafka_env.dlq, timeout=1.5)
+
+    class StopAfterTwo:
+        attempts = 0
+
+        def send(self, letter: DeadLetter) -> None:
+            self.attempts += 1
+            if self.attempts == 2:
+                stop.set()  # shutdown while the DLQ is unreachable
+            inner.send(letter)
+
+    sink = StopAfterTwo()
+    scorer = Scorer(ModelBundle.load(bundle_dir), InMemoryStore())
+    counts = consumer_mod.run(
+        kafka_env.consumer(),
+        scorer,
+        kafka_env.topic,
+        dead_letters=sink,
+        policy=QUICK,
+        idle_timeout=20,
+        stop=stop,
+    )
+    assert sink.attempts == 2 and counts["interrupted"] == 1 and counts["dead_lettered"] == 0
+    assert not kafka_env.fully_committed()  # the poison offset was NOT committed
+    assert kafka_env.read_dlq(expected=0, timeout=3) == []
+
+    # Restart with the DLQ reachable: the message is redelivered and dead-lettered once.
+    counts = consumer_mod.run(
+        kafka_env.consumer(),
+        scorer,
+        kafka_env.topic,
+        dead_letters=kafka_env.sink(),
+        idle_timeout=10,
+    )
+    assert counts["invalid"] == 1 and counts["dead_lettered"] == 1
+    assert len(kafka_env.read_dlq(expected=1)) == 1 and kafka_env.fully_committed()

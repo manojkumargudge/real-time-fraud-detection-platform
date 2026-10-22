@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import signal
+import threading
+from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -16,14 +19,17 @@ from src.data.load import DEFAULT_RAW_DIR, load_ieee_cis
 from src.features.history import HistoryConfig
 from src.models.compare import build_model_frame
 from src.serving.api import create_app
+from src.serving.config import Settings
 from src.serving.model import ModelBundle, ModelBundleError
 from src.serving.online_features import entity_keys, events_to_frame, online_model_row
-from src.serving.schema import TransactionEvent
+from src.serving.schema import MAX_SAFE_INT, MAX_TRANSACTION_DT, ScoreResponse, TransactionEvent
 from src.serving.scorer import Scorer
-from src.serving.store import InMemoryStore
+from src.serving.store import InMemoryStore, ScoredRecord
 from src.streaming import consumer as consumer_mod
+from src.streaming import producer as producer_mod
 from src.streaming.events import decode, encode, row_to_event
 from src.streaming.processor import process_message
+from tests.kafka_fakes import NO_WAIT, FakeConsumer, FakeDeadLetterSink, FakeError, FakeMessage
 
 NAMES = HistoryConfig().feature_names()
 PARITY_EVENTS = 800
@@ -56,9 +62,16 @@ def scorer(bundle: ModelBundle) -> Scorer:
     return Scorer(bundle, InMemoryStore())
 
 
+def memory_store(scorer: Scorer) -> InMemoryStore:
+    assert isinstance(scorer.store, InMemoryStore)
+    return scorer.store
+
+
 def replay_events(frame: pd.DataFrame) -> list[dict[str, Any]]:
     ordered = frame.sort_values(["TransactionDT", "TransactionID"], kind="stable")
-    return [row_to_event(r) for r in ordered.to_dict(orient="records")]
+    return [
+        row_to_event({str(k): v for k, v in r.items()}) for r in ordered.to_dict(orient="records")
+    ]
 
 
 class TestSchema:
@@ -97,6 +110,41 @@ class TestSchema:
             TransactionEvent.model_validate(event(DeviceInfo="iOS"))
         assert TransactionEvent.model_validate(event(DeviceInfo="iOS", has_identity=True))
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("TransactionID", MAX_SAFE_INT + 1),
+            ("TransactionID", 2**63),  # beyond PostgreSQL BIGINT
+            ("TransactionDT", MAX_TRANSACTION_DT + 1),
+            ("TransactionDT", 1_700_000_000_000),  # epoch milliseconds, not seconds
+            ("card1", 10**30),
+            ("card1", 10**400),
+            ("ProductCD", "W\x00"),
+            ("card4", "\x00"),
+        ],
+    )
+    def test_unscoreable_values_rejected(self, field: str, value: Any) -> None:
+        """Regression: these passed validation, then failed in scoring or storage every time."""
+        with pytest.raises(ValidationError):
+            TransactionEvent.model_validate(event(**{field: value}))
+
+    def test_nul_rejected_in_identity_fields(self) -> None:
+        with pytest.raises(ValidationError, match="NUL"):
+            TransactionEvent.model_validate(event(DeviceInfo="iOS\x00", has_identity=True))
+
+    def test_boundary_values_are_scoreable(self, scorer: Scorer) -> None:
+        """Every accepted extreme must score: IDs at the bound survive the float64 path."""
+        first = scorer.score_event(
+            TransactionEvent.model_validate(event(TransactionID=MAX_SAFE_INT - 1, TransactionDT=0))
+        )
+        last = scorer.score_event(
+            TransactionEvent.model_validate(
+                event(TransactionID=MAX_SAFE_INT, TransactionDT=MAX_TRANSACTION_DT)
+            )
+        )
+        assert first.transaction_id == MAX_SAFE_INT - 1 and last.transaction_id == MAX_SAFE_INT
+        assert last.history_rows == 1  # same card, so the earlier event is its history
+
 
 class TestModelBundle:
     def test_loads_and_predicts_probabilities(self, bundle: ModelBundle) -> None:
@@ -126,6 +174,9 @@ class TestModelBundle:
             ("feature_columns", ["TransactionAmt"], "feature schema"),
             ("variant", "candidate", "baseline"),
             ("schema_version", 99, "schema_version"),
+            ("threshold", float("nan"), "threshold"),  # would silently disable all alerts
+            ("threshold", 1.5, "threshold"),
+            ("threshold", -0.1, "threshold"),
         ],
     )
     def test_incompatible_metadata(
@@ -170,7 +221,9 @@ class TestTrainServeParity:
                 TransactionEvent.model_validate(event(TransactionID=i, TransactionDT=dt))
             )
         early = event(TransactionID=1, TransactionDT=100_000)
-        history = scorer.store.card_history(entity_keys(early)[0], 100_000)
+        card_id, _ = entity_keys(early)
+        assert card_id is not None
+        history = scorer.store.card_history(card_id, 100_000)
         row = online_model_row(early, history, bundle.history_config)
         assert history == [] and row["uid_prior_txn_count"].iloc[0] == 0
 
@@ -196,7 +249,9 @@ class TestTrainServeParity:
 class TestParityEdgeCases:
     """Exact parity holds for chronological replay; late arrival and cold start diverge."""
 
-    def replay(self, bundle: ModelBundle, arrivals: list[dict[str, Any]]) -> dict[int, dict]:
+    def replay(
+        self, bundle: ModelBundle, arrivals: list[dict[str, Any]]
+    ) -> dict[int, dict[str, float | None]]:
         scorer = Scorer(bundle, InMemoryStore())
         out = {}
         for e in arrivals:
@@ -204,12 +259,16 @@ class TestParityEdgeCases:
             out[res.transaction_id] = res.history_features
         return out
 
-    def batch(self, bundle: ModelBundle, events: list[dict[str, Any]]) -> dict[int, dict]:
+    def batch(
+        self, bundle: ModelBundle, events: list[dict[str, Any]]
+    ) -> dict[int, dict[str, float | None]]:
         records = [TransactionEvent.model_validate(e).to_record() for e in events]
         frame = build_model_frame(events_to_frame(records), "baseline", bundle.history_config)
         feats = frame.set_index("TransactionID")[NAMES].astype("float64")
         return {
-            int(i): {k: (None if np.isnan(v) else float(v)) for k, v in row.items()}
+            int(cast(int, i)): {
+                cast(str, k): (None if np.isnan(v) else float(v)) for k, v in row.items()
+            }
             for i, row in feats.iterrows()
         }
 
@@ -273,7 +332,7 @@ class TestDuplicates:
         e = TransactionEvent.model_validate(event())
         first, second = scorer.score_event(e), scorer.score_event(e)
         assert not first.duplicate and second.duplicate
-        assert second.score == first.score and len(scorer.store) == 1
+        assert second.score == first.score and len(memory_store(scorer)) == 1
 
     def test_conflicting_payload_returns_stored_result(
         self, scorer: Scorer, caplog: pytest.LogCaptureFixture
@@ -320,11 +379,71 @@ class TestApi:
         assert a["duplicate"] is False and b["duplicate"] is True
         assert 0 <= a["score"] <= 1 and a["is_alert"] == (a["score"] >= a["threshold"])
 
-    @pytest.mark.parametrize("bad", [event(isFraud=1), event(TransactionAmt=-3), {"x": 1}])
-    def test_invalid_payload_is_422_and_not_stored(self, scorer: Scorer, bad: dict) -> None:
+    @pytest.mark.parametrize(
+        "bad",
+        [event(isFraud=1), event(TransactionAmt=-3), {"x": 1}, event(TransactionID=2**63)],
+    )
+    def test_invalid_payload_is_422_and_not_stored(
+        self, scorer: Scorer, bad: dict[str, Any]
+    ) -> None:
         with self.client(scorer) as c:
             assert c.post("/score", json=bad).status_code == 422
-        assert len(scorer.store) == 0
+        assert len(memory_store(scorer)) == 0
+
+    @pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+    def test_non_finite_json_number_is_422_not_500(self, scorer: Scorer, literal: str) -> None:
+        """Regression: the default 422 body echoed the NaN input and failed to render (500)."""
+        body = json.dumps(event()).replace('"TransactionAmt": 50.0', f'"TransactionAmt": {literal}')
+        assert literal in body
+        with self.client(scorer) as c:
+            r = c.post("/score", content=body, headers={"Content-Type": "application/json"})
+        assert r.status_code == 422
+        (err,) = r.json()["detail"]
+        assert err["loc"] == ["body", "TransactionAmt"] and "finite" in err["msg"]
+        assert len(memory_store(scorer)) == 0
+
+    def test_validation_error_shape_is_unchanged_for_ordinary_errors(self, scorer: Scorer) -> None:
+        with self.client(scorer) as c:
+            r = c.post("/score", json=event(TransactionAmt=-3))
+        (err,) = r.json()["detail"]
+        assert r.status_code == 422 and err["loc"] == ["body", "TransactionAmt"]
+        assert err["input"] == -3 and err["type"] == "greater_than_equal"
+
+    def test_shutdown_closes_the_store_it_opened(
+        self, bundle_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = InMemoryStore()
+        closed: list[bool] = []
+        store.close = lambda: closed.append(True)  # type: ignore[method-assign]
+        monkeypatch.setenv("MODEL_DIR", str(bundle_dir))
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.setattr(Settings, "build_store", lambda _self: store)
+        with TestClient(create_app()) as c:
+            assert c.get("/health").status_code == 200
+            assert closed == []
+        assert closed == [True]
+
+    def test_injected_scorer_store_is_left_open(self, scorer: Scorer) -> None:
+        closed: list[bool] = []
+        scorer.store.close = lambda: closed.append(True)  # type: ignore[method-assign]
+        with self.client(scorer) as c:
+            c.get("/health")
+        assert closed == []
+
+    def test_self_built_app_configures_application_logging(
+        self, bundle_dir: Path, scorer: Scorer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: under uvicorn the src.* INFO logs (model, store, scores) were dropped."""
+        calls: list[dict[str, Any]] = []
+        monkeypatch.setattr(logging, "basicConfig", lambda **kw: calls.append(kw))
+        monkeypatch.setenv("MODEL_DIR", str(bundle_dir))
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        with TestClient(create_app()) as c:
+            assert c.get("/health").status_code == 200
+        assert len(calls) == 1 and calls[0]["level"] == logging.INFO
+        with self.client(scorer) as c:  # injected scorer: caller owns logging setup
+            c.get("/health")
+        assert len(calls) == 1
 
 
 class TestEvents:
@@ -364,10 +483,10 @@ class TestProcessor:
     def test_invalid_messages_are_skipped(self, scorer: Scorer, value: bytes | None) -> None:
         out = process_message(value, scorer)
         assert out.status == "invalid" and out.error
-        assert len(scorer.store) == 0
+        assert len(memory_store(scorer)) == 0
 
     def test_infrastructure_errors_propagate(self, scorer: Scorer) -> None:
-        def boom(*_: Any) -> None:
+        def boom(transaction_id: int) -> ScoredRecord | None:
             raise ConnectionError("db down")
 
         scorer.store.get = boom  # type: ignore[method-assign]
@@ -375,63 +494,38 @@ class TestProcessor:
             process_message(encode(event())[1], scorer)
 
 
-class FakeError:
-    def __init__(self, code: int) -> None:
-        self._code = code
-
-    def code(self) -> int:
-        return self._code
-
-
-class FakeMessage:
-    def __init__(self, value: bytes | None, error: FakeError | None = None) -> None:
-        self._value = value
-        self._error = error
-
-    def value(self) -> bytes | None:
-        return self._value
-
-    def error(self) -> FakeError | None:
-        return self._error
-
-
-class FakeConsumer:
-    def __init__(self, values: list[bytes | None]) -> None:
-        self.queue = [FakeMessage(v) for v in values]
-        self.committed: list[FakeMessage] = []
-        self.closed = False
-
-    def subscribe(self, topics: list[str]) -> None:
-        self.topics = topics
-
-    def poll(self, _timeout: float) -> FakeMessage | None:
-        return self.queue.pop(0) if self.queue else None
-
-    def commit(self, message: FakeMessage, asynchronous: bool) -> None:
-        assert asynchronous is False
-        self.committed.append(message)
-
-    def close(self) -> None:
-        self.closed = True
-
-
 class TestConsumerLoop:
     def test_commits_every_processed_message_including_invalid(self, scorer: Scorer) -> None:
         good = encode(event())[1]
         fake = FakeConsumer([good, good, b"junk", encode(event(TransactionID=2))[1]])
-        counts = consumer_mod.run(fake, scorer, "t", max_messages=4)  # type: ignore[arg-type]
+        dlq = FakeDeadLetterSink()
+        counts = consumer_mod.run(fake, scorer, "t", dead_letters=dlq, max_messages=4)
         assert counts["scored"] == 2 and counts["duplicate"] == 1 and counts["invalid"] == 1
-        assert len(fake.committed) == 4 and fake.closed and len(scorer.store) == 2
+        assert len(fake.committed) == 4 and fake.closed and len(memory_store(scorer)) == 2
+        assert [d.value for d in dlq.sent] == [b"junk"]  # the poison message, dead-lettered
 
-    def test_no_commit_when_processing_fails(self, scorer: Scorer) -> None:
-        def db_down(_record: Any) -> bool:
+    def test_no_commit_while_the_database_is_down(self, scorer: Scorer) -> None:
+        """A transient outage is retried past the permanent-error limit, never dead-lettered,
+        and the offset stays uncommitted when the consumer is stopped mid-outage."""
+        stop = threading.Event()
+        calls: list[int] = []
+
+        def db_down(record: ScoredRecord) -> bool:
+            calls.append(1)
+            if len(calls) == 6:
+                stop.set()  # e.g. docker stop during the outage
             raise ConnectionError("db down")
 
         scorer.store.save = db_down  # type: ignore[method-assign]
         fake = FakeConsumer([encode(event())[1]])
-        with pytest.raises(ConnectionError):
-            consumer_mod.run(fake, scorer, "t", max_messages=1)  # type: ignore[arg-type]
-        assert fake.committed == [] and fake.closed
+        dlq = FakeDeadLetterSink()
+        counts = consumer_mod.run(
+            fake, scorer, "t", dead_letters=dlq, policy=NO_WAIT, max_messages=1, stop=stop
+        )
+        assert (
+            len(calls) == 6 and counts["retries"] == 6 and counts["interrupted"] == 1
+        )  # 6th: wait cut
+        assert fake.committed == [] and dlq.sent == [] and fake.closed
 
     def test_missing_topic_is_waited_out_not_fatal(self, scorer: Scorer) -> None:
         from confluent_kafka import KafkaError
@@ -441,7 +535,9 @@ class TestConsumerLoop:
             FakeMessage(None, FakeError(KafkaError.UNKNOWN_TOPIC_OR_PART)),
             FakeMessage(encode(event())[1]),
         ]
-        counts = consumer_mod.run(fake, scorer, "t", max_messages=1)  # type: ignore[arg-type]
+        counts = consumer_mod.run(
+            fake, scorer, "t", dead_letters=FakeDeadLetterSink(), max_messages=1
+        )
         assert counts["scored"] == 1 and len(fake.committed) == 1
 
     def test_other_broker_errors_are_fatal(self, scorer: Scorer) -> None:
@@ -450,12 +546,104 @@ class TestConsumerLoop:
         fake = FakeConsumer([])
         fake.queue = [FakeMessage(None, FakeError(KafkaError._TRANSPORT))]
         with pytest.raises(KafkaException):
-            consumer_mod.run(fake, scorer, "t", max_messages=1)  # type: ignore[arg-type]
+            consumer_mod.run(fake, scorer, "t", dead_letters=FakeDeadLetterSink(), max_messages=1)
         assert fake.committed == [] and fake.closed
 
     def test_idle_timeout_stops(self, scorer: Scorer) -> None:
-        counts = consumer_mod.run(FakeConsumer([]), scorer, "t", idle_timeout=0)  # type: ignore[arg-type]
+        counts = consumer_mod.run(
+            FakeConsumer([]), scorer, "t", dead_letters=FakeDeadLetterSink(), idle_timeout=0
+        )
         assert sum(counts.values()) == 0
+
+    def test_alerts_do_not_count_towards_max_messages(self) -> None:
+        """Regression: the "alerts" tally was summed with statuses, stopping the run early."""
+        values = [encode(event(TransactionID=i))[1] for i in range(1, 5)]
+        fake = FakeConsumer(values)
+        counts = consumer_mod.run(
+            fake,
+            AlertingScorer(),  # type: ignore[arg-type]
+            "t",
+            dead_letters=FakeDeadLetterSink(),
+            max_messages=4,
+        )
+        assert counts["scored"] == 4 and counts["alerts"] == 4
+        assert len(fake.committed) == 4 and fake.queue == []
+
+    def test_main_turns_sigterm_into_a_graceful_stop(
+        self, bundle_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: as PID 1 in Docker, Python ignored SIGTERM without a handler, so
+        `docker stop` always ended in SIGKILL after the grace period (measured: exit 137)."""
+        handlers: dict[int, Any] = {}
+        monkeypatch.setattr(signal, "signal", lambda s, h: handlers.__setitem__(s, h))
+        store = InMemoryStore()
+        closed: list[bool] = []
+        store.close = lambda: closed.append(True)  # type: ignore[method-assign]
+        monkeypatch.setenv("MODEL_DIR", str(bundle_dir))
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.setattr(Settings, "build_store", lambda _self: store)
+        monkeypatch.setattr(consumer_mod, "build_consumer", lambda _s: FakeConsumer([]))
+        monkeypatch.setattr(consumer_mod, "build_dead_letter_sink", lambda _s: FakeDeadLetterSink())
+
+        def fake_run(*_args: Any, stop: threading.Event, **_kwargs: Any) -> Counter[str]:
+            assert not stop.is_set()
+            handlers[signal.SIGTERM](signal.SIGTERM, None)  # what `docker stop` delivers
+            assert stop.is_set()
+            return Counter()
+
+        monkeypatch.setattr(consumer_mod, "run", fake_run)
+        consumer_mod.main([])
+        assert {signal.SIGTERM, signal.SIGINT} <= set(handlers) and closed == [True]
+
+    def test_stop_event_ends_the_loop_and_closes(self, scorer: Scorer) -> None:
+        stop = threading.Event()
+        stop.set()
+        fake = FakeConsumer([encode(event())[1]])
+        counts = consumer_mod.run(fake, scorer, "t", dead_letters=FakeDeadLetterSink(), stop=stop)
+        assert sum(counts.values()) == 0 and fake.committed == [] and fake.closed
+        assert len(fake.queue) == 1  # nothing consumed, so nothing lost
+
+
+class AlertingScorer:
+    """Scores every event as a fresh alert (consumer accounting only, no model)."""
+
+    def score_event(self, ev: TransactionEvent) -> ScoreResponse:
+        return ScoreResponse(
+            transaction_id=ev.TransactionID,
+            score=0.99,
+            is_alert=True,
+            threshold=0.5,
+            model_version="test",
+            duplicate=False,
+            history_rows=0,
+            latency_ms=0.0,
+        )
+
+
+class FakeProducer:
+    def __init__(self, undelivered: int) -> None:
+        self.undelivered = undelivered
+        self.produced = 0
+
+    def produce(self, topic: str, **_kwargs: Any) -> None:
+        self.produced += 1
+
+    def poll(self, _timeout: float) -> int:
+        return 0
+
+    def flush(self, _timeout: float) -> int:
+        return self.undelivered
+
+
+class TestProducer:
+    def test_publish_counts_delivered_events(self) -> None:
+        fake = FakeProducer(undelivered=0)
+        assert producer_mod.publish(fake, "t", [event(), event(TransactionID=2)]) == 2
+
+    def test_messages_left_after_flush_are_an_error(self) -> None:
+        """Regression: flush() timing out with queued messages used to report success."""
+        with pytest.raises(RuntimeError, match="undelivered"):
+            producer_mod.publish(FakeProducer(undelivered=1), "t", [event()])
 
 
 @pytest.mark.real_data

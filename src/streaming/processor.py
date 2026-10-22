@@ -6,9 +6,10 @@ i.e. after the database write. A crash before the commit re-delivers the message
 stored result is written once per ID. This is idempotent at-least-once processing, not
 Kafka exactly-once semantics.
 
-Invalid messages (bad JSON or schema) are logged and skipped so one poison message cannot
-block the partition. Infrastructure errors (e.g. database down) propagate, so the offset
-is not committed and the message is retried after restart.
+Invalid messages (bad JSON or schema) are reported as ``invalid`` with their exception; the
+consumer dead-letters them so one poison message cannot block the partition. Scoring and
+database errors propagate to the consumer, which retries or dead-letters them according to
+``reliability.classify`` and commits only after persistence or a confirmed DLQ write.
 """
 
 from __future__ import annotations
@@ -24,7 +25,8 @@ from src.streaming.events import decode
 
 logger = logging.getLogger(__name__)
 
-Status = Literal["scored", "duplicate", "invalid"]
+# Mutually exclusive per message; "failed" = dead-lettered after exhausting its retries.
+Status = Literal["scored", "duplicate", "invalid", "failed"]
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ class ProcessOutcome:
     score: float | None = None
     is_alert: bool | None = None
     error: str | None = None
+    cause: BaseException | None = None  # set for invalid messages
 
 
 def process_message(value: bytes | None, scorer: Scorer) -> ProcessOutcome:
@@ -42,7 +45,7 @@ def process_message(value: bytes | None, scorer: Scorer) -> ProcessOutcome:
     except (ValueError, ValidationError) as exc:
         error = str(exc).splitlines()[0][:300]
         logger.warning("skipping invalid message error=%s", error)
-        return ProcessOutcome(status="invalid", error=error)
+        return ProcessOutcome(status="invalid", error=error, cause=exc)
     result = scorer.score_event(event)
     return ProcessOutcome(
         status="duplicate" if result.duplicate else "scored",

@@ -18,6 +18,7 @@ class Settings:
     kafka_bootstrap_servers: str
     kafka_topic: str
     kafka_group_id: str
+    kafka_dlq_topic: str = "transactions.dlq"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -27,6 +28,7 @@ class Settings:
             kafka_bootstrap_servers=os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
             kafka_topic=os.environ.get("KAFKA_TOPIC", "transactions"),
             kafka_group_id=os.environ.get("KAFKA_GROUP_ID", "fraud-scorer"),
+            kafka_dlq_topic=os.environ.get("KAFKA_DLQ_TOPIC", "transactions.dlq"),
         )
 
     def build_store(self) -> TransactionStore:
