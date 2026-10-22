@@ -90,9 +90,12 @@ class _Worker:
         self.policy, self.stop, self.counts = policy, stop, counts
         self.revoked: set[tuple[str, int]] = set()  # revoked while the current message ran
 
+    def on_assign(self, _consumer: Any, partitions: list[TopicPartition]) -> None:
+        logger.info("partitions assigned: %s", _partitions(partitions))
+
     def on_revoke(self, _consumer: Any, partitions: list[TopicPartition]) -> None:
         self.revoked.update((p.topic, p.partition) for p in partitions)
-        logger.info("partitions revoked: %s", sorted(self.revoked))
+        logger.info("partitions revoked: %s", _partitions(partitions))
 
     def handle(self, msg: Any) -> ProcessOutcome:
         self.revoked.clear()
@@ -118,6 +121,8 @@ class _Worker:
                 continue
             if outcome.status == "invalid":
                 self._dead_letter(msg, "invalid", attempt, outcome.cause)
+            elif outcome.status == "duplicate":
+                logger.info("duplicate id=%s skipped %s", outcome.transaction_id, _where(msg))
             return outcome
 
     def _dead_letter(
@@ -177,6 +182,14 @@ def _where(msg: Any) -> str:
     return f"topic={msg.topic()} partition={msg.partition()} offset={msg.offset()}"
 
 
+def _partitions(partitions: list[TopicPartition]) -> str:
+    """``transactions[0, 1, 2]``; one entry per topic."""
+    by_topic: dict[str, list[int]] = {}
+    for p in partitions:
+        by_topic.setdefault(p.topic, []).append(p.partition)
+    return " ".join(f"{t}{sorted(ps)}" for t, ps in sorted(by_topic.items())) or "none"
+
+
 def run(
     consumer: Consumer,
     scorer: Scorer,
@@ -195,7 +208,7 @@ def run(
     counts: Counter[str] = Counter()
     worker = _Worker(consumer, scorer, dead_letters, policy or RetryPolicy(), stop, counts)
     processed = 0  # counts also holds "alerts"/"retries", so it cannot be summed for this
-    consumer.subscribe([topic], on_revoke=worker.on_revoke)
+    consumer.subscribe([topic], on_assign=worker.on_assign, on_revoke=worker.on_revoke)
     last_message = time.monotonic()
     try:
         while max_messages is None or processed < max_messages:

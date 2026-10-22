@@ -76,6 +76,7 @@ class FakeConsumer:
         self.ignore_pause = False
         self.commit_errors: list[int] = []  # KafkaError codes raised by the next commits
         self.poll_hook: Callable[[FakeConsumer], None] | None = None
+        self.on_assign: Callable[..., None] | None = None
         self.on_revoke: Callable[..., None] | None = None
 
     def subscribe(
@@ -84,7 +85,7 @@ class FakeConsumer:
         on_assign: Callable[..., None] | None = None,
         on_revoke: Callable[..., None] | None = None,
     ) -> None:
-        self.topics, self.on_revoke = topics, on_revoke
+        self.topics, self.on_assign, self.on_revoke = topics, on_assign, on_revoke
 
     def assignment(self) -> list[TopicPartition]:
         return [TopicPartition(t, p) for t, p in sorted(self.assigned)]
@@ -108,6 +109,9 @@ class FakeConsumer:
             self.on_revoke(self, revoked)
 
     def poll(self, _timeout: float) -> FakeMessage | None:
+        if self.on_assign is not None:  # like librdkafka: the first poll joins the group
+            on_assign, self.on_assign = self.on_assign, None
+            on_assign(self, self.assignment())
         if self.poll_hook is not None:
             self.poll_hook(self)
         for i, m in enumerate(self.queue):

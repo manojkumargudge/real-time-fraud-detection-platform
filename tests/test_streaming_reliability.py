@@ -299,6 +299,25 @@ class TestConsumerReliability:
             run(fake, FlakyScorer(), FakeDeadLetterSink())
         assert fake.closed
 
+    def test_partition_assignment_and_revocation_are_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake, dlq = FakeConsumer(values(1, 2)), FakeDeadLetterSink()
+        fake.poll_hook = lambda c: c.revoke() if c.committed and c.assigned else None
+        with caplog.at_level("INFO", logger="src.streaming.consumer"):
+            run(fake, FlakyScorer(), dlq)
+        assert "partitions assigned: t[0]" in caplog.text
+        assert "partitions revoked: t[0]" in caplog.text
+
+    def test_skipped_duplicates_are_logged_with_their_id(
+        self, bundle: ModelBundle, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake, dlq = FakeConsumer(values(3, 3)), FakeDeadLetterSink()
+        with caplog.at_level("INFO", logger="src.streaming.consumer"):
+            counts = run(fake, Scorer(bundle, InMemoryStore()), dlq)
+        assert counts["duplicate"] == 1
+        assert "duplicate id=3 skipped topic=t partition=0 offset=1" in caplog.text
+
     def test_duplicates_and_conflicting_ids_never_add_or_overwrite_records(
         self, bundle: ModelBundle
     ) -> None:
