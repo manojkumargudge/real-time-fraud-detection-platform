@@ -1,17 +1,22 @@
 Unit test results (integration tests NOT run)
 =============================================
 
-Command (Git Bash, repo root; live services blocked via env):
-  DATABASE_URL=postgresql://blocked:blocked@127.0.0.1:1/blocked TEST_DATABASE_URL= TEST_KAFKA_BOOTSTRAP= KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:1 .venv/Scripts/python.exe -m pytest --ignore=tests/test_integration.py -p no:cacheprovider -rfEs
+Command (Git Bash, repo root; service variables unset, tests/conftest.py points unit tests at
+unreachable services):
+  env -u DATABASE_URL -u KAFKA_BOOTSTRAP_SERVERS -u TEST_DATABASE_URL -u TEST_KAFKA_BOOTSTRAP -u MLFLOW_TRACKING_URI .venv/Scripts/python.exe -m pytest --ignore=tests/test_integration.py -p no:cacheprovider -rfEs
 
-Commit tested: a081b65e362223124828078e461ecfddae861e7f
-Started:       2026-10-22T15:42:06+05:30
-Finished:      2026-10-22T15:44:59+05:30
+Commit tested: 04391fa3c5216ec9aa9dfdd0d6f1e1ceb1f37ca8
+Started:       2026-10-22T17:35:34+05:30
+Finished:      2026-10-22T17:37:54+05:30
 Python:        Python 3.11.9 (pytest 8.3.5, win32)
 
 Summary:
-  355 passed, 1 warning in 168.50s (0:02:48)
+  368 passed, 2 warnings in 137.35s (0:02:17)
 
-Warning: starlette testclient DeprecationWarning (anyio.abc.BlockingPortal alias); third-party, not from project code.
+Warnings (third-party, not from project code):
+  starlette testclient DeprecationWarning (anyio.abc.BlockingPortal alias)
+  mlflow SQLAlchemy SADeprecationWarning (``noload`` loader strategy)
 Failed: none. Skipped: none.
 tests/test_integration.py was excluded and not run.
+
+Previous run: 355 passed, 1 warning on a081b65e362223124828078e461ecfddae861e7f (2026-10-22).
