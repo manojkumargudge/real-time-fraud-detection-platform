@@ -129,3 +129,29 @@ def test_champion_moves_only_beyond_the_seed_spread() -> None:
     assert not small.move_champion and small.seed_spread == pytest.approx(0.004)
     large = decide(runs([0.250, 0.252, 0.248], [0.260, 0.261, 0.259]))  # +0.010 > spread 0.004
     assert large.move_champion and large.difference == pytest.approx(0.010)
+
+
+def test_confirmation_verdict_and_report_section() -> None:
+    from src.models.imbalance_comparison import CONFIRM_HEADING, verdict, with_confirmation
+
+    assert verdict([0.01, 0.02]) == "every"
+    assert verdict([0.01, 0.02, -0.01]) == "most"
+    assert verdict([0.01, -0.02]) == "not consistently"
+    once = with_confirmation("# Report\n\nbody\n", f"{CONFIRM_HEADING}\n\nfirst\n")
+    twice = with_confirmation(once, f"{CONFIRM_HEADING}\n\nsecond\n")
+    assert twice == f"# Report\n\nbody\n\n{CONFIRM_HEADING}\n\nsecond\n"  # replaced, not stacked
+
+
+def test_extra_tags_are_logged(
+    synthetic_frame: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    run = fit_baseline(synthetic_frame, FAST)
+    bundle = save_bundle(run.trained, run.metadata, tmp_path / "bundle")
+    run_id = tracking.log_training_run(
+        run, bundle, extra_tags={"stage": "confirmation"}, run_name="confirm-x"
+    )
+    logged = MlflowClient(tracking_uri=uri).get_run(run_id)
+    assert logged.data.tags["stage"] == "confirmation"
+    assert logged.info.run_name == "confirm-x"

@@ -116,6 +116,8 @@ def log_training_run(
     imbalance_method: str = "scale_pos_weight",
     register: bool = False,
     uri: str | None = None,
+    extra_tags: dict[str, str] | None = None,
+    run_name: str | None = None,
 ) -> str:
     """Log one training run (and optionally register it as champion); returns the run ID."""
     uri = uri or tracking_uri()
@@ -126,10 +128,13 @@ def log_training_run(
         "git_dirty": str(bool(_git("status", "--porcelain"))).lower(),
         "imbalance_method": imbalance_method,
         "variant": str(run.metadata["variant"]),
+        **(extra_tags or {}),
     }
     seed = run.metadata["seed"]
     created = client.create_run(
-        _experiment_id(client, uri), tags=tags, run_name=f"baseline-{imbalance_method}-seed{seed}"
+        _experiment_id(client, uri),
+        tags=tags,
+        run_name=run_name or f"baseline-{imbalance_method}-seed{seed}",
     )
     run_id = str(created.info.run_id)
     now = int(time.time() * 1000)

@@ -24,6 +24,7 @@ import json
 import logging
 import platform
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -78,12 +79,26 @@ def train_baseline(
 
 def fit_baseline(df: pd.DataFrame, cfg: ComparisonConfig | None = None) -> BaselineRun:
     cfg = cfg or ComparisonConfig()
+    started = time.perf_counter()
+    frame = build_model_frame(df, "baseline", HistoryConfig())
+    train, valid, boundary = chronological_split(frame, valid_fraction=cfg.valid_fraction)
+    split = {"train_end": boundary.train_end, "valid_start": boundary.valid_start}
+    return fit_on_split(train, valid, cfg, split, started=started)
+
+
+def fit_on_split(
+    train: pd.DataFrame,
+    valid: pd.DataFrame,
+    cfg: ComparisonConfig,
+    split: Mapping[str, int | None],
+    *,
+    started: float | None = None,
+) -> BaselineRun:
+    """Train on ``train`` and evaluate on ``valid`` (rows of one baseline model frame).
+    ``split`` records the boundary in the metadata; ``started`` defaults to now."""
+    started = time.perf_counter() if started is None else started
     hist_cfg = HistoryConfig()
     cols = feature_columns(hist_cfg)
-    started = time.perf_counter()
-
-    frame = build_model_frame(df, "baseline", hist_cfg)
-    train, valid, boundary = chronological_split(frame, valid_fraction=cfg.valid_fraction)
     trained = train_variant(train, cols, cfg)
     y_valid = valid[LABEL].to_numpy(dtype=np.int64)
     valid_scores = score(trained, valid.drop(columns=LABEL), cols)
@@ -104,8 +119,7 @@ def fit_baseline(df: pd.DataFrame, cfg: ComparisonConfig | None = None) -> Basel
         "xgb_params": cfg.xgb_params,
         "seed": cfg.seed,
         "split": {
-            "train_end": boundary.train_end,
-            "valid_start": boundary.valid_start,
+            **split,
             "train_rows": len(train),
             "valid_rows": len(valid),
             "train_dt_min": int(train[TIME].min()),

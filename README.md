@@ -22,7 +22,8 @@ Work in progress: a tested local demo, not a production system.
 - FastAPI `/health` and `/score`
 - Docker Compose stack (Kafka, PostgreSQL, API, consumer)
 - MLflow tracking and model registry (local SQLite `mlflow.db`, `python -m src.models.train`;
-  the seed-42 baseline is registered as `fraud-xgboost` with alias `champion`)
+  registered as `fraud-xgboost`; alias `champion` = best candidate (version 2, no class
+  weight), `production` = currently deployed (version 1, `baseline-6026acdc8e2e`))
 - 355 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 14 integration
   tests ([docs/test-results-integration.txt](docs/test-results-integration.txt))
 
