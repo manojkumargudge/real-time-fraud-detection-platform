@@ -89,11 +89,15 @@ FEATURE_AUDIT: dict[str, str] = {
 }
 
 
+IMBALANCE_METHODS = ("scale_pos_weight", "none")
+
+
 @dataclass(frozen=True)
 class ComparisonConfig:
     valid_fraction: float = 0.2
     holdout_fraction: float = 0.2  # of the training window, used for rounds + threshold
     seed: int = 42
+    imbalance: str = "scale_pos_weight"  # one of IMBALANCE_METHODS; "none" = weight 1
     max_rounds: int = 2000
     early_stopping_rounds: int = 100
     bootstrap_resamples: int = 500
@@ -151,6 +155,15 @@ def _scale_pos_weight(y: pd.Series[int]) -> float:
     return float((len(y) - pos) / pos)
 
 
+def imbalance_weight(y: pd.Series[int], method: str) -> float:
+    """XGBoost ``scale_pos_weight`` for ``method``; ``y`` must be training labels only."""
+    if method == "scale_pos_weight":
+        return _scale_pos_weight(y)
+    if method == "none":
+        return 1.0
+    raise ValueError(f"unknown imbalance method {method!r}; expected one of {IMBALANCE_METHODS}")
+
+
 def _params(cfg: ComparisonConfig, spw: float) -> dict[str, Any]:
     return {**cfg.xgb_params, "scale_pos_weight": spw, "seed": cfg.seed}
 
@@ -167,7 +180,7 @@ def train_variant(train: pd.DataFrame, cols: list[str], cfg: ComparisonConfig) -
     enc1 = CategoricalEncoder().fit(fit)
     d_hold = _dmatrix(_matrix(holdout, enc1, cols), holdout[LABEL])
     stage1 = xgb.train(
-        _params(cfg, _scale_pos_weight(fit[LABEL])),
+        _params(cfg, imbalance_weight(fit[LABEL], cfg.imbalance)),
         _dmatrix(_matrix(fit, enc1, cols), fit[LABEL]),
         num_boost_round=cfg.max_rounds,
         evals=[(d_hold, "holdout")],
@@ -180,7 +193,7 @@ def train_variant(train: pd.DataFrame, cols: list[str], cfg: ComparisonConfig) -
     hold_ap = average_precision(holdout[LABEL].to_numpy(), hold_scores)
 
     encoder = CategoricalEncoder().fit(train)
-    spw = _scale_pos_weight(train[LABEL])
+    spw = imbalance_weight(train[LABEL], cfg.imbalance)
     model = xgb.train(
         _params(cfg, spw), _dmatrix(_matrix(train, encoder, cols), train[LABEL]), rounds
     )

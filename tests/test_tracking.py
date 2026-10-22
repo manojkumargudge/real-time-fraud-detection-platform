@@ -82,3 +82,50 @@ def test_training_fraud_rate_uses_training_rows_only(synthetic_frame: pd.DataFra
     assert run.train_fraud_rate == pytest.approx(expected)
     assert len(run.y_valid) == split["valid_rows"] == len(run.valid_scores)
     assert np.isfinite(run.valid_scores).all()
+
+
+class TestImbalanceWeight:
+    def test_scale_pos_weight_is_negatives_over_positives(self) -> None:
+        from src.models.compare import imbalance_weight
+
+        assert imbalance_weight(pd.Series([0, 0, 0, 1]), "scale_pos_weight") == 3.0
+        assert imbalance_weight(pd.Series([0, 0, 0, 1]), "none") == 1.0
+        with pytest.raises(ValueError, match="unknown imbalance method"):
+            imbalance_weight(pd.Series([0, 1]), "smote")
+
+    def test_uses_training_rows_only(self, synthetic_frame: pd.DataFrame) -> None:
+        """The stored weight equals the training-window ratio, not the full-data ratio."""
+        df = synthetic_frame.copy()
+        run = fit_baseline(df, FAST)
+        train = df["TransactionDT"] < run.metadata["split"]["train_end"]
+        df.loc[~train, "isFraud"] = 1  # validation labels changed: the weight must not move
+        y_train = df.loc[train, "isFraud"]
+        expected = float((y_train == 0).sum() / y_train.sum())
+        assert run.metadata["scale_pos_weight"] == pytest.approx(expected)
+        relabelled = fit_baseline(df, FAST)
+        assert relabelled.metadata["scale_pos_weight"] == pytest.approx(expected)
+        full = float((df["isFraud"] == 0).sum() / df["isFraud"].sum())
+        assert full != pytest.approx(expected)
+
+    def test_none_trains_with_weight_one(self, synthetic_frame: pd.DataFrame) -> None:
+        from dataclasses import replace
+
+        run = fit_baseline(synthetic_frame, replace(FAST, imbalance="none"))
+        assert run.metadata["scale_pos_weight"] == 1.0
+        assert run.metadata["config"]["imbalance"] == "none"
+
+
+def test_champion_moves_only_beyond_the_seed_spread() -> None:
+    from src.models.imbalance_comparison import RunResult, decide
+
+    def runs(current: list[float], challenger: list[float]) -> list[RunResult]:
+        return [
+            RunResult(m, i, "r", 1.0, {"valid_pr_auc": v})
+            for m, vals in (("scale_pos_weight", current), ("none", challenger))
+            for i, v in enumerate(vals)
+        ]
+
+    small = decide(runs([0.250, 0.252, 0.248], [0.253, 0.255, 0.251]))  # +0.003 < spread 0.004
+    assert not small.move_champion and small.seed_spread == pytest.approx(0.004)
+    large = decide(runs([0.250, 0.252, 0.248], [0.260, 0.261, 0.259]))  # +0.010 > spread 0.004
+    assert large.move_champion and large.difference == pytest.approx(0.010)

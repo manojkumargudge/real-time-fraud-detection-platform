@@ -1,7 +1,7 @@
 """Train and save the baseline serving model (card_id / uid keys; D1 keys stay experimental).
 
-Usage: ``python -m src.models.train [--seed N] [--register] [--no-track]`` writes to
-``artifacts/baseline/`` (gitignored):
+Usage: ``python -m src.models.train [--seed N] [--imbalance none] [--register] [--no-track]``
+writes to ``artifacts/baseline/`` (gitignored):
 
 * ``model.json``    -- XGBoost booster
 * ``metadata.json`` -- feature schema, encoder vocabulary, threshold, split, metrics, versions
@@ -39,6 +39,7 @@ from src.features.history import TIME, HistoryConfig
 from src.features.split import chronological_split
 from src.models.compare import (
     EXCLUDED,
+    IMBALANCE_METHODS,
     ComparisonConfig,
     TrainedVariant,
     build_model_frame,
@@ -154,7 +155,9 @@ def main(
         # Imported here: serving imports this module but does not ship mlflow.
         from src.models.tracking import log_training_run
 
-        log_training_run(run, out_dir, register=register)
+        log_training_run(
+            run, out_dir, imbalance_method=run.metadata["config"]["imbalance"], register=register
+        )
     return saved
 
 
@@ -162,6 +165,9 @@ def _cli(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, default=ARTIFACTS_DIR)
     parser.add_argument("--seed", type=int, default=ComparisonConfig.seed)
+    parser.add_argument(
+        "--imbalance", choices=IMBALANCE_METHODS, default=ComparisonConfig.imbalance
+    )
     parser.add_argument("--no-track", action="store_true", help="skip MLflow logging")
     parser.add_argument(
         "--register", action="store_true", help="register the run and move the champion alias"
@@ -169,7 +175,7 @@ def _cli(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     main(
         out_dir=args.out_dir,
-        cfg=ComparisonConfig(seed=args.seed),
+        cfg=ComparisonConfig(seed=args.seed, imbalance=args.imbalance),
         track=not args.no_track,
         register=args.register,
     )
