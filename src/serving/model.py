@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 
+from src.array_types import FloatArray
 from src.features.history import HistoryConfig
 from src.features.preprocess import CategoricalEncoder
 from src.models.compare import feature_columns
@@ -63,6 +64,10 @@ class ModelBundle:
             raise ModelBundleError(
                 "bundle feature schema differs from the current feature code; retrain the model"
             )
+        threshold = float(meta["threshold"])
+        # A NaN threshold would make `score >= threshold` always False: silently no alerts.
+        if not (np.isfinite(threshold) and 0.0 <= threshold <= 1.0):
+            raise ModelBundleError(f"threshold must be a probability in [0, 1], got {threshold}")
         booster = xgb.Booster()
         booster.load_model(model_path)
         if booster.feature_names != expected:
@@ -72,15 +77,16 @@ class ModelBundle:
             encoder=CategoricalEncoder.from_dict(meta["encoder"]),
             history_config=config,
             feature_columns=expected,
-            threshold=float(meta["threshold"]),
+            threshold=threshold,
             model_version=str(meta["model_version"]),
             metadata=meta,
         )
         logger.info("loaded model version=%s features=%d", bundle.model_version, len(expected))
         return bundle
 
-    def predict(self, frame: pd.DataFrame) -> np.ndarray:
+    def predict(self, frame: pd.DataFrame) -> FloatArray:
         """Fraud probabilities for model-frame rows (see ``compare.build_model_frame``)."""
         x = self.encoder.transform(frame[self.feature_columns]).astype("float32")
         # inplace_predict skips DMatrix construction (same scores, lower per-event overhead).
-        return self.booster.inplace_predict(x, missing=np.nan)
+        scores: FloatArray = self.booster.inplace_predict(x, missing=np.nan)
+        return scores

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def iter_events(raw_dir: str, skip: int, limit: int) -> Iterable[dict[str, Any]]:
     df = load_ieee_cis(raw_dir, usecols=[]).sort_values([TIME, "TransactionID"], kind="stable")
     for row in df.iloc[skip : skip + limit].to_dict(orient="records"):
-        yield row_to_event(row)
+        yield row_to_event({str(k): v for k, v in row.items()})
 
 
 def publish(
@@ -49,7 +49,11 @@ def publish(
             lag = sent / rate - (time.monotonic() - started)
             if lag > 0:
                 time.sleep(lag)
-    producer.flush(30)
+    # flush() returns how many messages are still queued; their delivery callbacks have not
+    # fired, so they would otherwise be lost without an error.
+    undelivered = producer.flush(30)
+    if undelivered:
+        raise RuntimeError(f"{undelivered} of {sent} messages still undelivered after flush")
     if errors:
         raise RuntimeError(f"{len(errors)} messages failed delivery; first: {errors[0]}")
     logger.info("published events=%d topic=%s", sent, topic)

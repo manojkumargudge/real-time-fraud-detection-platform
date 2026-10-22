@@ -26,6 +26,8 @@ the ``<NA>`` token, so such rows fall back to the coarser ``card_id`` / ``uid`` 
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -46,13 +48,15 @@ SEPARATOR = "|"
 SMALL_FRAME_ROWS = 64
 
 
-def _component_to_str(s: pd.Series) -> pd.Series:
+def _component_to_str(s: pd.Series[Any]) -> pd.Series[Any]:
     """Render one key component; integral floats print without ``.0`` (321.0 -> "321")."""
     out = pd.Series(MISSING_TOKEN, index=s.index, dtype=object)
     present = s.notna().to_numpy()
     if pd.api.types.is_numeric_dtype(s):
         v = s.to_numpy(dtype="float64")[present]
-        integral = np.isfinite(v) & (v == np.floor(v))
+        # Beyond 2**53 the int64 cast is inexact or overflows, so distinct values would
+        # collide on one key; such values keep their float rendering instead.
+        integral = np.isfinite(v) & (v == np.floor(v)) & (np.abs(v) <= 2**53)
         as_int = np.where(integral, v, 0).astype("int64").astype(str)
         rendered = np.where(integral, as_int, v.astype(str))
         out[present] = rendered
@@ -67,7 +71,7 @@ def build_entity_key(
     *,
     required: tuple[str, ...] = REQUIRED_COMPONENTS,
     name: str | None = None,
-) -> pd.Series:
+) -> pd.Series[Any]:
     """Concatenate ``columns`` into one string key per row (NaN if a ``required`` part is NaN)."""
     missing = sorted(set(columns) - set(df.columns))
     if missing:
@@ -82,13 +86,16 @@ def build_entity_key(
     # Render strings once per distinct combination (~14x fewer rows on IEEE-CIS), then broadcast.
     group = sub.groupby(list(columns), dropna=False, sort=False, observed=True).ngroup()
     _, first = np.unique(group.to_numpy(), return_index=True)
-    uniq_key = _render_keys(sub.iloc[first], columns, required)
-    return pd.Series(uniq_key.to_numpy()[group.to_numpy()], index=df.index, name=name)
+    uniq_key = _render_keys(sub.take(first), columns, required)  # positional, like iloc
+    keys: pd.Series[Any] = pd.Series(
+        uniq_key.to_numpy()[group.to_numpy()], index=df.index, name=name
+    )
+    return keys
 
 
 def _render_keys(
     sub: pd.DataFrame, columns: tuple[str, ...], required: tuple[str, ...]
-) -> pd.Series:
+) -> pd.Series[Any]:
     parts = [_component_to_str(sub[c]) for c in columns]
     key = parts[0].str.cat(parts[1:], sep=SEPARATOR) if len(parts) > 1 else parts[0]
     return key.where(sub[list(required)].notna().all(axis=1).to_numpy())
@@ -105,7 +112,7 @@ def build_entity_keys(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def account_start_day(df: pd.DataFrame) -> pd.Series:
+def account_start_day(df: pd.DataFrame) -> pd.Series[float]:
     """Relative day index ``TransactionDT // 86400 - D1`` (float, NaN where D1 is missing).
 
     Uses only the row's own fields, so it cannot see labels or other transactions.

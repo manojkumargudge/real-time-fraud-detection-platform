@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import psycopg
-from psycopg.rows import dict_row
+from psycopg.rows import DictRow, dict_row
 
 from src.features.history import TIME
 
@@ -47,6 +47,8 @@ class TransactionStore(Protocol):
     def save(self, record: ScoredRecord) -> bool: ...
 
     def ping(self) -> bool: ...
+
+    def close(self) -> None: ...
 
 
 class InMemoryStore:
@@ -80,6 +82,9 @@ class InMemoryStore:
 
     def ping(self) -> bool:
         return True
+
+    def close(self) -> None:
+        pass
 
     def __len__(self) -> int:
         return len(self._records)
@@ -116,15 +121,15 @@ class PostgresStore:
     def __init__(self, dsn: str, *, init_schema: bool = True) -> None:
         self._dsn = dsn
         self._lock = threading.Lock()
-        self._conn = self._connect()
+        self._conn: psycopg.Connection[DictRow] = self._connect()
         if init_schema:
             with self._lock, self._conn.transaction():
                 self._conn.execute(DDL)
 
-    def _connect(self) -> psycopg.Connection:
+    def _connect(self) -> psycopg.Connection[DictRow]:
         return psycopg.connect(self._dsn, row_factory=dict_row, autocommit=True)
 
-    def _cursor_conn(self) -> psycopg.Connection:
+    def _cursor_conn(self) -> psycopg.Connection[DictRow]:
         if self._conn.closed:
             logger.warning("postgres connection closed; reconnecting")
             self._conn = self._connect()
@@ -199,9 +204,11 @@ class PostgresStore:
     def counts(self) -> dict[str, int]:
         with self._lock:
             conn = self._cursor_conn()
-            txn = conn.execute("SELECT count(*) AS n FROM scored_transactions").fetchone()["n"]
-            alerts = conn.execute("SELECT count(*) AS n FROM alerts").fetchone()["n"]
-        return {"scored_transactions": int(txn), "alerts": int(alerts)}
+            txn = conn.execute("SELECT count(*) AS n FROM scored_transactions").fetchone()
+            alerts = conn.execute("SELECT count(*) AS n FROM alerts").fetchone()
+        if txn is None or alerts is None:  # count(*) always returns exactly one row
+            raise RuntimeError("count query returned no row")
+        return {"scored_transactions": int(txn["n"]), "alerts": int(alerts["n"])}
 
     def close(self) -> None:
         self._conn.close()

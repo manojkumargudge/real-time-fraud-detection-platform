@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -25,7 +26,7 @@ NAMES = HistoryConfig().feature_names()
 CHANGE_COLS = HistoryConfig().change_columns
 
 
-def frame(rows: list[dict]) -> pd.DataFrame:
+def frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
     """Minimal feature-input frame; unspecified fields get a fixed default."""
     defaults = {
         "TransactionDT": 0,
@@ -66,12 +67,14 @@ def random_frame(n: int = 400, seed: int = 0) -> pd.DataFrame:
             "card6": "debit",
             "addr1": rng.choice([100.0, 200.0, np.nan], n),
             "addr2": rng.choice([87.0, np.nan], n),
-            "DeviceType": rng.choice(["mobile", "desktop", None], n),
-            "DeviceInfo": rng.choice(["a", "b", None], n, p=[0.3, 0.3, 0.4]),
+            "DeviceType": rng.choice(np.array(["mobile", "desktop", None], dtype=object), n),
+            "DeviceInfo": rng.choice(
+                np.array(["a", "b", None], dtype=object), n, p=[0.3, 0.3, 0.4]
+            ),
             "isFraud": rng.integers(0, 2, n),
         }
     )
-    df.loc[rng.choice(n, 10, replace=False), "card1"] = np.nan
+    df.loc[rng.choice(n, 10, replace=False).tolist(), "card1"] = np.nan
     return df
 
 
@@ -150,6 +153,14 @@ class TestEntityKey:
         with pytest.raises(SchemaError, match="addr1"):
             build_entity_key(frame([{}]).drop(columns="addr1"), ("card1", "addr1"))
 
+    def test_huge_components_do_not_collide(self) -> None:
+        """Regression: values beyond int64 all cast to one integer and shared one key."""
+        keys = build_entity_keys(frame([{"addr1": 1e30}, {"addr1": 2e30}, {"addr1": 2.0**53}]))
+        assert keys[USER_ID].nunique() == 3
+        assert isinstance(k := keys.loc[2, USER_ID], str) and k.endswith(
+            f"|{2**53}"
+        )  # exact integers keep integer form
+
 
 class TestHistoryCorrectness:
     def test_matches_brute_force_reference(self) -> None:
@@ -189,7 +200,7 @@ class TestHistoryCorrectness:
             ]
         )
         f = compute_history_features(df)
-        assert f.loc[1, "uid_prior_amt_mean"] == 0.0 and np.isnan(f.loc[1, "uid_amt_to_prior_mean"])
+        assert f.loc[1, "uid_prior_amt_mean"] == 0.0 and pd.isna(f.loc[1, "uid_amt_to_prior_mean"])
 
     def test_location_change_is_tracked_per_card_not_uid(self) -> None:
         df = frame([{"TransactionDT": 0, "addr1": 100.0}, {"TransactionDT": 10, "addr1": 200.0}])
@@ -221,7 +232,7 @@ class TestLeakage:
 
     def test_current_amount_not_in_own_prior_mean(self) -> None:
         df = frame([{"TransactionDT": 0, "TransactionAmt": 1_000.0}])
-        assert np.isnan(compute_history_features(df).loc[0, "uid_prior_amt_mean"])
+        assert pd.isna(compute_history_features(df).loc[0, "uid_prior_amt_mean"])
 
 
 class TestOrderingAndTies:
@@ -247,8 +258,7 @@ class TestOrderingAndTies:
         f = compute_history_features(df)
         assert f["uid_prior_txn_count"].tolist() == [0, 0, 2]
         assert f.loc[2, "uid_prior_amt_mean"] == 30.0
-        assert np.isnan(f.loc[0, "card_deviceinfo_changed"])
-        assert np.isnan(f.loc[1, "card_deviceinfo_changed"])
+        assert f["card_deviceinfo_changed"].iloc[:2].isna().all()  # rows 0 and 1
         # Among tied earlier rows, the higher TransactionID ("b") is the last known value.
         assert f.loc[2, "card_deviceinfo_changed"] == 0.0
 
@@ -266,7 +276,7 @@ class TestMissingAndUnseen:
     def test_missing_card1_gives_nan_features(self) -> None:
         df = frame([{"TransactionDT": 0}, {"TransactionDT": 10, "card1": np.nan}])
         f = compute_history_features(df)
-        assert f.loc[1, NAMES].isna().all()
+        assert f.loc[1][NAMES].isna().all()
         assert f.loc[0, "uid_prior_txn_count"] == 0
 
     def test_missing_card1_rows_do_not_form_a_shared_history(self) -> None:
@@ -286,7 +296,7 @@ class TestMissingAndUnseen:
 
     def test_missing_device_is_not_a_change(self) -> None:
         df = frame([{"TransactionDT": 0, "DeviceInfo": "a"}, {"TransactionDT": 10}])
-        assert np.isnan(compute_history_features(df).loc[1, "card_deviceinfo_changed"])
+        assert pd.isna(compute_history_features(df).loc[1, "card_deviceinfo_changed"])
 
     def test_empty_frame(self) -> None:
         out = compute_history_features(frame([{}]).iloc[:0])
