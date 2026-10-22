@@ -5,13 +5,13 @@ Command (Git Bash, repo root):
   TEST_DATABASE_URL=postgresql://fraud:***@localhost:15432/fraud TEST_KAFKA_BOOTSTRAP=localhost:9092 .venv/Scripts/python.exe -m pytest tests/test_integration.py -rfEs -p no:cacheprovider
   (run via a local launcher that builds TEST_DATABASE_URL from .env; password masked here, never committed)
 
-Commit tested: f429a2ab17850617998d9affbb9aea28fe4d2e7a
-Started:       2026-10-22T15:48:02+05:30
-Finished:      2026-10-22T15:50:11+05:30
+Commit tested: e6ad5dcd5a84c8fd72461fc13fec100267d3057f
+Started:       2026-10-22T16:22:15+05:30
+Finished:      2026-10-22T16:24:24+05:30
 Python:        Python 3.11.9 (pytest 8.3.5, win32)
 
 Summary:
-  14 passed, 1 warning in 126.37s (0:02:06)
+  14 passed, 1 warning in 126.22s (0:02:06)
 
 Warning: starlette testclient DeprecationWarning (anyio.abc.BlockingPortal alias); third-party.
 Failed: none. Skipped: none.
@@ -21,6 +21,9 @@ test-src-<tag>/test-dlq-<tag> (deleted afterwards) and groups test-<tag>/probe-<
 never the live group fraud-scorer or topics transactions / transactions.dlq.
 
 Live data, read-only before -> after:
-  scored_transactions 2001 -> 2001, alerts 79 -> 79
+  scored_transactions 2005 -> 2005, alerts 80 -> 80
   schemas, topic list, consumer-group list and fraud-scorer offsets: identical
   No new topics or schemas left behind.
+
+Previous run: commit f429a2ab17850617998d9affbb9aea28fe4d2e7a, 2026-10-22T15:48:02+05:30,
+  14 passed, 1 warning in 126.37s.
