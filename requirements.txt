@@ -11,3 +11,5 @@ pydantic==2.14.1
 uvicorn==0.34.0
 psycopg[binary]==3.2.3
 confluent-kafka==2.6.1
+# MLOps: training-run tracking and model registry (training only; not in requirements-serving).
+mlflow==3.15.2

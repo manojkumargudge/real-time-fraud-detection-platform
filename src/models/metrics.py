@@ -45,6 +45,20 @@ def average_precision(y: NumArray, scores: NumArray) -> float:
     return float(np.sum(np.diff(np.r_[0.0, recall]) * precision))
 
 
+def roc_auc(y: NumArray, scores: NumArray) -> float:
+    """Mann-Whitney ROC-AUC; tied scores count half. Reported for reference only: with ~3.5%
+    positives it is dominated by easy negatives, so PR-AUC drives model decisions."""
+    y, scores = _check(y, scores)
+    pos = int(y.sum())
+    neg = len(y) - pos
+    if neg == 0:
+        raise ValueError("at least one negative label is required")
+    _, inverse, counts = np.unique(scores, return_inverse=True, return_counts=True)
+    ends = np.cumsum(counts)
+    ranks = ((ends - counts + 1 + ends) / 2.0)[inverse]  # average 1-based rank per tie group
+    return float((ranks[y == 1].sum() - pos * (pos + 1) / 2.0) / (pos * neg))
+
+
 def select_threshold_max_f1(y: NumArray, scores: NumArray) -> float:
     """Score threshold maximising F1 for the rule ``score >= threshold``.
 

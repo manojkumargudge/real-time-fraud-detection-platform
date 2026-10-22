@@ -20,6 +20,7 @@ env/
 data/raw/
 data/processed/
 mlruns/
+mlflow.db
 artifacts/
 /models/
 *.pkl

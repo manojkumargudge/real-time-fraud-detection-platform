@@ -21,6 +21,8 @@ Work in progress: a tested local demo, not a production system.
 - Idempotent PostgreSQL writes (`TransactionID` primary key)
 - FastAPI `/health` and `/score`
 - Docker Compose stack (Kafka, PostgreSQL, API, consumer)
+- MLflow tracking and model registry (local SQLite `mlflow.db`, `python -m src.models.train`;
+  the seed-42 baseline is registered as `fraud-xgboost` with alias `champion`)
 - 355 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 14 integration
   tests ([docs/test-results-integration.txt](docs/test-results-integration.txt))
 
