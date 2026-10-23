@@ -26,17 +26,24 @@ CONFIG = HistoryConfig()
 NAMES = CONFIG.feature_names()
 
 
-def make_events(n: int, seed: int) -> list[dict[str, Any]]:
+def make_events(
+    n: int,
+    seed: int,
+    *,
+    cards: tuple[int | None, ...] = (1111, 2222, None),
+    first_id: int = 1_000,
+    start: int = 0,
+) -> list[dict[str, Any]]:
     """Small key space so entities repeat; heavy timestamp ties; missing keys and values."""
     rng = random.Random(seed)
-    events, t = [], 0
+    events, t = [], start
     for i in range(n):
         t += rng.choice([0, 0, 0, 1, 30, 3_600, 86_400, 40 * 86_400])  # many ties
-        card1 = rng.choice([1111, 2222, None])  # None -> missing card_id and uid
+        card1 = rng.choice(cards)  # None -> missing card_id and uid
         has_identity = rng.random() < 0.7
         events.append(
             {
-                "TransactionID": 1_000 + i,
+                "TransactionID": first_id + i,
                 "TransactionDT": t,
                 "TransactionAmt": rng.choice([0.0, 5.0, 12.5, 100.0, 7.25]),
                 "card1": card1,

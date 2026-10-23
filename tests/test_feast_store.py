@@ -88,10 +88,26 @@ def test_point_in_time_retrieval_equals_batch_on_real_cards(tmp_path: Path) -> N
     assert_same(feast_df, batch)
 
 
-def test_replay_store_and_feast_paths_give_same_features_and_scores(
-    bundle_dir: Path, tmp_path: Path
+def stream_scenario() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Batch history, then a stream. Card 2222 has only pre-stream history, 3333 appears only
+    in the stream, 1111 spans both; plus missing keys, ties and device/address changes."""
+    pre = make_events(140, 21, cards=(1111, 2222, None))
+    stream = make_events(
+        150, 22, cards=(1111, 3333, None), first_id=50_000, start=pre[-1]["TransactionDT"] + 1
+    )
+    return pre, stream
+
+
+@pytest.mark.parametrize("use_odfv", [False, True], ids=["local", "odfv"])
+def test_stream_replay_with_batch_cold_start(
+    bundle_dir: Path, tmp_path: Path, use_odfv: bool
 ) -> None:
-    """In-order events (shuffled within each timestamp) through both serving paths."""
+    """Feast starts from the batch (pre-stream) state; the store path only knows the stream.
+
+    * cards with pre-stream history: Feast features == batch (training) features;
+    * cards without: store path == Feast path (features and scores);
+    * the store path disagrees with batch on cards with pre-stream history (the skew Feast fixes).
+    """
     from src.serving.model import ModelBundle
     from src.serving.schema import TransactionEvent
     from src.serving.scorer import Scorer
@@ -99,25 +115,34 @@ def test_replay_store_and_feast_paths_give_same_features_and_scores(
     from tests.test_entity_state import arrival_order
 
     bundle = ModelBundle.load(bundle_dir)
-    feast = fs.FeastFeatures(
-        fs.open_store(tmp_path, config=bundle.history_config), bundle.history_config
-    )
+    cfg = bundle.history_config
+    pre, stream = stream_scenario()
+    store = fs.open_store(tmp_path, config=cfg)
+    fs.materialize_initial_state(store, tmp_path, entity_events(pre), cfg)
+    feast = fs.FeastFeatures(store, cfg, use_odfv=use_odfv)
     by_store = Scorer(bundle, InMemoryStore())
     by_feast = Scorer(bundle, InMemoryStore(), feast=feast, read_from_feast=True)
-    events = arrival_order(make_events(160, 5), 5)
-    for ev in events:
+    batch = batch_features(pre + stream)
+    pre_cards = {k[0] for k in keys_by_id(pre).values() if k[0] is not None}
+
+    store_vs_batch_diffs, compared = 0, {"with_history": 0, "without_history": 0}
+    for ev in arrival_order(stream, 22):
         a = by_store.score_event(TransactionEvent.model_validate(ev))
         b = by_feast.score_event(TransactionEvent.model_validate(ev))
-        assert a.history_features.keys() == b.history_features.keys()
-        for name, va in a.history_features.items():
-            vb = b.history_features[name]
-            assert (va is None) == (vb is None), (ev["TransactionID"], name, va, vb)
-            if va is not None and vb is not None:
-                assert vb == pytest.approx(va, rel=1e-6), (ev["TransactionID"], name)
-        assert b.score == pytest.approx(a.score, abs=1e-6), ev["TransactionID"]
-        assert b.is_alert == a.is_alert
-    keyless = [e for e in events if e["card1"] is None]
-    assert keyless  # events with missing entity keys were scored on both paths
+        card = batch.loc[ev["TransactionID"], CARD_ID]
+        expected = batch.loc[ev["TransactionID"], NAMES].to_numpy(np.float64)
+        got_feast = np.array([np.nan if v is None else v for v in b.history_features.values()])
+        got_store = np.array([np.nan if v is None else v for v in a.history_features.values()])
+        np.testing.assert_allclose(got_feast, expected, rtol=1e-6, equal_nan=True)  # Feast == batch
+        if isinstance(card, str) and card in pre_cards:
+            compared["with_history"] += 1
+            store_vs_batch_diffs += not np.allclose(got_store, expected, rtol=1e-6, equal_nan=True)
+        else:
+            compared["without_history"] += 1
+            np.testing.assert_allclose(got_store, got_feast, rtol=1e-6, equal_nan=True)
+            assert b.score == pytest.approx(a.score, abs=1e-6), ev["TransactionID"]
+    assert compared["with_history"] > 0 and compared["without_history"] > 0, compared
+    assert store_vs_batch_diffs > 0  # without batch history the store path is skewed
 
 
 def test_open_store_writes_only_inside_its_repo_dir(
@@ -129,3 +154,14 @@ def test_open_store_writes_only_inside_its_repo_dir(
     fs.open_store(repo, config=CONFIG)
     assert list(cwd.iterdir()) == []  # Feast resolves the registry against the cwd by default
     assert (repo / "registry.db").is_file()
+
+
+def test_pre_stream_events_are_strictly_earlier_with_batch_keys() -> None:
+    events = make_events(120, 31)
+    frame = events_to_frame(events)
+    before = int(frame["TransactionDT"].iloc[60])
+    pre = fs.pre_stream_events(frame, before, CONFIG)
+    assert pre and all(e.event["TransactionDT"] < before for e in pre)
+    assert len(pre) == int((frame["TransactionDT"] < before).sum())  # ties at `before` excluded
+    keys = keys_by_id(events)
+    assert all((e.card, e.uid) == keys[e.event["TransactionID"]] for e in pre)

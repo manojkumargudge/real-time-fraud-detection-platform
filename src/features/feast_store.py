@@ -18,9 +18,10 @@ seconds) is not
 newer than the stored one -- otherwise a second event at the same ``TransactionDT`` would be
 dropped.
 
-CLI (cold start): ``python -m src.features.feast_store materialize`` builds the latest state
-of every entity from the scored events in PostgreSQL (``DATABASE_URL``) and loads it into the
-online store (``FEAST_REDIS``). See docs/feature_store.md.
+CLI (cold start): ``python -m src.features.feast_store materialize [--before DT]`` builds the
+starting state of every entity from the offline batch data -- all IEEE-CIS transactions with
+``TransactionDT`` earlier than the first streamed event -- and loads it into the online store
+(``FEAST_REDIS``). See docs/feature_store.md.
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ from typing import Any
 
 import pandas as pd
 
-from src.features.entity import CARD_ID, USER_ID
+from src.data.load import DEFAULT_RAW_DIR, KEY, load_ieee_cis
+from src.features.entity import CARD_ID, USER_ID, build_entity_keys
 from src.features.entity_state import (
     NONE_TS,
     CardState,
@@ -408,26 +410,47 @@ class FeastFeatures:
 
     store: Any
     config: HistoryConfig
+    # False: read only the state and compute the features in-process with the function the
+    # on-demand view runs (same values, about 100 ms less SDK overhead per event).
+    use_odfv: bool = False
 
     def read(
         self, event: dict[str, Any], card: str | None, uid: str | None
     ) -> tuple[dict[str, float], dict[str, Any]]:
         """``(features, raw_online_row)`` for one event (one online round trip)."""
         row = request_row(event, card, uid, self.config.change_columns)
-        resp = self.store.get_online_features(
-            features=feature_refs(self.config), entity_rows=[row]
-        ).to_dict()
+        if self.use_odfv:
+            refs, entity = feature_refs(self.config), row
+        else:
+            refs = [r for r in feature_refs(self.config) if not r.startswith(f"{ODFV}:")]
+            entity = {USER_ID: row[USER_ID], CARD_ID: row[CARD_ID]}
+        resp = self.store.get_online_features(features=refs, entity_rows=[entity]).to_dict()
         flat = {k: v[0] for k, v in resp.items()}
-        feats = {
-            n: (float("nan") if flat[n] is None else float(flat[n]))
-            for n in self.config.feature_names()
-        }
+        if self.use_odfv:
+            feats = {
+                n: (float("nan") if flat[n] is None else float(flat[n]))
+                for n in self.config.feature_names()
+            }
+        else:
+            keyed = uid is not None and card is not None
+            feats = history_features(
+                uid_from_row(flat) if keyed else None,
+                card_from_row(flat, self.config.change_columns) if keyed else None,
+                event,
+                self.config,
+            )
         return feats, flat
 
     def push(
         self, event: dict[str, Any], card: str | None, uid: str | None, online: dict[str, Any]
     ) -> None:
-        """Apply ``event`` to the state read with it and write both entities back."""
+        """Apply ``event`` to the state read with it and write both entities back.
+
+        Known limitation: read-modify-write, so concurrent events for one entity can lose an
+        update; fix would be an atomic per-entity update (Redis Lua/``WATCH``) or a single writer.
+        Known limitation: a failed push is only logged by the caller; fix would be a catch-up that
+        replays missed events from ``scored_transactions`` per entity.
+        """
         if uid is None or card is None:
             return
         from feast.data_source import PushMode
@@ -456,34 +479,80 @@ def _next_write(previous: Any, t: int) -> int:
 # --------------------------------------------------------------------------- CLI
 
 
-def _events_from_postgres(dsn: str) -> list[EntityEvent]:
-    import psycopg
-    from psycopg.rows import dict_row
+def events_from_frame(df: pd.DataFrame, config: HistoryConfig) -> list[EntityEvent]:
+    """Loader-shaped transactions -> events carrying the fields the state needs, with the same
+    entity keys as the batch features (``build_entity_keys``)."""
+    keys = build_entity_keys(df)
+    cols = [KEY, TIME, AMOUNT, *config.change_columns]
+    records = df[cols].to_dict(orient="records")
+    cards = keys[CARD_ID].astype(object).where(keys[CARD_ID].notna(), None).tolist()
+    uids = keys[USER_ID].astype(object).where(keys[USER_ID].notna(), None).tolist()
+    return [
+        EntityEvent({str(k): v for k, v in r.items()}, c, u)
+        for r, c, u in zip(records, cards, uids, strict=True)
+    ]
 
-    with psycopg.connect(dsn, row_factory=dict_row) as conn:
-        rows = conn.execute("SELECT event, card_id, uid FROM scored_transactions").fetchall()
-    return [EntityEvent(r["event"], r["card_id"], r["uid"]) for r in rows]
+
+def pre_stream_events(df: pd.DataFrame, before: int, config: HistoryConfig) -> list[EntityEvent]:
+    """Offline (batch) transactions strictly earlier than the first streamed event."""
+    return events_from_frame(df[df[TIME] < before], config)
+
+
+def first_streamed_dt(dsn: str) -> int | None:
+    """Time of the first streamed (scored) event: only this timestamp is read from PostgreSQL."""
+    import psycopg
+
+    with psycopg.connect(dsn) as conn:
+        row = conn.execute("SELECT MIN(transaction_dt) FROM scored_transactions").fetchone()
+    return None if row is None or row[0] is None else int(row[0])
+
+
+def materialize_initial_state(
+    store: Any, repo_dir: Path, events: list[EntityEvent], config: HistoryConfig
+) -> tuple[int, int]:
+    """Write each entity's state after ``events`` to the offline files and load it online."""
+    uid_rows, card_rows = fold_states(events, config, snapshots=False)
+    write_offline(repo_dir, uid_rows, card_rows, config=config)
+    if uid_rows or card_rows:
+        materialize_all(store)
+    return len(uid_rows), len(card_rows)
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["materialize"])
     parser.add_argument("--repo-dir", type=Path, default=DEFAULT_DIR)
+    parser.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW_DIR)
+    parser.add_argument(
+        "--before",
+        type=int,
+        default=None,
+        help="TransactionDT of the first streamed event (default: earliest scored event in "
+        "DATABASE_URL); only batch transactions strictly earlier are used",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    dsn, redis = os.environ.get("DATABASE_URL"), os.environ.get("FEAST_REDIS")
-    if not dsn or not redis:
-        raise SystemExit(
-            "set DATABASE_URL (source events) and FEAST_REDIS (online store host:port)"
-        )
+    redis = os.environ.get("FEAST_REDIS")
+    if not redis:
+        raise SystemExit("set FEAST_REDIS (online store host:port)")
+    before = args.before
+    if before is None:
+        dsn = os.environ.get("DATABASE_URL")
+        if not dsn:
+            raise SystemExit("pass --before or set DATABASE_URL to find the first streamed event")
+        before = first_streamed_dt(dsn)
+        if before is None:
+            raise SystemExit("no scored events yet: pass --before explicitly")
     config = HistoryConfig()
-    events = _events_from_postgres(dsn)
-    uid_rows, card_rows = fold_states(events, config, snapshots=False)
-    write_offline(args.repo_dir, uid_rows, card_rows, config=config)
+    events = pre_stream_events(load_ieee_cis(args.raw_dir, usecols=[]), before, config)
     store = open_store(args.repo_dir, redis=redis, config=config)
-    materialize_all(store)
+    uids, cards = materialize_initial_state(store, args.repo_dir, events, config)
     logger.info(
-        "materialized events=%d uids=%d cards=%d", len(events), len(uid_rows), len(card_rows)
+        "materialized pre-stream state before=%d events=%d uids=%d cards=%d",
+        before,
+        len(events),
+        uids,
+        cards,
     )
 
 

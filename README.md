@@ -32,10 +32,11 @@ Work in progress: a tested local demo, not a production system.
 - FastAPI `/health` and `/score`
 - Docker Compose stack (Kafka, PostgreSQL, Redis, API, consumer)
 - Feast feature store ([docs/feature_store.md](docs/feature_store.md)): per-entity state (`uid`,
-  `card_id`) in Redis, updated after every saved event; an on-demand view computes the history
-  features from state + event. Point-in-time retrieval equals the batch features; replay and
-  live checks show the same features and scores as the history path for in-order events (late
-  events can differ). Off by default for reads (`FEATURE_SOURCE=feast` to enable)
+  `card_id`) in Redis, started from the batch history before the stream and updated after every
+  saved event; features computed from state + event. Point-in-time retrieval and the cold-start
+  replay equal the batch (training) features. Off by default for reads (`FEATURE_SOURCE=feast`).
+  Without the batch history the store path would be skewed: with a stream starting at the
+  validation cut-off, 96% of rows get different features and PR-AUC falls from 0.2992 to 0.2533
 - MLflow tracking and model registry (local SQLite `mlflow.db`, `python -m src.models.train`;
   registered as `fraud-xgboost`; alias `champion` = best candidate, `production` = currently
   deployed; both point to version 2 since 2026-10-23)

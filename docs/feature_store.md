@@ -11,9 +11,10 @@ stored event history) is kept and is still the default.
 |---|---|---|
 | `uid_state` (entity `uid`) | `src/features/entity_state.py` | count and amount sum in two groups (strictly before the latest timestamp / at it), latest and previous timestamps, every timestamp within the longest window (30 days) |
 | `card_state` (entity `card_id`) | same | per change column (`DeviceInfo`, `DeviceType`, `addr1`, `addr2`): last known value strictly before the latest timestamp, and the last known value at it (highest `TransactionID` wins, as in the batch sort) |
-| `history_features` (on-demand view) | `src/features/feast_store.py` | the 12 model features from both states + request fields (`event_ts`, `event_amt`, change-column values, key presence) |
+| `history_features` (on-demand view) | `src/features/feast_store.py` | the 12 model features from both states + request fields; used for point-in-time (offline) retrieval |
+| Online features | `FeastFeatures.read` | reads the two states and computes the features in-process with the **same function** the on-demand view runs (`use_odfv=True` goes through the view instead; same values, slower) |
 | Online store | Redis (`docker-compose.yml`, service `redis`) | updated after every saved event |
-| Offline store | parquet files in `FEAST_REPO_DIR` | state snapshots for point-in-time retrieval and materialization |
+| Offline store | parquet files in `FEAST_REPO_DIR` | state snapshots for point-in-time retrieval and the cold-start state |
 
 Batch rule kept: events with the same `TransactionDT` never see each other. An event at the
 state's latest timestamp uses only the "before" group, and "last known" values come from
@@ -30,45 +31,77 @@ strictly earlier times.
 Compose sets `FEAST_REDIS=redis:6379` for the API and the consumer and passes
 `FEATURE_SOURCE` through (`FEATURE_SOURCE=feast docker compose up -d --no-deps api`).
 
-## Operations
+## Cold start
 
-Cold start (or recovery after a failed push) -- with the API and consumer **stopped**, so no
-push races the load:
+The starting state comes from the **offline batch data**: every IEEE-CIS transaction with
+`TransactionDT` earlier than the first streamed event, i.e. the history the model was trained
+on. Run it once, before the stream starts, with the API and consumer stopped:
 
 ```
 docker compose stop api consumer
-DATABASE_URL=postgresql://fraud:<pw>@localhost:15432/fraud FEAST_REDIS=localhost:16379 \
-  python -m src.features.feast_store materialize
+FEAST_REDIS=localhost:16379 python -m src.features.feast_store materialize --before <first streamed TransactionDT>
 docker compose up -d --no-deps api consumer
 ```
 
-`materialize` replays every event in `scored_transactions` in `(TransactionDT, TransactionID)`
-order, writes each entity's final state to the offline parquet files and loads it into Redis.
+Without `--before`, the time of the earliest event in `scored_transactions`
+(`DATABASE_URL`) is used; only that timestamp is read from PostgreSQL. The batch events are
+replayed in `(TransactionDT, TransactionID)` order, each entity's final state is written to the
+offline parquet files and loaded into Redis. Real-data check: the 472,432 transactions before
+the validation cut-off become 39,087 uid and 13,792 card states in 25 s, and the first 5,000
+streamed events then match the batch features exactly (0 rows differ).
+
+On the live local stack the stream replays IEEE-CIS from its first transaction
+(`TransactionDT` 86,400, the dataset minimum), so there is no pre-stream history: 0 of the 710
+scored cards have any, `materialize` loads nothing, and the state is exactly what the stream
+pushed.
+
 Redis uses an append-only file (volume `redisdata`), so the state survives restarts.
 
-A failed push after a successful save is logged as `feast state update failed ...` and does not
-fail the request; the entity's state is then stale until the next `materialize`.
+## Train/serve skew of the history (store) path
+
+The store path only knows events this service has ingested. When the stream starts after the
+training data, as it would in production, cards that already have history get different
+features than in training. Measured with the stream starting at the validation cut-off
+(`TransactionDT` >= 12,192,900; 118,108 events, 7,474 cards, 6,373 of them with pre-stream
+history), store-path features vs batch (training) features, production model v2:
+
+| Measure | Value |
+|---|---|
+| rows on cards with pre-stream history | 116,430 (98.6%) |
+| rows with any history feature different | 113,401 (96.0%); 97.4% of rows with pre-stream history, 0.0% without |
+| most affected features | `uid_prior_txn_count` 95.1%, `uid_prior_amt_mean` / `uid_amt_to_prior_mean` 95.0%, `uid_txn_count_30d` 58.2%, `uid_seconds_since_prev_txn` 11.0% of rows |
+| score change \|batch - served\| | mean 0.0104, median 0.0024, p95 0.0431, max 0.8420; 20.2% of rows change by more than 0.01 |
+| alerts at threshold 0.1281 | 5,093 with batch features vs 3,856 served; 2,345 decisions (1.99%) flip |
+| PR-AUC on the stream | 0.2992 with batch features vs 0.2533 with store-path features |
+
+The Feast path with the batch cold start equals the batch features for these cards (unit test
+`test_stream_replay_with_batch_cold_start`, and the real-data check above). On the live stack
+there is no such skew today only because the stream started at the first transaction.
 
 ## Where the two paths can differ
 
-They agree on every event that arrives in time order: same features and scores in the replay
-tests (same-timestamp events on one uid, missing entity keys, changing device/address) and on
-live data (300 + 100 real events, 0 mismatches, score differences 0). They can differ when:
+For events that arrive in time order and cards without pre-stream history, they give the same
+features and scores: replay tests (same-timestamp events on one uid, missing entity keys,
+changing device/address; SQLite and Redis) and live data (700 real events read both ways,
+10 through `/score`, 0 mismatches). They can differ when:
 
-1. **Late events** (`TransactionDT` older than the entity's latest timestamp). The history path
+1. **Cards with pre-stream history**: the store path is skewed (section above); Feast is not.
+2. **Late events** (`TransactionDT` older than the entity's latest timestamp). The history path
    still sees exactly the strictly earlier events. The state cannot: the count and amount mean
    include events that came after it, `seconds_since_prev` can be missing, card flags compare
-   with values seen after it, and its own update is approximate (counted in the "before"
-   group; card values ignored). `test_late_event_is_approximate` pins this behaviour.
-2. **A failed or skipped push** (Redis down, crash between save and push): the state misses
-   that event until `materialize`.
-3. **Concurrent scoring of one entity** (API and consumer at the same moment): each push is a
-   read-modify-write of the whole state, so one update can overwrite the other.
-4. **Float rounding**: amount sums are accumulated incrementally instead of with the batch
+   with values seen after it, and its own update is approximate. `test_late_event_is_approximate`
+   pins this behaviour.
+3. **Concurrent writes.** Known limitation: the API and the consumer each read-modify-write the
+   whole state, so two events for one entity at the same moment can lose one update; fix would
+   be an atomic per-entity update (a Redis Lua script or `WATCH`/`MULTI` transaction keyed by
+   entity, or routing every write through the consumer, which handles a partition serially).
+4. **Failed pushes.** Known limitation: a push that fails after the event is saved is only
+   logged (`feast state update failed ...`) and the state stays stale; fix would be an
+   automatic catch-up (record the last applied `TransactionID` per entity and replay the
+   missed events from `scored_transactions` or the Kafka topic).
+5. **Float rounding**: amount sums are accumulated incrementally instead of with the batch
    prefix sums; differences are at float64 rounding level and disappear in the float32 model
    input (tests use `rtol=1e-6`).
-
-The history path has none of these problems but its cost grows with the card's history.
 
 ## Feast details that matter here
 
@@ -90,26 +123,23 @@ The history path has none of these problems but its cost grows with the card's h
 
 ## Latency (measured 2026-10-23, local stack)
 
-Features + model score per event, read-only, next real IEEE-CIS events after the stored ones
-(Windows host process -> PostgreSQL and Redis in Docker; first 10 events excluded as warm-up):
+Features + model score per event, read-only, 300 real IEEE-CIS events after the stored ones
+(Windows host process -> PostgreSQL and Redis in Docker; first 10 excluded as warm-up). All
+three variants gave identical features and scores on every event.
 
 | Path | p50 | p95 | p99 |
 |---|---|---|---|
-| store (event history in PostgreSQL) | 61.0 ms | 102.5 ms | 131.9 ms |
-| Feast (Redis state + on-demand view) | 238.6 ms | 365.5 ms | 461.6 ms |
+| store (event history in PostgreSQL) | 61.1 ms | 88.8 ms | 138.8 ms |
+| Feast, features computed locally from the state (default) | 107.5 ms | 179.0 ms | 283.2 ms |
+| Feast, features through the on-demand view | 227.1 ms | 346.7 ms | 566.4 ms |
 
-Breakdown of the Feast path (p50): Feast online call with the on-demand view 164 ms, the same
-call for the state only 62 ms, Redis round trip 2 ms, feature arithmetic 0.1 ms, model row +
-predict 67 ms (shared with the store path). The cost is the Feast Python SDK and its
-on-demand-view machinery, not Redis.
+In the local variant the Feast state read is 50.8 ms (p50) and the model row + predict (shared
+with the store path) about 57 ms; a raw Redis round trip is 2 ms, so most of the read is Feast
+Python SDK overhead. Earlier end-to-end `/score` samples in the Linux API container (5 events
+per mode, on-demand view, including the PostgreSQL write and the state push): median 157.9 ms
+(store) vs 147.2 ms (Feast). With pushes enabled the consumer took 264-405 ms per event (about
+100-130 ms before); the push itself is not yet optimized.
 
-End to end through `/score` in the API container (Linux), 5 new events per mode, including
-the PostgreSQL write and the Feast state push: median 157.9 ms (store) vs 147.2 ms (Feast).
-These samples are small. With pushes enabled the consumer took 264-405 ms per event (it was
-about 100-130 ms before).
-
-At this data size (median 2-4 history rows per card) the history path is cheaper. Feast pays
-off only for long histories (the longest card here has 243 rows) or to share state across
-services. Next steps: compute the features from the state locally instead of through the
-on-demand view (the state read is 62 ms of the 164 ms), batch the two pushes, and measure
-under load.
+At this data size (median 2-4 history rows per card) the store path is faster; its real cost
+is the skew above, not latency. Next steps: read Redis directly (or batch reads) to cut the SDK
+overhead, write both states in one push, and measure under load.
