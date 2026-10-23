@@ -1,23 +1,19 @@
-Unit test results (integration tests NOT run)
-=============================================
+Unit test results (integration tests NOT run here; see test-results-integration.txt)
+===================================================================================
 
 Command (Git Bash, repo root; service variables unset, tests/conftest.py points unit tests at
-unreachable services):
-  env -u DATABASE_URL -u KAFKA_BOOTSTRAP_SERVERS -u TEST_DATABASE_URL -u TEST_KAFKA_BOOTSTRAP -u MLFLOW_TRACKING_URI .venv/Scripts/python.exe -m pytest --ignore=tests/test_integration.py -p no:cacheprovider -rfEs
+unreachable services and selects FEATURE_SOURCE=store):
+  env -u DATABASE_URL -u KAFKA_BOOTSTRAP_SERVERS -u TEST_DATABASE_URL -u TEST_KAFKA_BOOTSTRAP -u TEST_REDIS -u MLFLOW_TRACKING_URI -u FEAST_REDIS -u FEATURE_SOURCE .venv/Scripts/python.exe -m pytest --ignore=tests/test_integration.py -p no:cacheprovider -rfEs
 
-Commit tested: 614e31f352495ec6194e84fcbe1775d68d20fd8f (code as committed; this file and the
-README were then folded into that commit, which changed its hash but not the code)
-Started:       2026-10-23T10:04:40+05:30
-Finished:      2026-10-23T10:06:57+05:30
+Commit tested: d375de927c9e12164fdb58a5cf88c4c7697d7779
+Started:       2026-10-23T12:07:23+05:30
+Finished:      2026-10-23T12:13:20+05:30
 Python:        Python 3.11.9 (pytest 8.3.5, win32)
 
 Summary:
-  369 passed, 2 warnings in 133.95s (0:02:13)
+  396 passed, 18 warnings in 352.43s (0:05:52)
 
-Warnings (third-party, not from project code):
-  starlette testclient DeprecationWarning (anyio.abc.BlockingPortal alias)
-  mlflow SQLAlchemy SADeprecationWarning (``noload`` loader strategy)
+Warnings: third-party deprecations (starlette testclient, Feast / its dependencies).
 Failed: none. Skipped: none.
-tests/test_integration.py was excluded and not run.
 
-Previous run: 368 passed, 2 warnings on 04391fa3c5216ec9aa9dfdd0d6f1e1ceb1f37ca8 (2026-10-22).
+Previous runs: 389 passed on 9994458 (2026-10-23); 369 passed on 614e31f (2026-10-23).

@@ -1,29 +1,25 @@
-Integration test results (live local stack)
-===========================================
+Integration test results (separate test stack, never the demo stack)
+====================================================================
+
+Stack: docker-compose.test.yml (Compose project fraud-platform-test; PostgreSQL 16.4 on
+localhost:25432, Kafka 3.8.1 KRaft on localhost:29092, Redis 7.4.1 on localhost:26379; own
+volumes; test-only credentials).
 
 Command (Git Bash, repo root):
-  TEST_DATABASE_URL=postgresql://fraud:***@localhost:15432/fraud TEST_KAFKA_BOOTSTRAP=localhost:9092 .venv/Scripts/python.exe -m pytest tests/test_integration.py -rfEs -p no:cacheprovider
-  (run via a local launcher that builds TEST_DATABASE_URL from .env; password masked here, never committed)
+  TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 .venv/Scripts/python.exe -m pytest tests/test_integration.py -p no:cacheprovider -rfEs
 
-Commit tested: e6ad5dcd5a84c8fd72461fc13fec100267d3057f
-Started:       2026-10-22T16:22:15+05:30
-Finished:      2026-10-22T16:24:24+05:30
+Commit tested: d375de927c9e12164fdb58a5cf88c4c7697d7779
+Started:       2026-10-23T12:13:20+05:30
+Finished:      2026-10-23T12:15:55+05:30
 Python:        Python 3.11.9 (pytest 8.3.5, win32)
 
 Summary:
-  14 passed, 1 warning in 126.22s (0:02:06)
+  15 passed, 4 warnings in 152.15s (0:02:32)
 
-Warning: starlette testclient DeprecationWarning (anyio.abc.BlockingPortal alias); third-party.
-Failed: none. Skipped: none.
+Failed: none. Skipped: none (includes the Feast-on-Redis replay test).
 
-Isolation: each test uses a throwaway schema test_<12 hex> (dropped afterwards), topics
-test-src-<tag>/test-dlq-<tag> (deleted afterwards) and groups test-<tag>/probe-<tag>;
-never the live group fraud-scorer or topics transactions / transactions.dlq.
+Demo stack (docker-compose.yml) before -> after the run: scored_transactions 10000 -> 10000,
+Redis keys 53261 -> 53261, topics and consumer groups unchanged.
+Test stack after the run: no test topics left behind.
 
-Live data, read-only before -> after:
-  scored_transactions 2005 -> 2005, alerts 80 -> 80
-  schemas, topic list, consumer-group list and fraud-scorer offsets: identical
-  No new topics or schemas left behind.
-
-Previous run: commit f429a2ab17850617998d9affbb9aea28fe4d2e7a, 2026-10-22T15:48:02+05:30,
-  14 passed, 1 warning in 126.37s.
+Previous run: 15 passed on 9994458 against the demo stack (before the separate test stack existed).

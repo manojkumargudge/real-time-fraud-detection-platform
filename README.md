@@ -40,7 +40,7 @@ Work in progress: a tested local demo, not a production system.
 - MLflow tracking and model registry (local SQLite `mlflow.db`, `python -m src.models.train`;
   registered as `fraud-xgboost`; alias `champion` = best candidate, `production` = currently
   deployed; both point to version 2 since 2026-10-23)
-- 387 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 15 integration
+- 396 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 15 integration
   tests ([docs/test-results-integration.txt](docs/test-results-integration.txt))
 
 #### Experiment: class imbalance
@@ -110,12 +110,15 @@ are never sent. Feast was materialized from the 472,432 earlier transactions (39
 | Peak sampled consumer lag (whole batch published at once) | 3,910 | 3,130 |
 | Errors, dead-lettered events, consumer restarts | 0 / 0 / 0 | 0 / 0 / 0 |
 
+1.6× with 3 consumers on one laptop; per-event latency doubled, likely CPU-bound on a single host (not profiled).
+
 First 5,000 events: 248 alerts (4.96%), 107 of them true fraud (precision 0.4315, recall
-0.4693; 228 frauds, 4.56% fraud rate). Full validation at the same threshold: 4.31% alerts,
-precision 0.3136, recall 0.3930. The gap is the time window, not serving: the same 5,000
-events scored offline with training features give identical scores (max difference 9e-10)
-and identical alerts, and these first ~1.9 days have a higher fraud rate (4.56% vs 3.44%);
-with 228 frauds the recall's 95% margin is about +-0.065.
+0.4693; 228 frauds). This window (the first ~1.9 days of validation) has a higher fraud rate
+than validation as a whole, 4.56% vs 3.44%, and with 228 frauds the recall's 95% margin is
+about +-0.065, so these numbers flatter the model. **The model's real performance is the
+full-validation figure at the deployed threshold: precision 0.3136, recall 0.3930** (4.31% of
+transactions alerted). Serving added no error: live scores matched offline batch scores
+exactly (max difference 9×10⁻¹⁰), with identical alerts.
 
 Three consumers did not scale linearly: per-event latency doubled, which points to a shared
 bottleneck (the laptop's CPU or the PostgreSQL / Redis round trips); not yet profiled. Events
