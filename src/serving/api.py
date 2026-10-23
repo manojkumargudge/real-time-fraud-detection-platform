@@ -52,7 +52,7 @@ def create_app(scorer: Scorer | None = None) -> FastAPI:
                 level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
             )
             settings = Settings.from_env()
-            app.state.scorer = Scorer(settings.load_bundle(), settings.build_store())
+            app.state.scorer = settings.build_scorer()
         else:
             app.state.scorer = scorer
         logger.info(

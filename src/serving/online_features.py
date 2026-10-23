@@ -80,6 +80,20 @@ def online_model_row(
     return row.reset_index(drop=True)
 
 
+def model_row_from_features(
+    event: dict[str, Any], features: dict[str, float], config: HistoryConfig
+) -> pd.DataFrame:
+    """Model-frame row for ``event`` with history features computed elsewhere (Feast).
+
+    Raw columns come from the same ``build_model_frame`` call as ``online_model_row``; only the
+    history feature columns are replaced.
+    """
+    row = build_model_frame(events_to_frame([event]), "baseline", config).reset_index(drop=True)
+    for name in config.feature_names():
+        row[name] = np.float32(features[name])
+    return row
+
+
 def history_feature_values(row: pd.DataFrame, config: HistoryConfig) -> dict[str, float | None]:
     values = row[config.feature_names()].iloc[0].to_numpy(dtype=np.float64)
     return {

@@ -1,5 +1,5 @@
-# CI: lint, type-check and unit tests, then integration tests against throwaway PostgreSQL and
-# Kafka service containers. CD (push to main only, after both pass): build the serving image
+# CI: lint, type-check and unit tests, then integration tests against throwaway PostgreSQL,
+# Kafka and Redis service containers. CD (push to main only, after both pass): build the serving image
 # from the Dockerfile and push it to GitHub Container Registry. Nothing is deployed.
 name: CI
 
@@ -49,7 +49,7 @@ jobs:
         run: python -m pytest --ignore=tests/test_integration.py -rfEs
 
   integration:
-    name: integration tests (PostgreSQL + Kafka)
+    name: integration tests (PostgreSQL + Kafka + Redis)
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -93,9 +93,19 @@ jobs:
           --health-timeout 10s
           --health-retries 20
           --health-start-period 20s
+      redis:
+        image: redis:7.4.1-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       TEST_DATABASE_URL: postgresql://fraud:ci-test-only@localhost:5432/fraud
       TEST_KAFKA_BOOTSTRAP: localhost:9092
+      TEST_REDIS: localhost:6379
     steps:
       - uses: actions/checkout@v4
 

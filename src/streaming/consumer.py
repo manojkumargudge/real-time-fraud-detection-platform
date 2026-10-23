@@ -261,7 +261,7 @@ def main(argv: list[str] | None = None) -> Counter[str]:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = Settings.from_env()
-    scorer = Scorer(settings.load_bundle(), settings.build_store())
+    scorer = settings.build_scorer()
 
     # `docker stop` sends SIGTERM; without a handler Python exits at once, skipping
     # consumer.close() (so the group waits for a session timeout before rebalancing).

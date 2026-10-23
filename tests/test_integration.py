@@ -1,7 +1,8 @@
 """Integration tests against live PostgreSQL and Kafka (``docker compose up -d kafka postgres``).
 
-Enable with ``TEST_DATABASE_URL`` (e.g. postgresql://fraud:<pw>@localhost:5433/fraud) and
-``TEST_KAFKA_BOOTSTRAP`` (e.g. localhost:9092). Each test uses its own throwaway schema /
+Enable with ``TEST_DATABASE_URL`` (e.g. postgresql://fraud:<pw>@localhost:5433/fraud),
+``TEST_KAFKA_BOOTSTRAP`` (e.g. localhost:9092) and ``TEST_REDIS`` (e.g. localhost:16379; Feast
+tests use their own project namespace and tear it down). Each test uses its own throwaway schema /
 topic and consumer group, so existing data is never touched.
 """
 
@@ -17,6 +18,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import psycopg
 import pytest
 from confluent_kafka import Consumer, KafkaError, KafkaException, Producer, TopicPartition
@@ -44,10 +46,12 @@ from tests.test_serving import event
 
 DB_URL = os.environ.get("TEST_DATABASE_URL")
 KAFKA = os.environ.get("TEST_KAFKA_BOOTSTRAP")
+REDIS = os.environ.get("TEST_REDIS")
 
 pytestmark = pytest.mark.integration
 needs_db = pytest.mark.skipif(not DB_URL, reason="TEST_DATABASE_URL not set")
 needs_kafka = pytest.mark.skipif(not KAFKA, reason="TEST_KAFKA_BOOTSTRAP not set")
+needs_redis = pytest.mark.skipif(not REDIS, reason="TEST_REDIS not set")
 
 
 @pytest.fixture
@@ -481,3 +485,34 @@ def test_unreachable_dlq_blocks_the_commit_and_a_restart_recovers(
     )
     assert counts["invalid"] == 1 and counts["dead_lettered"] == 1
     assert len(kafka_env.read_dlq(expected=1)) == 1 and kafka_env.fully_committed()
+
+
+@needs_redis
+def test_feast_redis_replay_matches_the_store_path(bundle_dir: Path, tmp_path: Path) -> None:
+    """Same replay as the SQLite unit test, on Redis: catches Redis-only write semantics (it
+    drops writes whose timestamp is not newer, which would lose same-timestamp updates)."""
+    from src.features import feast_store as fs
+    from tests.test_entity_state import arrival_order, make_events
+
+    assert REDIS
+    bundle = ModelBundle.load(bundle_dir)
+    project = f"test_{uuid.uuid4().hex[:8]}"
+    store = fs.open_store(tmp_path, redis=REDIS, config=bundle.history_config, project=project)
+    try:
+        feast = fs.FeastFeatures(store, bundle.history_config)
+        by_store = Scorer(bundle, InMemoryStore())
+        by_feast = Scorer(bundle, InMemoryStore(), feast=feast, read_from_feast=True)
+        events = arrival_order(make_events(120, 9), 9)
+        ties = pd.DataFrame(events).duplicated(["card1", "addr1", "TransactionDT"]).sum()
+        assert ties > 0  # same-timestamp events on one uid are part of the replay
+        for ev in events:
+            a = by_store.score_event(TransactionEvent.model_validate(ev))
+            b = by_feast.score_event(TransactionEvent.model_validate(ev))
+            for name, va in a.history_features.items():
+                vb = b.history_features[name]
+                assert (va is None) == (vb is None), (ev["TransactionID"], name)
+                if va is not None and vb is not None:
+                    assert vb == pytest.approx(va, rel=1e-6), (ev["TransactionID"], name)
+            assert b.score == pytest.approx(a.score, abs=1e-6)
+    finally:
+        store.teardown()  # deletes this project's keys from Redis

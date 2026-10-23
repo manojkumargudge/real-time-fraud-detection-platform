@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/workflows/ci.yml)
 
-CI runs ruff, strict mypy, the unit tests and the integration tests (throwaway PostgreSQL and
-Kafka) on every push and pull request to `main`; CD then builds the serving image and pushes it
-to `ghcr.io/manojkumargudge/real-time-fraud-detection-platform` (tags: commit SHA and
+CI runs ruff, strict mypy, the unit tests and the integration tests (throwaway PostgreSQL,
+Kafka and Redis) on every push and pull request to `main`; CD then builds the serving image and
+pushes it to `ghcr.io/manojkumargudge/real-time-fraud-detection-platform` (tags: commit SHA and
 `latest`). Nothing is deployed.
 
 An AI/ML project for detecting suspicious financial transactions,
@@ -30,11 +30,16 @@ Work in progress: a tested local demo, not a production system.
 - Kafka producer and consumer with a retry policy and a dead-letter queue (`transactions.dlq`)
 - Idempotent PostgreSQL writes (`TransactionID` primary key)
 - FastAPI `/health` and `/score`
-- Docker Compose stack (Kafka, PostgreSQL, API, consumer)
+- Docker Compose stack (Kafka, PostgreSQL, Redis, API, consumer)
+- Feast feature store ([docs/feature_store.md](docs/feature_store.md)): per-entity state (`uid`,
+  `card_id`) in Redis, updated after every saved event; an on-demand view computes the history
+  features from state + event. Point-in-time retrieval equals the batch features; replay and
+  live checks show the same features and scores as the history path for in-order events (late
+  events can differ). Off by default for reads (`FEATURE_SOURCE=feast` to enable)
 - MLflow tracking and model registry (local SQLite `mlflow.db`, `python -m src.models.train`;
   registered as `fraud-xgboost`; alias `champion` = best candidate, `production` = currently
   deployed; both point to version 2 since 2026-10-23)
-- 369 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 14 integration
+- 387 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 15 integration
   tests ([docs/test-results-integration.txt](docs/test-results-integration.txt))
 
 #### Experiment: class imbalance
@@ -73,7 +78,6 @@ from the holdout's. Next step: an alert-budget threshold, checked on post-deploy
 
 ### Planned
 
-- Feast feature store
 - PyTorch Geometric GNN for fraud rings
 - Evidently drift reports and a retraining trigger
 - Analyst dashboard
