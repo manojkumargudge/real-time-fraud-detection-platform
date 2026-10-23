@@ -38,7 +38,7 @@ Aim for production-style engineering, but document operational, security,
 scalability, and compliance limitations honestly. Do not claim financial-sector
 production readiness without appropriate evidence.
 
-## Current project state (2026-10-23)
+## Current project state (2026-10-23, after the GNN merge)
 
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
@@ -83,6 +83,22 @@ matters (files, numbers, running services) before relying on it.
     `FeatureStore` needs `repo_path` or it writes `registry.db` to the cwd; Windows paths must
     be relative to the repo dir.
 - Latency (features + score, p50/p95): store 61.1/88.8 ms, Feast 107.5/179.0 ms (SDK overhead).
+- GNN (docs/gnn.md, `src/graph/`, batch only, never in `/score`): heterogeneous GraphSAGE on a
+  transaction-entity graph (card_id, DeviceInfo, P/R_emaildomain, addr1; hub values with more
+  than 1,000 training transactions dropped), PyG temporal neighbor sampling with
+  `disjoint=True` and seed time `TransactionDT - 1` (strictly earlier, per seed). Install with
+  `pip install -r requirements-gnn.txt`: **torch 2.8.0+cpu**, torch_geometric 2.8.1, pyg-lib
+  0.4.0+pt28cpu. torch 2.10.0 was tried first but fails on Windows (WinError 1114 in
+  `c10.dll`) whenever pandas is imported first, because pandas ships an older `msvcp140.dll`.
+  - Results (validation PR-AUC, seed 42): hubs dropped 0.1766, hubs kept 0.1730, vs XGBoost v2
+    0.2992. **The GNN loses**; not tuned.
+  - Stacking (GNN score as XGBoost feature, forward-chained over 3 time blocks): mean 0.2827 vs
+    0.2935 over 3 seeds (-0.0108, spread 0.0115) -> **no gain**, not kept; served model unchanged.
+  - card_id is a coarse proxy: 77 values cover 41.9% of training transactions.
+  - Fraud rings (`python -m src.graph.rings`): uid + device links only (never card_id), device
+    values shared by <= 10 uids, uids with <= 3 devices and <= 1,000 transactions; 337 rings,
+    largest 38 users (2.8%), 16 unscored (first time block); top-20 labelled fraud rate 19.83%
+    vs 3.50% (weak evidence). reports/fraud_rings.md + table `fraud_rings` in the demo Postgres.
 - CI/CD (.github/workflows/ci.yml): lint + mypy strict + unit tests; integration job with
   PostgreSQL 16, Kafka 3.8.1 (KRaft), Redis 7.4.1 service containers; on push to `main`, image
   pushed to `ghcr.io/manojkumargudge/real-time-fraud-detection-platform` (`<sha>`, `latest`).
@@ -106,13 +122,17 @@ matters (files, numbers, running services) before relying on it.
 
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
-  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- 396 passed on d375de9.
+  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **413 passed** with the
+  GNN stack installed; **403 passed, 1 skipped** without it (as in CI: `tests/test_graph.py`
+  skips when torch_geometric is missing; the ring tests need no torch).
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
   `TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 python -m pytest
   tests/test_integration.py` -- 15 passed on d375de9. Never point them at the demo stack.
+- GNN: `python -m src.graph.train`, `python -m src.graph.stack --degree-limit 1000 --epochs 7`,
+  `DATABASE_URL=... python -m src.graph.rings` (needs requirements-gnn.txt; 10-45 min on CPU).
 - Lint/types: `ruff check .`, `ruff format --check .`, `python -m mypy` (strict).
 - Results files: docs/test-results-unit.txt, docs/test-results-integration.txt.
 
@@ -132,10 +152,9 @@ matters (files, numbers, running services) before relying on it.
 - Consumer throughput does not scale linearly on one host.
 - Not production-ready: single-node Kafka (RF=1), no auth/TLS, local MLflow, no monitoring.
 
-### Next (approved)
-- GNN (PyTorch Geometric) fraud-ring detection, batch only, on a separate branch; stack
-  approved: torch 2.10.0+cpu, torch_geometric 2.8.1, pyg-lib 0.6.0+pt210cpu in
-  `requirements-gnn.txt` (fallback torch 2.8.0+cpu, torch_geometric 2.8.1, pyg-lib
-  0.4.0+pt28cpu). Stop at the day-1 checkpoint (graph, hub handling, leakage tests, first
-  validation PR-AUC, memory and time) before XGBoost combination and rings.
-- Still planned: Evidently drift + retraining trigger, analyst dashboard, Kubernetes (Minikube).
+### Next
+- In progress: security scanning in CI (pip-audit, bandit, Trivy on the serving image).
+- Still planned: Evidently drift + retraining trigger, analyst dashboard (can read table
+  `fraud_rings`), Kubernetes (Minikube).
+- Windows gotcha: venvs under the long scratchpad path break psycopg's DLL load ("filename or
+  extension is too long"); use a short path such as %TEMP%\civ for throwaway venvs.
