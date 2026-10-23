@@ -36,6 +36,17 @@ ignore_missing_imports = true
 module = ["pyarrow", "pyarrow.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# GNN stack (requirements-gnn.txt): torch_geometric / pyg_lib ship no type information, and CI
+# does not install torch at all (it stays light), so these resolve to Any there.
+module = ["torch", "torch.*", "torch_geometric", "torch_geometric.*", "pyg_lib", "pyg_lib.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Without torch installed (CI), nn.Module is Any; subclassing it is fine there.
+module = ["src.graph.*"]
+disallow_subclassing_any = false
+
 [tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true
