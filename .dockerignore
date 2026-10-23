@@ -11,3 +11,4 @@ tests
 .ruff_cache
 .env
 .env.*
+mlflow.db

@@ -1,5 +1,12 @@
 ﻿# Real-Time Financial Fraud Detection Platform
 
+[![CI](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/workflows/ci.yml)
+
+CI runs ruff, strict mypy, the unit tests and the integration tests (throwaway PostgreSQL and
+Kafka) on every push and pull request to `main`; CD then builds the serving image and pushes it
+to `ghcr.io/manojkumargudge/real-time-fraud-detection-platform` (tags: commit SHA and
+`latest`). Nothing is deployed.
+
 An AI/ML project for detecting suspicious financial transactions,
 identifying potential fraud networks, and supporting analyst investigations.
 
