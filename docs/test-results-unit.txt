@@ -5,13 +5,14 @@ Command (Git Bash, repo root; service variables unset, tests/conftest.py points 
 unreachable services):
   env -u DATABASE_URL -u KAFKA_BOOTSTRAP_SERVERS -u TEST_DATABASE_URL -u TEST_KAFKA_BOOTSTRAP -u MLFLOW_TRACKING_URI .venv/Scripts/python.exe -m pytest --ignore=tests/test_integration.py -p no:cacheprovider -rfEs
 
-Commit tested: 04391fa3c5216ec9aa9dfdd0d6f1e1ceb1f37ca8
-Started:       2026-10-22T17:35:34+05:30
-Finished:      2026-10-22T17:37:54+05:30
+Commit tested: 614e31f352495ec6194e84fcbe1775d68d20fd8f (code as committed; this file and the
+README were then folded into that commit, which changed its hash but not the code)
+Started:       2026-10-23T10:04:40+05:30
+Finished:      2026-10-23T10:06:57+05:30
 Python:        Python 3.11.9 (pytest 8.3.5, win32)
 
 Summary:
-  368 passed, 2 warnings in 137.35s (0:02:17)
+  369 passed, 2 warnings in 133.95s (0:02:13)
 
 Warnings (third-party, not from project code):
   starlette testclient DeprecationWarning (anyio.abc.BlockingPortal alias)
@@ -19,4 +20,4 @@ Warnings (third-party, not from project code):
 Failed: none. Skipped: none.
 tests/test_integration.py was excluded and not run.
 
-Previous run: 355 passed, 1 warning on a081b65e362223124828078e461ecfddae861e7f (2026-10-22).
+Previous run: 368 passed, 2 warnings on 04391fa3c5216ec9aa9dfdd0d6f1e1ceb1f37ca8 (2026-10-22).

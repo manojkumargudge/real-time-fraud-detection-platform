@@ -34,7 +34,7 @@ Work in progress: a tested local demo, not a production system.
 - MLflow tracking and model registry (local SQLite `mlflow.db`, `python -m src.models.train`;
   registered as `fraud-xgboost`; alias `champion` = best candidate, `production` = currently
   deployed; both point to version 2 since 2026-10-23)
-- 368 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 14 integration
+- 369 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 14 integration
   tests ([docs/test-results-integration.txt](docs/test-results-integration.txt))
 
 #### Experiment: class imbalance
@@ -49,6 +49,27 @@ Work in progress: a tested local demo, not a production system.
 - Details: [reports/imbalance_comparison.md](reports/imbalance_comparison.md). Rerun with
   `python -m src.models.imbalance_comparison` and
   `python -m src.models.imbalance_comparison --confirm`.
+
+#### Served model v1 vs v2 at fixed alert budgets
+
+Same validation window (118,108 rows, 3.44% fraud); at each budget both models flag the same
+number of transactions ([reports/model_v1_vs_v2.md](reports/model_v1_vs_v2.md),
+`python -m src.models.version_comparison`):
+
+| Budget | Recall v1 | Recall v2 | Precision v1 | Precision v2 | Threshold v1 | Threshold v2 |
+|---|---|---|---|---|---|---|
+| 1% | 0.1321 | 0.1550 | 0.4543 | 0.5330 | 0.8967 | 0.3640 |
+| 2% | 0.2266 | 0.2507 | 0.3898 | 0.4312 | 0.8401 | 0.2433 |
+| 5% | 0.3991 | 0.4181 | 0.2746 | 0.2877 | 0.6922 | 0.1121 |
+
+Where v2 is worse: at its own deployed threshold (0.1281) it flags 4.31% of transactions and
+catches 39.30% of frauds, against v1's 5.47% and 41.93% at 0.6721; and on window W1 at the 1%
+budget (confirmation above). Thresholds are chosen per model, by max F1 on the training
+holdout, so the alert rate changed with the model.
+
+Known limitation: the threshold is chosen by max F1 on the stage-1 model's holdout scores but
+applied to the refit model (trained on all training rows), so the deployed alert rate can differ
+from the holdout's. Next step: an alert-budget threshold, checked on post-deployment data.
 
 ### Planned
 

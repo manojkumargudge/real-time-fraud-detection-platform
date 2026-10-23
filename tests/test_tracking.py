@@ -155,3 +155,18 @@ def test_extra_tags_are_logged(
     logged = MlflowClient(tracking_uri=uri).get_run(run_id)
     assert logged.data.tags["stage"] == "confirmation"
     assert logged.info.run_name == "confirm-x"
+
+
+def test_version_comparison_lists_every_metric_where_the_new_model_is_worse() -> None:
+    from src.models.version_comparison import RATES, VersionResult, worse_points
+
+    def result(version: str, recall: float, precision: float) -> VersionResult:
+        budgets = {r: {"precision": precision, "recall": recall} for r in RATES}
+        deployed = {"recall": recall, "precision": precision, "alert_rate": 0.05}
+        return VersionResult(version, f"m{version}", "x", 0.25, deployed, budgets)
+
+    old, new = result("1", recall=0.40, precision=0.30), result("2", recall=0.38, precision=0.31)
+    worse = worse_points(old, new)
+    assert len(worse) == len(RATES) + 1  # recall at each budget + recall at deployed threshold
+    assert all("recall is lower" in w for w in worse)
+    assert worse_points(new, new) == []
