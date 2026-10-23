@@ -49,6 +49,7 @@ from src.features.entity_state import (
     history_features,
 )
 from src.features.history import AMOUNT, TIME, HistoryConfig
+from src.features.split import validation_start
 
 logger = logging.getLogger(__name__)
 
@@ -525,26 +526,31 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW_DIR)
     parser.add_argument(
         "--before",
-        type=int,
         default=None,
-        help="TransactionDT of the first streamed event (default: earliest scored event in "
-        "DATABASE_URL); only batch transactions strictly earlier are used",
+        help="TransactionDT of the first streamed event, or 'validation' for the validation "
+        "cut-off (where the demo producer starts); default: earliest scored event in "
+        "DATABASE_URL. Only batch transactions strictly earlier are used",
     )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     redis = os.environ.get("FEAST_REDIS")
     if not redis:
         raise SystemExit("set FEAST_REDIS (online store host:port)")
-    before = args.before
-    if before is None:
+    df = load_ieee_cis(args.raw_dir, usecols=[])
+    if args.before == "validation":
+        before = validation_start(df[TIME])
+    elif args.before is not None:
+        before = int(args.before)
+    else:
         dsn = os.environ.get("DATABASE_URL")
         if not dsn:
             raise SystemExit("pass --before or set DATABASE_URL to find the first streamed event")
-        before = first_streamed_dt(dsn)
-        if before is None:
+        first = first_streamed_dt(dsn)
+        if first is None:
             raise SystemExit("no scored events yet: pass --before explicitly")
+        before = first
     config = HistoryConfig()
-    events = pre_stream_events(load_ieee_cis(args.raw_dir, usecols=[]), before, config)
+    events = pre_stream_events(df, before, config)
     store = open_store(args.repo_dir, redis=redis, config=config)
     uids, cards = materialize_initial_state(store, args.repo_dir, events, config)
     logger.info(

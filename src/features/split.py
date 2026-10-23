@@ -38,6 +38,14 @@ def time_cutoff(dt: pd.Series[int], valid_fraction: float) -> int:
     return int(values[int(np.floor(len(values) * (1 - valid_fraction)))])
 
 
+VALIDATION_FRACTION = 0.2  # the Milestone 2 split (ComparisonConfig.valid_fraction)
+
+
+def validation_start(dt: pd.Series[int], valid_fraction: float = VALIDATION_FRACTION) -> int:
+    """First ``TransactionDT`` of the validation window; earlier rows are training history."""
+    return time_cutoff(dt, valid_fraction)
+
+
 def chronological_split(
     df: pd.DataFrame,
     *,

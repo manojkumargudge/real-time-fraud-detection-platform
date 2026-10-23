@@ -1,0 +1,73 @@
+# Throwaway services for tests/test_integration.py -- a separate Compose project, so tests never
+# touch the demo stack (docker-compose.yml): own project name, host ports and volumes.
+# Credentials are test-only (not secrets). Usage (README "Integration tests"):
+#
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud \
+#   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 \
+#     python -m pytest tests/test_integration.py
+#   docker compose -f docker-compose.test.yml down -v   # removes only this project's volumes
+name: fraud-platform-test
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_USER: fraud
+      POSTGRES_PASSWORD: test-only
+      POSTGRES_DB: fraud
+    ports:
+      - "127.0.0.1:25432:5432"
+    volumes:
+      - pgdata-test:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fraud -d fraud"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  kafka:
+    image: apache/kafka:3.8.1
+    ports:
+      - "127.0.0.1:29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:29093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafkadata-test:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  redis:
+    image: redis:7.4.1-alpine
+    ports:
+      - "127.0.0.1:26379:6379"
+    volumes:
+      - redisdata-test:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pgdata-test:
+  kafkadata-test:
+  redisdata-test:

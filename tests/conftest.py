@@ -96,7 +96,10 @@ BLOCKED_KAFKA = "127.0.0.1:1"
 @pytest.fixture(autouse=True)
 def _block_live_services(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point unit tests at unreachable services, so a stray connection fails fast instead of
-    touching the live stack. Tests may still delenv/setenv these; integration tests are exempt."""
+    touching the live stack, and score with the store path (no Redis). Tests may still
+    delenv/setenv these; integration tests are exempt."""
     if request.node.get_closest_marker("integration") is None:
         monkeypatch.setenv("DATABASE_URL", BLOCKED_DATABASE_URL)
         monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", BLOCKED_KAFKA)
+        monkeypatch.setenv("FEATURE_SOURCE", "store")
+        monkeypatch.delenv("FEAST_REDIS", raising=False)

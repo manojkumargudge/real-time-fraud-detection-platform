@@ -14,11 +14,12 @@ x-app-env: &app-env
   KAFKA_BOOTSTRAP_SERVERS: kafka:19092
   KAFKA_TOPIC: transactions
   KAFKA_GROUP_ID: fraud-scorer
-  # Feast (docs/feature_store.md): every saved event updates the entity state in Redis.
-  # FEATURE_SOURCE=feast also reads the history features from Feast (default: event history).
+  # Feast (docs/feature_store.md): history features from the entity state in Redis (started
+  # from the training history), updated after every saved event. FEATURE_SOURCE=store uses the
+  # card's event history in PostgreSQL instead (skewed for entities seen before the stream).
   FEAST_REDIS: redis:6379
   FEAST_REPO_DIR: /tmp/feast
-  FEATURE_SOURCE: ${FEATURE_SOURCE:-store}
+  FEATURE_SOURCE: ${FEATURE_SOURCE:-feast}
 
 services:
   kafka:

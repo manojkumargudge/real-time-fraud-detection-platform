@@ -31,12 +31,12 @@ Work in progress: a tested local demo, not a production system.
 - Idempotent PostgreSQL writes (`TransactionID` primary key)
 - FastAPI `/health` and `/score`
 - Docker Compose stack (Kafka, PostgreSQL, Redis, API, consumer)
-- Feast feature store ([docs/feature_store.md](docs/feature_store.md)): per-entity state (`uid`,
-  `card_id`) in Redis, started from the batch history before the stream and updated after every
-  saved event; features computed from state + event. Point-in-time retrieval and the cold-start
-  replay equal the batch (training) features. Off by default for reads (`FEATURE_SOURCE=feast`).
-  Without the batch history the store path would be skewed: with a stream starting at the
-  validation cut-off, 96% of rows get different features and PR-AUC falls from 0.2992 to 0.2533
+- Feast feature store, **the default feature source** ([docs/feature_store.md](docs/feature_store.md)):
+  per-entity state (`uid`, `card_id`) in Redis, started from the training history (all
+  transactions before the validation cut-off) and updated after every saved event; features are
+  computed from state + event. Point-in-time retrieval, the cold-start replay and the live demo
+  equal the batch (training) features. The older store path (each card's event history in
+  PostgreSQL) stays behind `FEATURE_SOURCE=store`
 - MLflow tracking and model registry (local SQLite `mlflow.db`, `python -m src.models.train`;
   registered as `fraud-xgboost`; alias `champion` = best candidate, `production` = currently
   deployed; both point to version 2 since 2026-10-23)
@@ -86,22 +86,69 @@ from the holdout's. Next step: an alert-budget threshold, checked on post-deploy
 
 Note: the IEEE-CIS fraud rate is about 3.5% (3.499% overall), not under 1%.
 
-### Verified on live data
+### Why Feast is the default: train/serve skew
 
-On the local Docker Compose stack (2026-10-22):
+The store path only knows events the service has ingested. With a stream that starts at the
+validation cut-off (as in production, after training), 96% of streamed rows get history
+features that differ from training, validation PR-AUC falls from **0.2992 to 0.2533**, and
+**2% of alert decisions flip** (2,345 of 118,108). Feast starts from the training history, so
+its features equal the training features. The cost is latency: features + score take p50
+107.5 ms with Feast vs 61.1 ms with the store path (p95 179.0 vs 88.8 ms), because of Feast
+Python SDK overhead (a Redis round trip is 2 ms); see docs/feature_store.md.
 
-- The `transactions` topic held 2,300 messages = 2,000 unique `TransactionID`s + 300
-  duplicates; each of the 2,000 was stored exactly once.
-- Publishing 5 new events added exactly 5 rows; publishing the same 5 again added 0.
+### Demo: unseen validation data (reset 2026-10-23)
+
+The demo stack streams **only validation-period transactions** (`TransactionDT` >=
+12,192,900), in time order; the producer refuses anything earlier or out of order, and labels
+are never sent. Feast was materialized from the 472,432 earlier transactions (39,087 uid and
+13,792 card states). Earlier demo data was backed up and cleared.
+
+| | First 5,000 events, 1 consumer | Next 5,000 events, 3 consumers |
+|---|---|---|
+| Throughput while a backlog existed | 7.3 events/s | 12.0 events/s (1.6x, not 3x) |
+| Per-event latency in the consumer, p50 / p95 | 112.2 / 239.8 ms | 214.3 / 422.2 ms |
+| Peak sampled consumer lag (whole batch published at once) | 3,910 | 3,130 |
+| Errors, dead-lettered events, consumer restarts | 0 / 0 / 0 | 0 / 0 / 0 |
+
+First 5,000 events: 248 alerts (4.96%), 107 of them true fraud (precision 0.4315, recall
+0.4693; 228 frauds, 4.56% fraud rate). Full validation at the same threshold: 4.31% alerts,
+precision 0.3136, recall 0.3930. The gap is the time window, not serving: the same 5,000
+events scored offline with training features give identical scores (max difference 9e-10)
+and identical alerts, and these first ~1.9 days have a higher fraud rate (4.56% vs 3.44%);
+with 228 frauds the recall's 95% margin is about +-0.065.
+
+Three consumers did not scale linearly: per-event latency doubled, which points to a shared
+bottleneck (the laptop's CPU or the PostgreSQL / Redis round trips); not yet profiled. Events
+are keyed by `card_id` (events without card1 have no card key and use `id:<TransactionID>`),
+so each card's events stay in one partition, in order, and each card's Feast state has one
+writer among the consumers. After the rebalance, the Redis state of 300 sampled streamed uids
+(216 cards) equalled the state rebuilt from batch data, and their next unseen events got the
+same features as batch.
+
+Earlier (2026-10-22) the at-least-once path was checked on the first IEEE-CIS transactions:
+2,300 messages = 2,000 unique `TransactionID`s + 300 duplicates, each stored once.
 
 ## Setup (Windows, Python 3.11)
 
 ```
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements-dev.txt
-.venv\Scripts\python -m pytest
+.venv\Scripts\python -m pytest --ignore=tests/test_integration.py   # unit tests, no services
 .venv\Scripts\ruff check .
 .venv\Scripts\python -m mypy        # strict type check of src/ and tests/ (pyproject.toml)
+```
+
+Integration tests run against a **separate Compose project** (`docker-compose.test.yml`:
+project `fraud-platform-test`, ports 25432 / 29092 / 26379, its own volumes, test-only
+credentials), so they never touch the demo stack's PostgreSQL, Kafka or Redis:
+
+```
+docker compose -f docker-compose.test.yml up -d --wait
+set TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
+set TEST_KAFKA_BOOTSTRAP=localhost:29092
+set TEST_REDIS=localhost:26379
+.venv\Scripts\python -m pytest tests/test_integration.py
+docker compose -f docker-compose.test.yml down -v   # removes only the test project's volumes
 ```
 
 Dataset download instructions: [data/README.md](data/README.md).

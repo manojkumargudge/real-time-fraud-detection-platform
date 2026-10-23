@@ -2,8 +2,9 @@
 
 Feast holds **per-entity state**, not finished features. The 12 history features are computed
 from that state plus the event being scored, with the same definitions as the batch code
-(`src/features/history.py`). The original serving path (features recomputed from the card's
-stored event history) is kept and is still the default.
+(`src/features/history.py`). Feast is the default feature source; the original serving path
+(features recomputed from the card's stored event history) is kept behind
+`FEATURE_SOURCE=store`.
 
 ## Design
 
@@ -24,12 +25,13 @@ strictly earlier times.
 
 | Variable | Effect |
 |---|---|
-| `FEAST_REDIS=host:port` | enables Feast: every newly saved event (API or consumer) updates both entity states |
-| `FEATURE_SOURCE=feast` | `/score` and the consumer read the history features from Feast; default `store` (event history in PostgreSQL). Needs `FEAST_REDIS` |
+| `FEATURE_SOURCE` | `feast` (default): history features from the Feast state; `store`: from the card's event history in PostgreSQL (skewed for cards seen before the stream) |
+| `FEAST_REDIS=host:port` | required for `feast` (checked when the scorer is built); when set, every newly saved event (API or consumer) updates both entity states |
 | `FEAST_REPO_DIR` | local registry and offline parquet files (container: `/tmp/feast`; host: `artifacts/feast`) |
 
-Compose sets `FEAST_REDIS=redis:6379` for the API and the consumer and passes
-`FEATURE_SOURCE` through (`FEATURE_SOURCE=feast docker compose up -d --no-deps api`).
+Compose sets `FEAST_REDIS=redis:6379` for the API and the consumer, with
+`FEATURE_SOURCE=${FEATURE_SOURCE:-feast}` (`FEATURE_SOURCE=store docker compose up -d --no-deps api`
+switches back).
 
 ## Cold start
 
@@ -39,21 +41,23 @@ on. Run it once, before the stream starts, with the API and consumer stopped:
 
 ```
 docker compose stop api consumer
-FEAST_REDIS=localhost:16379 python -m src.features.feast_store materialize --before <first streamed TransactionDT>
+FEAST_REDIS=localhost:16379 python -m src.features.feast_store materialize --before validation
 docker compose up -d --no-deps api consumer
 ```
 
-Without `--before`, the time of the earliest event in `scored_transactions`
-(`DATABASE_URL`) is used; only that timestamp is read from PostgreSQL. The batch events are
+`--before validation` is the validation cut-off (`TransactionDT` 12,192,900), where the demo
+producer starts; `--before <TransactionDT>` sets it explicitly, and without `--before` the time
+of the earliest event in `scored_transactions` (`DATABASE_URL`) is used (only that timestamp is
+read from PostgreSQL). The batch events are
 replayed in `(TransactionDT, TransactionID)` order, each entity's final state is written to the
 offline parquet files and loaded into Redis. Real-data check: the 472,432 transactions before
 the validation cut-off become 39,087 uid and 13,792 card states in 25 s, and the first 5,000
 streamed events then match the batch features exactly (0 rows differ).
 
-On the live local stack the stream replays IEEE-CIS from its first transaction
-(`TransactionDT` 86,400, the dataset minimum), so there is no pre-stream history: 0 of the 710
-scored cards have any, `materialize` loads nothing, and the state is exactly what the stream
-pushed.
+The demo stack (reset 2026-10-23) uses exactly this: Feast materialized from the 472,432
+transactions before the cut-off in 80 s (52,879 Redis keys), and the producer streams only
+validation-period transactions. Before the reset the demo replayed IEEE-CIS from its first
+transaction, so it had no pre-stream history at all (0 of 710 cards).
 
 Redis uses an append-only file (volume `redisdata`), so the state survives restarts.
 

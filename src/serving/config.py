@@ -1,8 +1,10 @@
 """Runtime settings from environment variables (no secrets have defaults).
 
-Feature store (docs/feature_store.md): ``FEAST_REDIS`` (``host:port``) enables Feast; every
-saved event then updates the entity state in Redis. ``FEATURE_SOURCE=feast`` additionally reads
-the history features from Feast instead of the event history in the store (default ``store``).
+Feature store (docs/feature_store.md): ``FEATURE_SOURCE`` selects where the history features
+come from -- ``feast`` (default: entity state in Redis, started from the training history, so
+features match training) or ``store`` (the card's event history in PostgreSQL; skewed for
+entities with history before the stream). ``FEAST_REDIS`` (``host:port``) is required for
+``feast``; when set, every saved event also updates the Feast state.
 """
 
 from __future__ import annotations
@@ -30,15 +32,13 @@ class Settings:
     kafka_topic: str
     kafka_group_id: str
     kafka_dlq_topic: str = "transactions.dlq"
-    feature_source: str = "store"
+    feature_source: str = "feast"
     feast_redis: str | None = None
     feast_repo_dir: Path = ARTIFACTS_DIR.parent / "feast"
 
     def __post_init__(self) -> None:
         if self.feature_source not in FEATURE_SOURCES:
             raise ValueError(f"FEATURE_SOURCE must be one of {FEATURE_SOURCES}")
-        if self.feature_source == "feast" and not self.feast_redis:
-            raise ValueError("FEATURE_SOURCE=feast needs FEAST_REDIS (online store host:port)")
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -49,7 +49,7 @@ class Settings:
             kafka_topic=os.environ.get("KAFKA_TOPIC", "transactions"),
             kafka_group_id=os.environ.get("KAFKA_GROUP_ID", "fraud-scorer"),
             kafka_dlq_topic=os.environ.get("KAFKA_DLQ_TOPIC", "transactions.dlq"),
-            feature_source=os.environ.get("FEATURE_SOURCE", "store"),
+            feature_source=os.environ.get("FEATURE_SOURCE", "feast"),
             feast_redis=os.environ.get("FEAST_REDIS") or None,
             feast_repo_dir=Path(os.environ.get("FEAST_REPO_DIR", ARTIFACTS_DIR.parent / "feast")),
         )
@@ -61,8 +61,14 @@ class Settings:
         return ModelBundle.load(self.model_dir)
 
     def build_scorer(self) -> Scorer:
+        """Checked here, not at construction: the producer reads Settings but never scores."""
         from src.serving.scorer import Scorer
 
+        if self.feature_source == "feast" and not self.feast_redis:
+            raise ValueError(
+                "FEATURE_SOURCE=feast (the default) needs FEAST_REDIS=host:port; "
+                "set FEATURE_SOURCE=store to use the event-history path"
+            )
         bundle = self.load_bundle()
         feast = None
         if self.feast_redis:  # imported only when enabled
