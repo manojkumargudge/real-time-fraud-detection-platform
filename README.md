@@ -22,15 +22,18 @@ Work in progress: a tested local demo, not a production system.
   ([docs/audit_milestone2.md](docs/audit_milestone2.md); check 18, D1 semantics, is blocked
   pending provider documentation, so D1 stays out of serving)
 - Chronological train/validation split
-- XGBoost baseline: validation PR-AUC 0.2504 against a 3.44% fraud rate
+- XGBoost model served: `baseline-9fdad27ea3b0` (MLflow `fraud-xgboost` version 2, no class
+  weight, seed 42): validation PR-AUC 0.2992 against a 3.44% fraud rate
+  ([reports/imbalance_comparison.md](reports/imbalance_comparison.md)). Previous served model:
+  version 1, `baseline-6026acdc8e2e` (`scale_pos_weight` 27.46), validation PR-AUC 0.2504
   ([reports/model_comparison.md](reports/model_comparison.md))
 - Kafka producer and consumer with a retry policy and a dead-letter queue (`transactions.dlq`)
 - Idempotent PostgreSQL writes (`TransactionID` primary key)
 - FastAPI `/health` and `/score`
 - Docker Compose stack (Kafka, PostgreSQL, API, consumer)
 - MLflow tracking and model registry (local SQLite `mlflow.db`, `python -m src.models.train`;
-  registered as `fraud-xgboost`; alias `champion` = best candidate (version 2, no class
-  weight), `production` = currently deployed (version 1, `baseline-6026acdc8e2e`))
+  registered as `fraud-xgboost`; alias `champion` = best candidate, `production` = currently
+  deployed; both point to version 2 since 2026-10-23)
 - 368 unit tests ([docs/test-results-unit.txt](docs/test-results-unit.txt)) and 14 integration
   tests ([docs/test-results-integration.txt](docs/test-results-integration.txt))
 
@@ -41,8 +44,8 @@ Work in progress: a tested local demo, not a production system.
   (0.0134).
 - Confirmed on two other time windows with seed 42: W1 +0.0137 (small), W2 +0.0430.
 - Trade-off: on W1 at the 1% alert budget, `none` was slightly worse; it was better at 5%.
-- The served model is still version 1 (`production`); version 2 (`champion`) is not deployed
-  yet.
+- Deployed on 2026-10-23: version 2 is now `production` and served by the API and consumer
+  (`/health` reports `baseline-9fdad27ea3b0`).
 - Details: [reports/imbalance_comparison.md](reports/imbalance_comparison.md). Rerun with
   `python -m src.models.imbalance_comparison` and
   `python -m src.models.imbalance_comparison --confirm`.
