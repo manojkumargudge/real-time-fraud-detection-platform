@@ -1,0 +1,14 @@
+# Accepted Trivy findings for the serving image (reviewed 2026-10-23). Entries stop applying on
+# their exp: date, so CI fails again until they are re-reviewed. OS packages without a Debian fix
+# are skipped by --ignore-unfixed (see README "Security").
+
+# feast 0.47.0: RCE in the Kubernetes materializer job; not used (local/Redis online store only).
+CVE-2025-11157 exp:2027-01-31
+
+# pyarrow 18.0.0: use-after-free reading Arrow IPC files; only our own parquet is read; pinned by feast.
+CVE-2026-25087 exp:2027-01-31
+
+# zlib1g 1:1.2.13.dfsg-1 (Debian 12): minizip overflow, Debian status will_not_fix, so a rebuild does
+# not fix it (--ignore-unfixed already skips it; listed so the acceptance is explicit). The image's
+# libz.so.1 does not export zipOpenNewFileInZip4_64 and no minizip library is installed.
+CVE-2023-45853 exp:2027-01-31

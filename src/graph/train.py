@@ -265,7 +265,7 @@ def log_mlflow(cfg: GnnConfig, metrics: dict[str, float], tags: dict[str, str]) 
     client.log_batch(
         run.info.run_id,
         metrics=[Metric(k, float(v), now, 0) for k, v in metrics.items()],
-        params=[Param(k, str(v)) for k, v in asdict(cfg).items()],  # type: ignore[no-untyped-call]
+        params=[Param(k, str(v)) for k, v in asdict(cfg).items()],
     )
     client.set_terminated(run.info.run_id)
     return str(run.info.run_id)

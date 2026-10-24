@@ -142,10 +142,7 @@ def log_training_run(
         client.log_batch(
             run_id,
             metrics=[Metric(k, float(v), now, 0) for k, v in run_metrics(run).items()],
-            params=[
-                Param(k, str(v))  # type: ignore[no-untyped-call]  # mlflow leaves __init__ untyped
-                for k, v in run_params(run, imbalance_method).items()
-            ],
+            params=[Param(k, str(v)) for k, v in run_params(run, imbalance_method).items()],
         )
         client.log_artifact(run_id, str(bundle_dir / MODEL_FILE), ARTIFACT_PATH)
         client.log_artifact(run_id, str(bundle_dir / METADATA_FILE), ARTIFACT_PATH)

@@ -21,6 +21,7 @@ data/raw/
 data/processed/
 mlruns/
 mlflow.db
+mlflow.db.bak-*
 artifacts/
 /models/
 *.pkl

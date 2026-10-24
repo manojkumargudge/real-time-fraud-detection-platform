@@ -12,3 +12,4 @@ tests
 .env
 .env.*
 mlflow.db
+mlflow.db.bak-*
