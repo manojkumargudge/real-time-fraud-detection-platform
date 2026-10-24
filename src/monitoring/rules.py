@@ -19,6 +19,10 @@ class CheckResults:
     prediction_drift_score: float
     delayed_pr_auc: float | None  # None: not enough matured labels (check not available)
     champion_valid_pr_auc: float
+    # The champion's top features by XGBoost gain, and those of them flagged as drifted (same
+    # per-feature test and threshold as the share rule).
+    top_gain_features: tuple[str, ...] = ()
+    drifted_top_gain_features: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,11 @@ def evaluate_trigger(checks: CheckResults, cfg: DriftConfig) -> TriggerDecision:
     if checks.drifted_feature_share > share_limit:
         reasons.append(
             f"feature drift: {checks.drifted_feature_share:.3f} of features drifted > {share_limit}"
+        )
+    if checks.drifted_top_gain_features:
+        reasons.append(
+            f"top-feature drift: {', '.join(checks.drifted_top_gain_features)} drifted (among the "
+            f"champion's top {len(checks.top_gain_features)} features by gain)"
         )
     if checks.prediction_drift_detected:
         reasons.append(

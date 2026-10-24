@@ -214,6 +214,21 @@ time. Every window below is in transaction time and is printed and stored with e
 | Feature drift | Evidently `DataDriftPreset` on the model's input features: Wasserstein (numeric), Jensen-Shannon (categorical); a feature drifts at score >= 0.1 | share of drifted features > 0.5 |
 | Prediction drift | Evidently `ValueDrift` on the score, PSI | PSI >= 0.2 |
 | Delayed-label performance | PR-AUC of stored scores on labels in (cutoff - 7 days, cutoff], needing at least 30 frauds | PR-AUC < champion validation PR-AUC - 0.05 |
+| Top-feature drift (added later, see below) | the same per-feature test and threshold, on the champion's top 5 features by XGBoost gain (read from the champion's booster on every run, not hardcoded) | any of them drifts |
+
+**Why the top-feature rule exists.** It was added on 2026-10-24, *after* the first demo runs
+(runs 1 to 3 below). Those runs showed that the share rule (more than half of 28 features) did
+not fire on a synthetic 2x TransactionAmt shift: only 11 of 28 features drifted, although
+TransactionAmt itself was flagged. A shift in one or two important features is invisible to a
+dataset-level share. The new rule watches the features the model relies on most. Every other
+threshold is unchanged. Each row also stores the top-5 list and the ones that drifted.
+
+**The matured-label window is the same in every run, by design.** The delayed-label PR-AUC
+uses labels in (cutoff - 7 days, cutoff], with cutoff = now - 30 days. "Now" is the latest
+scored transaction, not the run's current window, so with the full validation stream this is
+always days 146 to 153 (20,264 rows, 617 frauds), whatever window is checked for drift. It
+answers "how is the model doing on the newest labels we are allowed to see", which does not
+depend on the drift window.
 
 **Label delay.** Chargebacks arrive weeks after a transaction. A label is used only if its
 transaction is at least 30 days older than now: cutoff = now - 30 days, and a label exactly at
@@ -232,6 +247,10 @@ every label newer than the cutoff and show that the results do not change.
 
 The job **fails** if the champion's or the challenger's training window overlaps the holdout:
 the comparison would then be in-sample.
+
+`--force-retrain` (host only) runs steps 1 to 4 even when no check fired. The row is then
+stored with `forced = true`, and the promotion rule and the `production` guard are unchanged.
+It cannot be combined with `--no-retrain`.
 
 **Storage.** Each run writes one row to PostgreSQL table `drift_reports`. The row holds:
 
@@ -269,7 +288,7 @@ set DATABASE_URL=postgresql://fraud:<password>@localhost:15432/fraud
 .venv\Scripts\python -m src.monitoring.run_drift --window-start-day 141 --window-end-day 145
 ```
 
-**Demo (2026-10-24, real data).** All runs used the full validation stream in
+**First demo (2026-10-24, real data, before the top-feature rule).** All runs used the full validation stream in
 `scored_transactions` (118,108 events, so now = day 183.0 and the label cutoff = day 153.0). The
 config was unchanged between runs.
 
@@ -295,6 +314,53 @@ Thresholds: share > 0.5; PSI >= 0.2; PR-AUC < 0.2992 - 0.05 = 0.2492.
 
 No run fired, so the retraining and promotion path did not run on the real registry. It is
 covered end to end on synthetic data by the integration test.
+
+**Second demo (2026-10-24, with the top-feature rule; every other threshold unchanged).** The
+champion's top 5 features by gain are `card3`, `card6`, `R_emaildomain`, `addr2` and
+`ProductCD`. TransactionAmt is not among them.
+
+| Run (drift_reports id) | Window | Share | PSI | Drifted top-5 features | Fired | Retrain / promotion |
+|---|---|---|---|---|---|---|
+| 1 (5) | days 141-145 | 0.179 | 0.0034 | card3 | **yes** (top-feature) | challenger v3, kept champion |
+| 2 (6) | days 170-183 | 0.286 | 0.0027 | R_emaildomain | **yes** (top-feature) | challenger v4, kept champion |
+| 3 (7), **synthetic** x2 | days 170-183 | 0.393 | 0.0097 | R_emaildomain | **yes** (top-feature) | challenger v5, kept champion |
+| 4 (9), `--force-retrain` | days 170-183 | 0.286 | 0.0027 | R_emaildomain | yes, `forced = true` | challenger v7, kept champion |
+
+What the second demo shows:
+
+- **The new rule fires on every window, including run 1, which is close to training.** In run 1
+  it fires on `card3` (Wasserstein 0.1041 vs threshold 0.1, just over the line), so it is noisier than the share
+  rule.
+- **In the synthetic run it fired on real drift in `R_emaildomain`, not on the 2x
+  TransactionAmt shift**, because TransactionAmt is not a top-5 feature. The rule does not
+  catch the shift it was added for.
+- I did not change any threshold. Whether to keep the rule, raise its threshold or widen it is
+  an open decision.
+
+**Promotion (identical in every run: same training data, same seed).** On the holdout
+(146.00, 153.00], 20,264 rows:
+
+- challenger PR-AUC 0.3290 vs champion 0.3238;
+- paired day-block bootstrap of the difference (1,000 resamples): mean +0.0053, 95% CI
+  [-0.0160, +0.0254];
+- the lower bound -0.0160 is below the 0.01 margin, so **the champion was kept**: `champion` =
+  v2, `production` = v2.
+
+Each fired run registered a new challenger version (v3 to v7; `challenger` = v7). Row 8 is an
+earlier `--force-retrain` run, stored as `forced = false` because the trigger also fired. The
+flag now means "the flag was given"; row 9 is the corrected run.
+
+**Velocity features (days 141-145): checked, no feature bug.**
+
+- An independent naive recount of `uid_txn_count_1h` / `_24h` from the raw file matches the
+  drift job on 1,000 of 1,000 sampled rows.
+- The scores production stored (Feast features) equal the champion's prediction on the drift
+  job's batch features for all 9,747 rows (max difference 1.9e-9).
+- The large late-window drift score is a heavy tail. Median, p90 and the share of rows with
+  activity are almost unchanged, but the p99 of `uid_txn_count_1h` goes from 5 to 127 (mean
+  0.45 to 3.07, std 1.1 to 18.2). The Wasserstein distance is scaled by the reference std
+  (1.13), so a small set of very bursty uids dominates it. Which uids they are was not
+  investigated.
 
 ## Setup (Windows, Python 3.11)
 
