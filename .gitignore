@@ -59,3 +59,5 @@ data/*
 # Generated report JSON (large; regenerate with the src.models CLIs). Files already
 # committed stay tracked; this only keeps new ones out by default.
 reports/*.json
+# Evidently drift reports (src.monitoring.run_drift); their paths are stored in drift_reports.
+reports/drift/

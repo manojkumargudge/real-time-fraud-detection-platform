@@ -8,11 +8,14 @@ volumes; test-only credentials).
 Command (Git Bash, repo root):
   TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 .venv/Scripts/python.exe -m pytest tests/test_integration.py -p no:cacheprovider -rfEs
 
-Commit tested: security branch, squashed (304ae06 + fixes), 2026-10-24 (IST)
-Python:        Python 3.11.9 (pytest 9.1.1, win32); fastapi 0.143.0, starlette 1.7.0, mlflow 3.17.2
+Commit tested: drift branch (Evidently drift job), 2026-10-24 (IST)
+Python:        Python 3.11.9 (pytest 9.1.1, win32); evidently 0.7.23, mlflow 3.17.2
 
 Summary:
-  15 passed, 4 warnings in 225.80s (0:03:45)
+  16 passed, 3 warnings in 310.45s (0:05:10)
+  New: test_drift_job_end_to_end_writes_drift_reports (scored rows in the test PostgreSQL,
+  throwaway MLflow registry, retraining enabled; checks the drift_reports row, the challenger
+  alias, production unchanged, and that the repo's mlflow.db is untouched).
 
 Failed: none. Skipped: none (includes the Feast-on-Redis replay test).
 
@@ -20,4 +23,4 @@ Demo stack (docker-compose.yml) before -> after the run: scored_transactions 100
 Redis keys 53261 -> 53261, topics and consumer groups unchanged.
 Test stack after the run: no test topics left behind.
 
-Previous runs: 15 passed on 304ae06 with mlflow 3.16.1 (2026-10-24); 15 passed on d375de9 (2026-10-23); 15 passed on 9994458 against the demo stack (before the separate test stack existed).
+Previous runs: 15 passed on main 2fe7b70 (2026-10-24); 15 passed on 304ae06 with mlflow 3.16.1 (2026-10-24); 15 passed on d375de9 (2026-10-23); 15 passed on 9994458 against the demo stack (before the separate test stack existed).

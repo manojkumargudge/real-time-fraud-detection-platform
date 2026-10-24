@@ -146,7 +146,7 @@ only pushed to GHCR when it passes. The scanners gate differently:
 
 | Scanner | Scope | Gate |
 |---|---|---|
-| pip-audit 2.10.1 | `requirements.txt`, `requirements-serving.txt`, `requirements-dev.txt`, `requirements-gnn.txt` (with its PyTorch/PyG indexes) | any known vulnerability not in `security/pip-audit-ignore.txt` |
+| pip-audit 2.10.1 | `requirements.txt`, `requirements-serving.txt`, `requirements-monitoring.txt`, `requirements-dev.txt`, `requirements-gnn.txt` (with its PyTorch/PyG indexes) | any known vulnerability not in `security/pip-audit-ignore.txt` |
 | bandit 1.9.4 | `src/` | medium severity and above (`-ll`) |
 | Trivy 0.75.0 | the serving image built from `Dockerfile` | HIGH/CRITICAL with a fix available (`--ignore-unfixed`), minus `.trivyignore` |
 
@@ -182,6 +182,119 @@ again after the expiry date, 2027-01-31):
 | torch 2.8.0 (GNN, batch only) | 8 advisories | affected operators (`nan_to_num`, `linalg.lu`, `jit.script`, `lstm_cell`, ...) are not used and nothing is `torch.load`-ed; 2.10 fails to load on Windows. torch is imported only by the batch GNN (`src/graph/`), which nothing in `src/serving/` or `src/streaming/` imports; `requirements-serving.txt` does not install it and the built serving image contains no torch (checked with `pip list` in the container) |
 | zlib1g 1:1.2.13.dfsg-1 (Debian 12) | CVE-2023-45853 (CRITICAL) | Debian status `will_not_fix`: a rebuild will **not** fix it. The overflow is in minizip's `zipOpenNewFileInZip4_64`; in the serving image `libz.so.1` does not export that function and no minizip library is installed (checked 2026-10-24). Listed in `.trivyignore` |
 | Debian 12 OS packages | 62 more HIGH/CRITICAL without a fix (55 `affected`, 7 `fix_deferred`) | no fixed package exists yet; a rebuild picks up Debian fixes once they are released |
+
+## Monitoring (drift and retraining trigger)
+
+`python -m src.monitoring.run_drift` is a standalone batch job (not part of the API), so it
+can later become a Kubernetes CronJob. Every threshold lives in one file,
+[configs/drift.toml](configs/drift.toml). All values are required, unknown keys are rejected,
+and the values were set before the first real run. Evidently 0.7.23 (current `Report` /
+`Dataset` API), with telemetry switched off.
+
+**Time.** "Now" is the latest `transaction_dt` in `scored_transactions`, never wall-clock
+time. Every window below is in transaction time and is printed and stored with each run.
+
+**What is compared**
+
+- **Reference**: the last 30 days of the champion's training window, with features from the
+  same point-in-time code as serving. Not the whole window: history features (prior counts,
+  time since the previous transaction) depend on how much history exists. The cold-start early
+  weeks would look like drift against any later window.
+- **Current**: scored transactions in the chosen window. Features are recomputed with the same
+  code (equal to what Feast served, docs/feature_store.md), and the scores are the ones
+  production stored.
+- **Reference scores**: the champion's recipe is refit on the training rows *before* the
+  reference window, then scored on it. These scores are out-of-sample, like production.
+  In-sample scores would be overconfident and would look like prediction drift by themselves.
+
+**Checks and trigger** (any one fires)
+
+| Check | Method | Fires when |
+|---|---|---|
+| Feature drift | Evidently `DataDriftPreset` on the model's input features: Wasserstein (numeric), Jensen-Shannon (categorical); a feature drifts at score >= 0.1 | share of drifted features > 0.5 |
+| Prediction drift | Evidently `ValueDrift` on the score, PSI | PSI >= 0.2 |
+| Delayed-label performance | PR-AUC of stored scores on labels in (cutoff - 7 days, cutoff], needing at least 30 frauds | PR-AUC < champion validation PR-AUC - 0.05 |
+
+**Label delay.** Chargebacks arrive weeks after a transaction. A label is used only if its
+transaction is at least 30 days older than now: cutoff = now - 30 days, and a label exactly at
+the cutoff is usable. `usable_labels` is the only place labelled rows are selected. Tests poison
+every label newer than the cutoff and show that the results do not change.
+
+**When it fires** (host only):
+
+1. Train a challenger with the champion's recipe on every usable label before the holdout. The
+   holdout is the last 7 days of usable labels, (cutoff - 7 days, cutoff].
+2. Log it to MLflow and register it with alias `challenger`.
+3. Score champion and challenger on the same holdout. Paired bootstrap of the PR-AUC
+   difference: 1,000 resamples, seed 42, resampling whole days.
+4. Move `champion` only if the lower bound of the 95% CI of (challenger - champion) is above
+   the margin of 0.01. Both point estimates, the CI and the reason are logged.
+
+The job **fails** if the champion's or the challenger's training window overlaps the holdout:
+the comparison would then be in-sample.
+
+**Storage.** Each run writes one row to PostgreSQL table `drift_reports`. The row holds:
+
+- the windows, now and the label cutoff;
+- the drifted-feature share and the top drifted features;
+- the PSI and whether prediction drift was detected;
+- the delayed-label PR-AUC;
+- whether it triggered and why;
+- the retrain run ID, the challenger version and the promotion decision (point estimates and
+  CI);
+- the path of the Evidently HTML report in `reports/drift/` (gitignored).
+
+Runs on a shifted copy are marked `synthetic = true`, and their HTML title starts with
+`SYNTHETIC=TRUE`.
+
+**What is not automated, and why**
+
+- `production` is never moved by the job. `set_alias` refuses it, and the alias is re-read
+  after every promotion. Moving `champion` does not change what is served: serving loads
+  `artifacts/baseline/`. Deploying a new model is a human step.
+- **Retraining runs on the host only.** The MLflow registry is a local SQLite file whose
+  artifact paths are Windows `file:///C:/...` paths, which a Linux container cannot open. The
+  Compose service therefore runs drift checks only:
+  `docker compose --profile monitoring run --rm drift [--window-start-day D --window-end-day D]`.
+  The fix is an MLflow server with a shared artifact store, which is out of scope here.
+- No scheduler yet. The Compose service is one-shot, like the planned CronJob.
+- The reference scores come from a fresh XGBoost refit, which is not bit-identical across
+  platforms. On the same window, host and container gave the same drifted share (0.179) but a
+  PSI of 0.0034 vs 0.0050 (drift_reports ids 1 and 4). Container rows store the container path
+  of the report (`/app/reports/drift/...`, mounted to `reports/drift/`).
+
+```
+# host, with retraining (uses the MLflow champion):
+set DATABASE_URL=postgresql://fraud:<password>@localhost:15432/fraud
+.venv\Scripts\python -m src.monitoring.run_drift --window-start-day 141 --window-end-day 145
+```
+
+**Demo (2026-10-24, real data).** All runs used the full validation stream in
+`scored_transactions` (118,108 events, so now = day 183.0 and the label cutoff = day 153.0). The
+config was unchanged between runs.
+
+- Windows: champion training = days 1.00 to 141.12; challenger training (planned) = days 1.00
+  to 146.00; holdout = (146.00, 153.00]; reference = days 111.1 to 141.1.
+- The delayed-label check is the same in every run: (146.0, 153.0], 20,264 rows, 617 frauds.
+
+| Run | Current window | Drifted features | Top drifted | PSI (score) | Delayed PR-AUC | Fired |
+|---|---|---|---|---|---|---|
+| 1 | days 141-145 (9,747 rows) | 5 / 28 = 0.179 | DeviceInfo, uid_txn_count_24h, uid_txn_count_7d | 0.0034 | 0.3238 | no |
+| 2 | days 170-183 (34,502 rows) | 8 / 28 = 0.286 | uid_txn_count_1h, uid_txn_count_24h, DeviceInfo | 0.0027 | 0.3238 | no |
+| 3, **synthetic** (TransactionAmt x2 on a copy of run 2's window) | days 170-183 | 11 / 28 = 0.393 | uid_txn_count_1h, uid_txn_count_24h, TransactionAmt, uid_amt_to_prior_mean | 0.0097 | 0.3238 | no |
+
+Thresholds: share > 0.5; PSI >= 0.2; PR-AUC < 0.2992 - 0.05 = 0.2492.
+
+- **Real drift grows with time** (0.179 to 0.286 of features), mostly in the short-window
+  history counts and DeviceInfo. It stays below the threshold.
+- **The score distribution barely moves** (PSI below 0.01).
+- **Performance on matured labels is above the champion's validation PR-AUC** (0.3238 vs
+  0.2992).
+- **The synthetic shift is detected per feature** (TransactionAmt and the amount ratio), but it
+  does not reach the dataset-level threshold.
+
+No run fired, so the retraining and promotion path did not run on the real registry. It is
+covered end to end on synthetic data by the integration test.
 
 ## Setup (Windows, Python 3.11)
 

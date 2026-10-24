@@ -10,13 +10,17 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements-serving.txt .
+# REQUIREMENTS: requirements-serving.txt (default: API / consumer image, the one CI scans and
+# pushes) or requirements-monitoring.txt (the Compose drift job, which adds Evidently).
+ARG REQUIREMENTS=requirements-serving.txt
+COPY requirements-serving.txt requirements-monitoring.txt ./
 # The base image's setuptools / wheel have HIGH advisories (CVE-2024-6345, CVE-2025-47273,
 # CVE-2026-24049); they are build tools, upgraded to fixed releases.
 RUN pip install --upgrade "setuptools==84.0.0" "wheel==0.48.0" \
-    && pip install -r requirements-serving.txt
+    && pip install -r "${REQUIREMENTS}"
 
 COPY src/ src/
+COPY configs/drift.toml configs/drift.toml
 RUN useradd --create-home --uid 10001 app
 USER app
 

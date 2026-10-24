@@ -22,3 +22,7 @@ mlflow==3.17.2
 # Feature store (entity state online; docs/feature_store.md). 0.47.0: newest release that
 # works with numpy 1.26.4 / pydantic 2.14.1; it pins pyarrow 18.0.0.
 feast[redis]==0.47.0
+# Drift monitoring (batch job, not in requirements-serving). 0.7.23: current API (Report /
+# Dataset / DataDefinition, evidently.presets); adds no change to the pins above; pip-audit clean
+# 2026-10-24. Telemetry off via EVIDENTLY_DISABLE_TELEMETRY=1 / DO_NOT_TRACK=1.
+evidently==0.7.23

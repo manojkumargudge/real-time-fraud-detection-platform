@@ -110,6 +110,30 @@ matters (files, numbers, running services) before relying on it.
 - MLflow 3.17.2: the local `mlflow.db` was migrated (`mlflow db upgrade`, one-way) on
   2026-10-24; pre-migration backup `mlflow.db.bak-2026-10-24` (gitignored). Older mlflow cannot
   read it.
+- Drift monitoring (README "Monitoring", `src/monitoring/`, `configs/drift.toml`, Evidently
+  0.7.23): `python -m src.monitoring.run_drift [--window-start-day D --window-end-day D]
+  [--no-retrain] [--synthetic-amount-factor F]`.
+  - now = max `transaction_dt` in scored_transactions; label cutoff = now - 30 days (inclusive).
+  - Reference = last 30 days of the champion's training window. Its scores come from the
+    champion recipe refit on earlier rows (out-of-sample).
+  - Fires on drifted-feature share > 0.5, OR PSI >= 0.2, OR delayed PR-AUC < champion - 0.05.
+  - When it fires: challenger trained on usable labels before the holdout (last 7 days before
+    the cutoff), alias `challenger`. `champion` moves only if the paired day-block bootstrap CI
+    lower bound (1,000 resamples, seed 42) is > 0.01. `production` is never moved.
+  - Overlap of a training window with the holdout fails the job. Results go to PostgreSQL
+    `drift_reports` and `reports/drift/*.html` (gitignored).
+  - Retraining runs on the host only (Windows file:/// artifact paths in the SQLite registry).
+    Compose `--profile monitoring` service `drift` = checks only, image built with
+    `REQUIREMENTS=requirements-monitoring.txt`.
+  - Demo 2026-10-24 (drift_reports ids 1-3): none fired.
+    - Run 1, days 141-145: share 0.179, PSI 0.0034.
+    - Run 2, days 170-183: share 0.286, PSI 0.0027.
+    - Run 3, synthetic TransactionAmt x2: share 0.393, PSI 0.0097.
+    - Delayed PR-AUC 0.3238 in all runs (days 146-153, 617 frauds).
+    - Retraining and promotion never ran on the real registry.
+  - Two stray runs `challenger-4750731` (synthetic test data, from a since-fixed bug where the
+    challenger was logged to the default tracking URI) are in the real mlflow.db: 16 runs. No
+    versions or aliases were changed. Not deleted (needs the user's approval).
 
 ### Demo stack (docker-compose.yml, project `fraud-platform`)
 - Services: kafka (localhost:9092), postgres (15432), redis (16379), api (18000), consumer
@@ -122,24 +146,26 @@ matters (files, numbers, running services) before relying on it.
   Redis RDB, Kafka metadata + messages). Feast materialized from pre-cut-off history; the
   producer streams **validation-period transactions only**, in time order
   (`python -m src.streaming.producer --skip N --limit M`, refuses earlier or out-of-order
-  events; messages keyed by `card_id`). Streamed so far: 10,300 events (skip 0-10,299), 480 alerts.
-  The last 300 (2026-10-24) checked the 3-replica split: 102/102/96 per partition, 300 unique
-  IDs, none scored by two consumers.
+  events; messages keyed by `card_id`). **The whole validation window is streamed**: 118,108
+  events (days 141.1-183.0), 5,093 alerts. Further `--skip` values have nothing left to send.
+  Rest-of-validation stream (2026-10-24): 8.05 events/s, scorer p50/p95/p99 207/549/843 ms
+  (docs/serving.md). Consumers crashed twice on retriable commit errors (`NOT_COORDINATOR`;
+  pre-existing bug, not fixed); no loss or duplicates.
 - Throughput: 7.3 events/s with 1 consumer, 12.0 with 3 (1.6x; per-event latency doubled,
   likely CPU-bound on one laptop, not profiled). Redis state verified against batch after the
   rebalance (300 uids / 216 cards, 0 mismatches).
 
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
-  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **417 passed** with the
-  GNN stack installed; **407 passed, 1 skipped** without it (2026-10-24, mlflow 3.17.2) (as in CI: `tests/test_graph.py`
+  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **458 passed** with the
+  GNN stack installed; **448 passed, 1 skipped** without it (2026-10-24, drift branch) (as in CI: `tests/test_graph.py`
   skips when torch_geometric is missing; the ring tests need no torch).
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
   `TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 python -m pytest
-  tests/test_integration.py` -- 15 passed (2026-10-24, security branch). Never point them at the demo stack.
+  tests/test_integration.py` -- 16 passed (2026-10-24, drift branch). Never point them at the demo stack.
 - GNN: `python -m src.graph.train`, `python -m src.graph.stack --degree-limit 1000 --epochs 7`,
   `DATABASE_URL=... python -m src.graph.rings` (needs requirements-gnn.txt; 10-45 min on CPU).
 - Lint/types: `ruff check .`, `ruff format --check .`, `python -m mypy` (strict).
@@ -163,10 +189,13 @@ matters (files, numbers, running services) before relying on it.
   atomic per-entity update or single writer); a failed push is only logged (fix: catch-up
   replay per entity); Feast SDK adds ~50 ms per read.
 - Consumer throughput does not scale linearly on one host.
-- Not production-ready: single-node Kafka (RF=1), no auth/TLS, local MLflow, no monitoring.
+- Consumer: a commit failing with `NOT_COORDINATOR` / `COORDINATOR_LOAD_IN_PROGRESS` crashes it
+  (only rebalance errors are tolerated); Docker restarts it and the events are redelivered.
+- Not production-ready: single-node Kafka (RF=1), no auth/TLS, local MLflow, drift job not
+  scheduled.
 
 ### Next
-- Planned: Evidently drift + retraining trigger, analyst dashboard (can read table
-  `fraud_rings`), Kubernetes (Minikube).
+- Planned: analyst dashboard (can read tables `fraud_rings`, `drift_reports`), Kubernetes
+  (Minikube; drift job as a CronJob), consumer commit-error fix.
 - Windows gotcha: venvs under the long scratchpad path break psycopg's DLL load ("filename or
   extension is too long"); use a short path such as %TEMP%\civ for throwaway venvs.

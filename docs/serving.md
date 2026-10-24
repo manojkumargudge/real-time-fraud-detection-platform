@@ -260,6 +260,32 @@ Latency hardly depends on history length (0 to 241 rows here). It is dominated b
 overhead in the batch feature code, applied to tiny frames. These numbers come from one local
 run and are **not** a production latency claim.
 
+### Full validation stream (2026-10-24)
+
+Rest of the validation period (skip 10,300, 107,808 events, days 145.2 to 183.0). Setup: Feast
+features (`FEATURE_SOURCE=feast`), 3 consumers (one per partition), unthrottled producer, same
+laptop.
+
+| Measure | Result |
+|---|---|
+| Stored | 118,108 rows in total (the whole validation window), all `transaction_id`s unique, one model version; 5,093 alerts; DLQ empty |
+| Throughput (first to last `scored_at`, 13,399 s) | **8.05 events/s** overall; **8.29 events/s** over 110 quiet minutes (minutes without other heavy jobs on the laptop) |
+| Scorer latency per event (Feast features + XGBoost score; excludes Kafka queueing and the DB write) | **p50 207 ms, p95 549 ms, p99 843 ms** (107,808 samples) |
+| Duplicates | 107,808 "scored" lines for 107,808 events; 7 redelivered events skipped as duplicates |
+
+Contention: tests, image builds and scans also ran on the laptop between 05:55 and 07:46 UTC.
+Throughput was about the same with and without them (8.05 vs 8.29 events/s). Latency is well
+above the Feast figure from the 10,000-event run (p50 107.5 ms), with the same 3 consumers
+competing for one CPU; this was not profiled further.
+
+**Consumer crashes (pre-existing bug, not fixed here).** All 3 consumers exited twice, at 06:38
+and 07:41 UTC. A synchronous offset commit failed with `NOT_COORDINATOR` /
+`COORDINATOR_LOAD_IN_PROGRESS` during heavy load on the laptop. `consumer.py` tolerates only the
+rebalance errors (`ILLEGAL_GENERATION`, `UNKNOWN_MEMBER_ID`, `REBALANCE_IN_PROGRESS`) and
+re-raises anything else. Docker restarted the consumers. No data was lost or duplicated: offsets
+are committed after the DB write, and redelivered events are deduplicated. Fix: treat retriable
+coordinator errors like the rebalance errors (redeliver).
+
 ## 7. Limitations
 
 - **Cold start:** history contains only events this system has ingested. Until earlier history
