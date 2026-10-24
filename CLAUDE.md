@@ -103,11 +103,18 @@ matters (files, numbers, running services) before relying on it.
   PostgreSQL 16, Kafka 3.8.1 (KRaft), Redis 7.4.1 service containers; on push to `main`, image
   pushed to `ghcr.io/manojkumargudge/real-time-fraud-detection-platform` (`<sha>`, `latest`).
   Nothing is deployed. Repo is public; `gh` is not logged in (watch runs via the public API).
+- Security job (README "Security"): pip-audit (all requirements files; fails on any advisory not
+  in `security/pip-audit-ignore.txt`, any severity), bandit `-ll` on `src/`, Trivy on the serving
+  image (HIGH/CRITICAL with a fix, minus `.trivyignore`). Image push needs test + integration +
+  security. Accepted risks expire 2027-01-31. New advisories can fail CI with no code change.
+- MLflow 3.17.2: the local `mlflow.db` was migrated (`mlflow db upgrade`, one-way) on
+  2026-10-24; pre-migration backup `mlflow.db.bak-2026-10-24` (gitignored). Older mlflow cannot
+  read it.
 
 ### Demo stack (docker-compose.yml, project `fraud-platform`)
 - Services: kafka (localhost:9092), postgres (15432), redis (16379), api (18000), consumer
-  (currently scaled to 3 replicas; `docker compose up -d --no-deps --scale consumer=1 consumer`
-  to go back). `.env` holds `POSTGRES_PASSWORD` (never print it). Host ports 5432/5433/8000 are
+  (3 replicas by default via `deploy.replicas` in docker-compose.yml, one per `transactions`
+  partition; `--scale` is not persisted, so it was lost once the containers were removed). `.env` holds `POSTGRES_PASSWORD` (never print it). Host ports 5432/5433/8000 are
   taken by other projects (kasparro, healthcare-crm containers also run on this machine).
 - Model bundle mounted read-only from `artifacts/baseline/` (= MLflow v2); v1 backup in
   `../fraud-backup-2026-10-22/served-bundle-v1`.
@@ -115,22 +122,24 @@ matters (files, numbers, running services) before relying on it.
   Redis RDB, Kafka metadata + messages). Feast materialized from pre-cut-off history; the
   producer streams **validation-period transactions only**, in time order
   (`python -m src.streaming.producer --skip N --limit M`, refuses earlier or out-of-order
-  events; messages keyed by `card_id`). Streamed so far: 10,000 events (skip 0-9,999), 464 alerts.
+  events; messages keyed by `card_id`). Streamed so far: 10,300 events (skip 0-10,299), 480 alerts.
+  The last 300 (2026-10-24) checked the 3-replica split: 102/102/96 per partition, 300 unique
+  IDs, none scored by two consumers.
 - Throughput: 7.3 events/s with 1 consumer, 12.0 with 3 (1.6x; per-event latency doubled,
   likely CPU-bound on one laptop, not profiled). Redis state verified against batch after the
   rebalance (300 uids / 216 cards, 0 mismatches).
 
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
-  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **413 passed** with the
-  GNN stack installed; **403 passed, 1 skipped** without it (as in CI: `tests/test_graph.py`
+  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **417 passed** with the
+  GNN stack installed; **407 passed, 1 skipped** without it (2026-10-24, mlflow 3.17.2) (as in CI: `tests/test_graph.py`
   skips when torch_geometric is missing; the ring tests need no torch).
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
   `TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 python -m pytest
-  tests/test_integration.py` -- 15 passed on d375de9. Never point them at the demo stack.
+  tests/test_integration.py` -- 15 passed (2026-10-24, security branch). Never point them at the demo stack.
 - GNN: `python -m src.graph.train`, `python -m src.graph.stack --degree-limit 1000 --epochs 7`,
   `DATABASE_URL=... python -m src.graph.rings` (needs requirements-gnn.txt; 10-45 min on CPU).
 - Lint/types: `ruff check .`, `ruff format --check .`, `python -m mypy` (strict).
@@ -138,7 +147,11 @@ matters (files, numbers, running services) before relying on it.
 
 ### Environment notes
 - Windows 11, 16 GB RAM, no GPU; Python 3.11.9 in `.venv`; numpy 1.26.4, pandas 2.2.3,
-  xgboost 2.1.4, pyarrow 18.0.0 (pinned by Feast), mlflow 3.15.2.
+  xgboost 2.1.4, pyarrow 18.0.0 (pinned by Feast), mlflow 3.17.2, fastapi 0.143.0, starlette 1.7.0,
+  cryptography 50.0.2, pytest 9.1.1; serving image base `python:3.11.16-slim-bookworm`.
+- Scanners: throwaway venv `%TEMP%\sec` (pip-audit 2.10.1, bandit 1.9.4); Trivy via
+  `aquasec/trivy:0.75.0` with Docker volume `trivy-cache`. CI-like venv without the GNN stack:
+  `%TEMP%\civ`.
 - Git Bash: `docker exec` paths need `MSYS_NO_PATHCONV=1`, which breaks Windows paths for
   other tools (use `cygpath -w`). Working tree uses CRLF (`core.autocrlf=true`).
 - The laptop's Modern Standby suspends long runs (apparent hangs).
@@ -153,8 +166,7 @@ matters (files, numbers, running services) before relying on it.
 - Not production-ready: single-node Kafka (RF=1), no auth/TLS, local MLflow, no monitoring.
 
 ### Next
-- In progress: security scanning in CI (pip-audit, bandit, Trivy on the serving image).
-- Still planned: Evidently drift + retraining trigger, analyst dashboard (can read table
+- Planned: Evidently drift + retraining trigger, analyst dashboard (can read table
   `fraud_rings`), Kubernetes (Minikube).
 - Windows gotcha: venvs under the long scratchpad path break psycopg's DLL load ("filename or
   extension is too long"); use a short path such as %TEMP%\civ for throwaway venvs.

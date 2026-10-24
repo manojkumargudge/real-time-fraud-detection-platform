@@ -1,14 +1,20 @@
-FROM python:3.11.9-slim
+# Debian 12 (bookworm) slim. Security: a current base tag plus `apt-get upgrade` at build time
+# picks up Debian security fixes (Trivy on the old 3.11.9 base: 128 HIGH/CRITICAL OS findings).
+FROM python:3.11.16-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 
 # libgomp1: OpenMP runtime used by XGBoost.
-RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-serving.txt .
-RUN pip install -r requirements-serving.txt
+# The base image's setuptools / wheel have HIGH advisories (CVE-2024-6345, CVE-2025-47273,
+# CVE-2026-24049); they are build tools, upgraded to fixed releases.
+RUN pip install --upgrade "setuptools==84.0.0" "wheel==0.48.0" \
+    && pip install -r requirements-serving.txt
 
 COPY src/ src/
 RUN useradd --create-home --uid 10001 app

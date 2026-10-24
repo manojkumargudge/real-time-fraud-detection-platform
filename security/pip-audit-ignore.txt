@@ -1,0 +1,15 @@
+# Accepted pip-audit findings: ID | expires (YYYY-MM-DD) | reason
+# security/check_ignores.py turns these into --ignore-vuln flags and fails once an entry expires.
+# Reviewed 2026-10-23; re-review each entry before its expiry date.
+PYSEC-2026-1366 | 2027-01-31 | feast 0.47.0 (CVE-2025-11157): RCE in the Kubernetes materializer job; not used here (local/Redis only); 0.54 needs numpy 2 / newer pydantic
+PYSEC-2026-113  | 2027-01-31 | pyarrow 18.0.0 (CVE-2026-25087): use-after-free reading Arrow IPC *files*; only our own parquet is read; pinned by feast 0.47
+# torch 2.8.0 (requirements-gnn.txt, batch only, not in the serving image). 2.10 fails to load on
+# Windows after pandas (WinError 1114); none of these code paths is used and nothing is torch.load-ed.
+PYSEC-2025-206  | 2027-01-31 | torch 2.8.0 (CVE-2025-55554): integer overflow in nan_to_num; not used
+PYSEC-2025-204  | 2027-01-31 | torch 2.8.0 (CVE-2025-55552): rot90 + randn_like behaviour; not used
+PYSEC-2025-203  | 2027-01-31 | torch 2.8.0 (CVE-2025-55551): DoS in linalg.lu; not used
+PYSEC-2025-193  | 2027-01-31 | torch 2.8.0 (GHSA-vgrw-7cvw-pwgx): unpack_sequence memory corruption; not used
+PYSEC-2025-194  | 2027-01-31 | torch 2.8.0 (CVE-2025-3000): torch.jit.script memory corruption; not used
+PYSEC-2025-195  | 2027-01-31 | torch 2.8.0 (GHSA-qfhq-4f3w-5fph): lstm_cell memory corruption; not used
+PYSEC-2026-139  | 2027-01-31 | torch 2.8.0 (BIT-pytorch-2026-4538): pt2 loading deserialization; no model files are loaded
+PYSEC-2026-2286 | 2027-01-31 | torch 2.8.0 (CVE-2026-24747): weights_only unpickler; torch.load is never called

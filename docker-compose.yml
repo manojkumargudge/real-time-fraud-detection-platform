@@ -119,6 +119,10 @@ services:
   consumer:
     build: .
     command: ["python", "-m", "src.streaming.consumer"]
+    # One consumer per partition of `transactions` (3). Set here because `--scale` is not
+    # persisted: a plain `docker compose up` after the containers are removed starts 1 again.
+    deploy:
+      replicas: 3
     environment: *app-env
     volumes:
       - ./artifacts/baseline:/app/artifacts/baseline:ro
