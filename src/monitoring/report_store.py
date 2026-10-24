@@ -48,14 +48,29 @@ CREATE TABLE IF NOT EXISTS drift_reports (
     report_path               TEXT NOT NULL,
     config                    JSONB NOT NULL
 );
+-- Added 2026-10-24 (drift-rules). Rows written before have forced = false and NULL lists.
+ALTER TABLE drift_reports ADD COLUMN IF NOT EXISTS forced BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE drift_reports ADD COLUMN IF NOT EXISTS top_gain_features JSONB;
+ALTER TABLE drift_reports ADD COLUMN IF NOT EXISTS drifted_top_gain_features JSONB;
 """
 
-_JSON_COLUMNS = {"top_drifted_features", "trigger_reasons", "promotion", "windows", "config"}
+_JSON_COLUMNS = {
+    "top_drifted_features",
+    "trigger_reasons",
+    "promotion",
+    "windows",
+    "config",
+    "top_gain_features",
+    "drifted_top_gain_features",
+}
 
 
 @dataclass(frozen=True)
 class DriftReportRow:
     synthetic: bool
+    forced: bool
+    top_gain_features: list[str]
+    drifted_top_gain_features: list[str]
     synthetic_note: str | None
     now_dt: int
     label_cutoff_dt: int

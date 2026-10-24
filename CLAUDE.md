@@ -116,7 +116,11 @@ matters (files, numbers, running services) before relying on it.
   - now = max `transaction_dt` in scored_transactions; label cutoff = now - 30 days (inclusive).
   - Reference = last 30 days of the champion's training window. Its scores come from the
     champion recipe refit on earlier rows (out-of-sample).
-  - Fires on drifted-feature share > 0.5, OR PSI >= 0.2, OR delayed PR-AUC < champion - 0.05.
+  - Fires on drifted-feature share > 0.5, OR PSI >= 0.2, OR delayed PR-AUC < champion - 0.05,
+    OR any of the champion's top 5 features by gain drifts (added 2026-10-24 after runs 1-3;
+    the top 5 are read from the booster: card3, card6, R_emaildomain, addr2, ProductCD).
+  - `--force-retrain` runs retrain + promotion even if nothing fired (`forced = true`).
+  - The delayed-label window is the same in every run, by design: days 146-153.
   - When it fires: challenger trained on usable labels before the holdout (last 7 days before
     the cutoff), alias `challenger`. `champion` moves only if the paired day-block bootstrap CI
     lower bound (1,000 resamples, seed 42) is > 0.01. `production` is never moved.
@@ -131,9 +135,17 @@ matters (files, numbers, running services) before relying on it.
     - Run 3, synthetic TransactionAmt x2: share 0.393, PSI 0.0097.
     - Delayed PR-AUC 0.3238 in all runs (days 146-153, 617 frauds).
     - Retraining and promotion never ran on the real registry.
-  - Two stray runs `challenger-4750731` (synthetic test data, from a since-fixed bug where the
-    challenger was logged to the default tracking URI) are in the real mlflow.db: 16 runs. No
-    versions or aliases were changed. Not deleted (needs the user's approval).
+  - Second demo (ids 5-9, top-feature rule): every run fired.
+    - Run 1 fired on card3 (Wasserstein 0.1041); runs 2-4 fired on R_emaildomain. The synthetic
+      2x TransactionAmt shift is still not what fires (TransactionAmt is not a top-5 feature).
+    - Challenger vs champion on the holdout: 0.3290 vs 0.3238, CI [-0.0160, +0.0254], kept
+      champion.
+    - Registry: champion = 2, production = 2, challenger = 7 (v3-v7 are identical challengers).
+    - Row 8 = forced run stored before the `forced` fix; row 9 is the corrected one.
+  - Velocity features verified (naive recount and served scores match). The late-window drift
+    is a heavy tail of bursty uids.
+  - The two stray runs `challenger-4750731` were soft-deleted on 2026-10-24 (`delete_run`,
+    restorable).
 
 ### Demo stack (docker-compose.yml, project `fraud-platform`)
 - Services: kafka (localhost:9092), postgres (15432), redis (16379), api (18000), consumer
@@ -157,15 +169,15 @@ matters (files, numbers, running services) before relying on it.
 
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
-  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **458 passed** with the
-  GNN stack installed; **448 passed, 1 skipped** without it (2026-10-24, drift branch) (as in CI: `tests/test_graph.py`
+  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **466 passed** with the
+  GNN stack installed; **456 passed, 1 skipped** without it (2026-10-24, drift-rules) (as in CI: `tests/test_graph.py`
   skips when torch_geometric is missing; the ring tests need no torch).
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
   `TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 python -m pytest
-  tests/test_integration.py` -- 16 passed (2026-10-24, drift branch). Never point them at the demo stack.
+  tests/test_integration.py` -- 17 passed (2026-10-24, drift-rules). Never point them at the demo stack.
 - GNN: `python -m src.graph.train`, `python -m src.graph.stack --degree-limit 1000 --epochs 7`,
   `DATABASE_URL=... python -m src.graph.rings` (needs requirements-gnn.txt; 10-45 min on CPU).
 - Lint/types: `ruff check .`, `ruff format --check .`, `python -m mypy` (strict).
@@ -197,5 +209,7 @@ matters (files, numbers, running services) before relying on it.
 ### Next
 - Planned: analyst dashboard (can read tables `fraud_rings`, `drift_reports`), Kubernetes
   (Minikube; drift job as a CronJob), consumer commit-error fix.
+- Open decision: the top-feature rule fires on every window (noisy) and missed the
+  TransactionAmt shift. Keep it, raise its threshold or widen it (user's call).
 - Windows gotcha: venvs under the long scratchpad path break psycopg's DLL load ("filename or
   extension is too long"); use a short path such as %TEMP%\civ for throwaway venvs.

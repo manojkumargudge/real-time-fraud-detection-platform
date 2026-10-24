@@ -3,6 +3,7 @@
 Usage::
 
     python -m src.monitoring.run_drift [--window-start-day D --window-end-day D] [--no-retrain]
+        [--force-retrain]
         [--synthetic-amount-factor F] [--config configs/drift.toml]
 
 Needs ``DATABASE_URL`` (reads ``scored_transactions``, writes ``drift_reports``) and the
@@ -78,6 +79,7 @@ class JobInputs:
 class JobOptions:
     window: tuple[float, float] | None = None  # [start_day, end_day)
     retrain: bool = True
+    force_retrain: bool = False  # run retrain + promotion even if nothing fired (host only)
     synthetic_amount_factor: float | None = None
     reports_dir: Path = REPORTS_DIR
     mlflow_uri: str | None = None
@@ -87,6 +89,18 @@ class JobOptions:
 def champion_train_window(champion: ModelBundle) -> Window:
     split = champion.metadata["split"]
     return Window("champion_train", int(split["train_dt_min"]), int(split["train_end"]) - 1)
+
+
+def top_gain_features(champion: ModelBundle, n: int) -> list[str]:
+    """The champion booster's ``n`` features with the highest total XGBoost gain (read from the
+    model, ties broken by name)."""
+    gains = {
+        k: float(v)
+        for k, v in champion.booster.get_score(importance_type="gain").items()
+        if isinstance(v, int | float)
+    }
+    ranked = sorted(gains, key=lambda f: (-gains[f], f))
+    return ranked[:n]
 
 
 def reference_scores(
@@ -104,6 +118,8 @@ def reference_scores(
 
 def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> int:
     """Run all checks, retrain if triggered (and allowed), store the row; returns its id."""
+    if opts.force_retrain and not opts.retrain:
+        raise ValueError("--force-retrain needs retraining enabled (not with --no-retrain)")
     scored = inputs.scored
     if scored.empty:
         raise RuntimeError("scored_transactions is empty: nothing to monitor")
@@ -163,14 +179,20 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
         else None
     )
     champion_ap = float(champion.metadata["validation_metrics"]["average_precision"])
+    top_gain = top_gain_features(champion, cfg.feature_drift.top_gain_features)
+    drifted_names = {c.column for c in drift.columns if c.drifted}
+    drifted_top = [f for f in top_gain if f in drifted_names]
     checks = CheckResults(
         drifted_feature_share=drift.drifted_share,
         prediction_drift_detected=drift.prediction_drift_detected,
         prediction_drift_score=drift.prediction_score,
         delayed_pr_auc=delayed_ap,
         champion_valid_pr_auc=champion_ap,
+        top_gain_features=tuple(top_gain),
+        drifted_top_gain_features=tuple(drifted_top),
     )
     trigger = evaluate_trigger(checks, cfg)
+    forced = opts.force_retrain  # stored as given; trigger_reasons shows whether it also fired
 
     windows = {
         w.name: w.to_dict()
@@ -184,7 +206,7 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
 
     retrain_run_id = challenger_version = decision_text = None
     promotion: dict[str, Any] | None = None
-    if trigger.fired and opts.retrain:
+    if (trigger.fired or opts.force_retrain) and opts.retrain:
         from src.models.tracking import tracking_uri
         from src.monitoring.retrain import MlflowRegistry, retrain_and_compare
 
@@ -197,10 +219,15 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
             champion,
             cfg,
             registry,
-            tags={"trigger": "; ".join(trigger.reasons), "synthetic": str(synthetic).lower()},
+            tags={
+                "trigger": "; ".join(trigger.reasons) or "none (forced)",
+                "synthetic": str(synthetic).lower(),
+                "forced": str(forced).lower(),
+            },
         )
         retrain_run_id, challenger_version = result.run_id, result.challenger_version
-        decision_text = result.decision.reason
+        prefix = "forced retrain" + ("" if trigger.fired else " (no check fired)") + ": "
+        decision_text = (prefix if forced else "") + result.decision.reason
         promotion = result.summary()
     elif trigger.fired:
         decision_text = "not run: retraining disabled (--no-retrain; host-only step)"
@@ -217,6 +244,9 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
 
     row = DriftReportRow(
         synthetic=synthetic,
+        forced=forced,
+        top_gain_features=top_gain,
+        drifted_top_gain_features=drifted_top,
         synthetic_note=(
             f"TransactionAmt x{opts.synthetic_amount_factor} on a copy of the current window"
             if synthetic
@@ -322,6 +352,11 @@ def main(argv: list[str] | None = None) -> int:
         default=SERVED_BUNDLE,
         help="champion bundle for --no-retrain (with retraining, MLflow champion is used)",
     )
+    parser.add_argument(
+        "--force-retrain",
+        action="store_true",
+        help="run retraining + promotion even if no check fired (stored as forced=true)",
+    )
     parser.add_argument("--synthetic-amount-factor", type=float)
     parser.add_argument("--reports-dir", type=Path, default=REPORTS_DIR)
     args = parser.parse_args(argv)
@@ -329,6 +364,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if (args.window_start_day is None) != (args.window_end_day is None):
         parser.error("--window-start-day and --window-end-day go together")
+    if args.force_retrain and args.no_retrain:
+        parser.error("--force-retrain and --no-retrain are mutually exclusive")
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         parser.error("DATABASE_URL is not set")
@@ -342,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
     opts = JobOptions(
         window=window,
         retrain=retrain,
+        force_retrain=args.force_retrain,
         synthetic_amount_factor=args.synthetic_amount_factor,
         reports_dir=args.reports_dir,
         mlflow_uri=mlflow_uri,

@@ -45,6 +45,7 @@ class FeatureDriftConfig(_Strict):
     column_threshold: float = Probability
     share_threshold: float = Probability
     top_n: int = Field(ge=1)
+    top_gain_features: int = Field(ge=1)
 
 
 class PredictionDriftConfig(_Strict):

@@ -8,14 +8,14 @@ volumes; test-only credentials).
 Command (Git Bash, repo root):
   TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 .venv/Scripts/python.exe -m pytest tests/test_integration.py -p no:cacheprovider -rfEs
 
-Commit tested: drift branch (Evidently drift job), 2026-10-24 (IST)
+Commit tested: drift-rules branch (top-feature rule, --force-retrain), 2026-10-24 (IST)
 Python:        Python 3.11.9 (pytest 9.1.1, win32); evidently 0.7.23, mlflow 3.17.2
 
 Summary:
-  16 passed, 3 warnings in 310.45s (0:05:10)
-  New: test_drift_job_end_to_end_writes_drift_reports (scored rows in the test PostgreSQL,
-  throwaway MLflow registry, retraining enabled; checks the drift_reports row, the challenger
-  alias, production unchanged, and that the repo's mlflow.db is untouched).
+  17 passed, 3 warnings in 398.70s (0:06:38)
+  The drift end-to-end test runs twice: "fired" (a check fires) and "forced" (nothing can fire,
+  --force-retrain); both check forced, the top-5 list, the challenger alias, production unchanged
+  and the repo's mlflow.db untouched.
 
 Failed: none. Skipped: none (includes the Feast-on-Redis replay test).
 
@@ -23,4 +23,4 @@ Demo stack (docker-compose.yml) before -> after the run: scored_transactions 100
 Redis keys 53261 -> 53261, topics and consumer groups unchanged.
 Test stack after the run: no test topics left behind.
 
-Previous runs: 15 passed on main 2fe7b70 (2026-10-24); 15 passed on 304ae06 with mlflow 3.16.1 (2026-10-24); 15 passed on d375de9 (2026-10-23); 15 passed on 9994458 against the demo stack (before the separate test stack existed).
+Previous runs: 16 passed on main bd282be (2026-10-24); 15 passed on main 2fe7b70 (2026-10-24); 15 passed on 304ae06 with mlflow 3.16.1 (2026-10-24); 15 passed on d375de9 (2026-10-23); 15 passed on 9994458 against the demo stack (before the separate test stack existed).

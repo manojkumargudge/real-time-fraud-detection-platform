@@ -519,7 +519,9 @@ def test_feast_redis_replay_matches_the_store_path(bundle_dir: Path, tmp_path: P
 
 
 @needs_db
+@pytest.mark.parametrize("mode", ["fired", "forced"])
 def test_drift_job_end_to_end_writes_drift_reports(
+    mode: str,
     synthetic_frame: pd.DataFrame,
     pg_store: PostgresStore,
     pg_dsn: str,
@@ -539,7 +541,7 @@ def test_drift_job_end_to_end_writes_drift_reports(
     from src.models.train import fit_baseline, save_bundle
     from src.monitoring import run_drift as job
     from tests.test_models import FAST
-    from tests.test_monitoring import small_cfg
+    from tests.test_monitoring import quiet_cfg, small_cfg
     from tests.test_tracking import _repo_state
 
     before = _repo_state()  # the repo's own mlflow.db / mlruns must stay untouched
@@ -572,23 +574,45 @@ def test_drift_job_end_to_end_writes_drift_reports(
 
     from src.monitoring.report_store import load_scored
 
-    cfg = small_cfg(feature_drift={"share_threshold": 0.01})  # low on purpose: must fire
+    # "fired": a share threshold low on purpose; "forced": nothing can fire, --force-retrain
+    # runs the retrain path anyway.
+    fired_cfg = small_cfg(feature_drift={"share_threshold": 0.01})
+    cfg = fired_cfg if mode == "fired" else quiet_cfg()
     report_id = job.run_job(
         job.JobInputs(raw=synthetic_frame, scored=load_scored(pg_dsn), champion=champion),
         cfg,
-        job.JobOptions(reports_dir=tmp_path / "reports", mlflow_uri=uri, champion_source=source),
+        job.JobOptions(
+            reports_dir=tmp_path / "reports",
+            mlflow_uri=uri,
+            champion_source=source,
+            force_retrain=mode == "forced",
+        ),
         pg_dsn,
     )
 
     with psycopg.connect(pg_dsn) as conn:
         row = conn.execute(
             "SELECT triggered, retrain_run_id, challenger_version, promotion, windows, "
-            "report_path, synthetic, current_rows FROM drift_reports WHERE id = %s",
+            "report_path, synthetic, current_rows, forced, top_gain_features "
+            "FROM drift_reports WHERE id = %s",
             (report_id,),
         ).fetchone()
     assert row is not None
-    triggered, run_id, version, promotion, windows, report_path, synthetic, current_rows = row
-    assert triggered and run_id and version == "2" and not synthetic and current_rows > 0
+    (
+        triggered,
+        run_id,
+        version,
+        promotion,
+        windows,
+        report_path,
+        synthetic,
+        current_rows,
+        forced,
+        top_gain,
+    ) = row
+    assert triggered == (mode == "fired") and forced == (mode == "forced")
+    assert run_id and version == "2" and not synthetic and current_rows > 0
+    assert len(top_gain) == 5
     assert {"challenger_pr_auc", "champion_pr_auc", "ci95_low", "ci95_high"} <= set(promotion)
     assert promotion["bootstrap"]["resamples"] > 0
     assert windows["holdout"]["end_dt"] == windows["label_cutoff"]["dt"]

@@ -481,3 +481,142 @@ def test_config_section_copies_are_independent() -> None:
     data = copy.deepcopy(config_dict())
     data["labels"]["delay_days"] = 5
     assert parse_config(data).labels.delay_days == 5 and CFG.labels.delay_days == 30
+
+
+# --- top-gain feature rule (added after runs 1-3) -------------------------------------------
+
+
+class TestTopGainRule:
+    def test_drifted_top_feature_alone_fires(self) -> None:
+        top = ("TransactionAmt", "card1", "addr1", "uid_prior_txn_count", "card6")
+        decision = evaluate_trigger(
+            checks(top_gain_features=top, drifted_top_gain_features=("TransactionAmt",)), CFG
+        )
+        assert decision.fired and len(decision.reasons) == 1
+        assert decision.reasons[0].startswith("top-feature drift: TransactionAmt")
+
+    def test_no_drifted_top_feature_does_not_fire(self) -> None:
+        top = ("TransactionAmt", "card1", "addr1", "uid_prior_txn_count", "card6")
+        assert not evaluate_trigger(checks(top_gain_features=top), CFG).fired
+
+    def test_top_features_are_read_from_the_champion_booster(self, bundle_dir: Path) -> None:
+        champion = ModelBundle.load(bundle_dir)
+        raw_gains = champion.booster.get_score(importance_type="gain")
+        gains = {f: v for f, v in raw_gains.items() if isinstance(v, float)}
+        top = job.top_gain_features(champion, 5)
+        assert len(top) == 5 and set(top) <= set(champion.feature_columns)
+        values = [gains[f] for f in top]
+        assert values == sorted(values, reverse=True)
+        assert all(v <= values[-1] for f, v in gains.items() if f not in top)
+
+    def test_row_stores_top_features_and_the_drifted_ones(
+        self, scenario: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        row = run_captured(
+            scenario, small_cfg(), tmp_path, monkeypatch, synthetic_amount_factor=3.0
+        )
+        assert row.top_gain_features == job.top_gain_features(scenario["champion"], 5)
+        assert set(row.drifted_top_gain_features) <= set(row.top_gain_features)
+        flagged = {f["feature"] for f in row.top_drifted_features}
+        for f in row.drifted_top_gain_features:
+            assert f in flagged or len(flagged) == CFG.feature_drift.top_n
+        if row.drifted_top_gain_features:
+            assert row.triggered and any(r.startswith("top-feature") for r in row.trigger_reasons)
+
+
+# --- --force-retrain ------------------------------------------------------------------------
+
+
+def quiet_cfg() -> DriftConfig:
+    """Thresholds no check can reach, so nothing fires on its own."""
+    return small_cfg(
+        feature_drift={"column_threshold": 0.99, "share_threshold": 0.99},
+        prediction_drift={"threshold": 1e9},
+        performance={"max_drop": 0.99},
+    )
+
+
+def test_force_retrain_runs_the_retrain_path_and_marks_the_row(
+    scenario: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.monitoring.retrain as retrain_mod
+    from src.monitoring.retrain import RetrainResult
+
+    calls: list[dict[str, str]] = []
+
+    def fake_retrain(labelled: pd.DataFrame, windows: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs["tags"])
+        decision = decide_promotion(
+            challenger_pr_auc=0.2, champion_pr_auc=0.3, bootstrap=boot(-0.2, -0.1, 0.0), margin=0.01
+        )
+        aliases: dict[str, str | None] = {
+            "champion_before": "1",
+            "champion_after": "1",
+            "production": "1",
+        }
+        return RetrainResult("run-x", "2", decision, aliases, 10, 2, boot(-0.2, -0.1, 0.0))
+
+    monkeypatch.setattr(retrain_mod, "retrain_and_compare", fake_retrain)
+    monkeypatch.setattr(retrain_mod, "MlflowRegistry", lambda uri: None)
+    row = run_captured(
+        scenario,
+        quiet_cfg(),
+        tmp_path,
+        monkeypatch,
+        retrain=True,
+        force_retrain=True,
+        mlflow_uri="unused",
+    )
+    assert not row.triggered and row.forced
+    assert calls and calls[0]["forced"] == "true"
+    assert row.retrain_run_id == "run-x" and row.challenger_version == "2"
+    assert row.promotion_decision
+    assert row.promotion_decision.startswith("forced retrain (no check fired):")
+    assert row.promotion and row.promotion["aliases"]["production"] == "1"
+
+
+def test_forced_is_stored_even_when_a_check_also_fired(
+    scenario: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.monitoring.retrain as retrain_mod
+    from src.monitoring.retrain import RetrainResult
+
+    def fake_retrain(*args: Any, **kwargs: Any) -> Any:
+        decision = decide_promotion(
+            challenger_pr_auc=0.2, champion_pr_auc=0.3, bootstrap=boot(-0.2, -0.1, 0.0), margin=0.01
+        )
+        aliases: dict[str, str | None] = {"champion_before": "1", "champion_after": "1"}
+        return RetrainResult("run-y", "3", decision, aliases, 10, 2, boot(-0.2, -0.1, 0.0))
+
+    monkeypatch.setattr(retrain_mod, "retrain_and_compare", fake_retrain)
+    monkeypatch.setattr(retrain_mod, "MlflowRegistry", lambda uri: None)
+    cfg = small_cfg(feature_drift={"share_threshold": 0.01})  # fires on its own
+    row = run_captured(
+        scenario, cfg, tmp_path, monkeypatch, retrain=True, force_retrain=True, mlflow_uri="unused"
+    )
+    assert row.triggered and row.forced
+    assert row.promotion_decision and row.promotion_decision.startswith("forced retrain: ")
+
+
+def test_without_force_a_quiet_run_does_not_retrain(
+    scenario: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.monitoring.retrain as retrain_mod
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("retrain must not run")
+
+    monkeypatch.setattr(retrain_mod, "retrain_and_compare", boom)
+    row = run_captured(scenario, quiet_cfg(), tmp_path, monkeypatch, retrain=True)
+    assert not row.triggered and not row.forced and row.retrain_run_id is None
+
+
+def test_force_retrain_with_no_retrain_is_rejected(
+    scenario: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(ValueError, match="force-retrain"):
+        run_captured(
+            scenario, quiet_cfg(), tmp_path, monkeypatch, retrain=False, force_retrain=True
+        )
+    with pytest.raises(SystemExit):
+        job.main(["--force-retrain", "--no-retrain"])
