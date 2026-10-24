@@ -252,6 +252,30 @@ the comparison would then be in-sample.
 stored with `forced = true`, and the promotion rule and the `production` guard are unchanged.
 It cannot be combined with `--no-retrain`.
 
+**Challenger reuse.** Step 1 is skipped when the current `challenger` was trained on exactly the
+planned training rows. The check compares the run's tags `train_end_dt` and
+`train_data_sha256` (SHA-256 of the sorted TransactionIDs and labels, the window bounds, the
+seed and the imbalance method) with the planned data. The job then logs `reused challenger vN`
+and runs the same bootstrap comparison with that model, so repeated runs on the same labels
+stop adding identical registry versions. Challengers registered before this guard (v7) have
+no such tags, so the next real run trains one more time.
+
+**Design trade-off**
+
+- **The trigger is cheap and sensitive by design.** A false alarm costs one retrain (about
+  73 s on this laptop), and a reused challenger costs nothing.
+- **Production is protected by the bootstrap promotion gate, not by the trigger.** `champion`
+  moves only if the 95% CI lower bound of the PR-AUC gain is above the margin, and
+  `production` is never moved by the job.
+- **Real-data result:** challenger +0.0053 PR-AUC, 95% CI [-0.0160, +0.0254], so the champion
+  was kept.
+- **Known limits:**
+  - The share rule (more than half of 28 features) missed a 2x TransactionAmt shift.
+  - The top-5-by-gain rule fires on borderline drift (card3 at 0.1041 vs the 0.1 threshold)
+    and also misses that shift, because TransactionAmt is not in the top 5 by gain.
+  - **Next step (not built):** rank features by their drift impact on the score instead of by
+    gain.
+
 **Storage.** Each run writes one row to PostgreSQL table `drift_reports`. The row holds:
 
 - the windows, now and the label cutoff;

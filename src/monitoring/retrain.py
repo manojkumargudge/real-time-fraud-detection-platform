@@ -1,6 +1,8 @@
 """Retraining and champion/challenger promotion (host only; needs mlflow and the local registry).
 
-1. Train a challenger with the champion's recipe on every usable label before the holdout.
+1. Train a challenger with the champion's recipe on every usable label before the holdout,
+   unless the current ``challenger`` was trained on exactly the same rows (same window, labels,
+   seed and imbalance method: ``training_fingerprint``); then it is reused, not retrained.
 2. Log it to MLflow and register it with alias ``challenger``.
 3. Score champion and challenger on the same holdout, paired bootstrap of the PR-AUC difference.
 4. Move ``champion`` only if the 95% CI lower bound is above the margin. ``production`` is never
@@ -12,6 +14,7 @@ Why host only: the registry is a local SQLite file whose artifact locations are 
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import tempfile
 from dataclasses import dataclass
@@ -21,7 +24,7 @@ from typing import Any, Protocol
 import numpy as np
 import pandas as pd
 
-from src.data.load import LABEL
+from src.data.load import KEY, LABEL
 from src.features.entity import SECONDS_PER_DAY
 from src.features.history import TIME
 from src.models.compare import ComparisonConfig
@@ -38,6 +41,9 @@ CHAMPION = "champion"
 CHALLENGER = "challenger"
 PRODUCTION = "production"
 PROTECTED_ALIASES = frozenset({PRODUCTION})
+# Tags on every challenger run; the reuse guard compares them with the planned training rows.
+TRAIN_END_TAG = "train_end_dt"
+TRAIN_FINGERPRINT_TAG = "train_data_sha256"
 
 
 class ProtectedAliasError(RuntimeError):
@@ -69,6 +75,18 @@ class MlflowRegistry:
             return str(self.client.get_model_version_by_alias(self.name, alias).version)
         except MlflowException:
             return None
+
+    def alias_run_tags(self, alias: str) -> tuple[str, str, dict[str, str]] | None:
+        """``(version, run_id, run tags)`` of the aliased version, or None if there is none."""
+        from mlflow.exceptions import MlflowException
+
+        try:
+            mv = self.client.get_model_version_by_alias(self.name, alias)
+        except MlflowException:
+            return None
+        if not mv.run_id:
+            return None
+        return str(mv.version), str(mv.run_id), dict(self.client.get_run(mv.run_id).data.tags)
 
     def set_alias(self, alias: str, version: str) -> None:
         if alias in PROTECTED_ALIASES:
@@ -121,6 +139,32 @@ def bootstrap_delta(
     )
 
 
+def training_fingerprint(
+    train: pd.DataFrame, window_start: int, window_end: int, cfg: DriftConfig
+) -> str:
+    """Identity of a challenger's training data: sorted TransactionIDs with their labels, the
+    window bounds, seed and imbalance method. Equal fingerprints -> the fit would be the same."""
+    rows = train[[KEY, LABEL]].sort_values(KEY)
+    h = hashlib.sha256()
+    h.update(f"{window_start}|{window_end}|{cfg.retrain.seed}|{cfg.retrain.imbalance}|".encode())
+    h.update(rows[KEY].to_numpy(dtype=np.int64).tobytes())
+    h.update(rows[LABEL].to_numpy(dtype=np.int8).tobytes())
+    return h.hexdigest()
+
+
+def reusable_challenger(
+    registry: MlflowRegistry, train_end: int, fingerprint: str
+) -> tuple[str, str] | None:
+    """``(version, run_id)`` of the current challenger if it was trained on the same rows."""
+    current = registry.alias_run_tags(CHALLENGER)
+    if current is None:
+        return None
+    version, run_id, tags = current
+    if tags.get(TRAIN_END_TAG) == str(train_end) and tags.get(TRAIN_FINGERPRINT_TAG) == fingerprint:
+        return version, run_id
+    return None
+
+
 @dataclass(frozen=True)
 class RetrainResult:
     run_id: str
@@ -130,10 +174,12 @@ class RetrainResult:
     holdout_rows: int
     holdout_positives: int
     bootstrap: dict[str, float | int]
+    reused: bool = False
 
     def summary(self) -> dict[str, Any]:
         return {
             **self.decision.to_dict(),
+            "reused_challenger": self.reused,
             "holdout_rows": self.holdout_rows,
             "holdout_positives": self.holdout_positives,
             "bootstrap": self.bootstrap,
@@ -161,21 +207,35 @@ def retrain_and_compare(
     for w in windows.all():
         logger.info("window %s", w.describe())
 
-    comparison = ComparisonConfig(seed=cfg.retrain.seed, imbalance=cfg.retrain.imbalance)
-    split = {"train_end": windows.holdout.start, "valid_start": windows.holdout.start}
-    run = fit_on_split(train, holdout, comparison, split)
-    with tempfile.TemporaryDirectory() as tmp:
-        bundle_dir = save_bundle(run.trained, run.metadata, Path(tmp) / "challenger")
-        run_id = log_training_run(
-            run,
-            bundle_dir,
-            imbalance_method=cfg.retrain.imbalance,
-            uri=registry.uri,  # the same backend as the registry, never the global default
-            extra_tags={**tags, "role": CHALLENGER},
-            run_name=f"challenger-{windows.holdout.start}",
-        )
-        challenger = ModelBundle.load(bundle_dir)
-    version = register_version(registry.client, run_id, CHALLENGER)
+    train_end = windows.challenger_train.end
+    fingerprint = training_fingerprint(train, windows.challenger_train.start, train_end, cfg)
+    reuse = reusable_challenger(registry, train_end, fingerprint)
+    if reuse is not None:
+        version, run_id = reuse
+        with tempfile.TemporaryDirectory() as tmp:
+            challenger = ModelBundle.load(registry.download(CHALLENGER, Path(tmp)))
+        logger.info("reused challenger v%s (run %s): same training rows", version, run_id)
+    else:
+        comparison = ComparisonConfig(seed=cfg.retrain.seed, imbalance=cfg.retrain.imbalance)
+        split = {"train_end": windows.holdout.start, "valid_start": windows.holdout.start}
+        run = fit_on_split(train, holdout, comparison, split)
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle_dir = save_bundle(run.trained, run.metadata, Path(tmp) / "challenger")
+            run_id = log_training_run(
+                run,
+                bundle_dir,
+                imbalance_method=cfg.retrain.imbalance,
+                uri=registry.uri,  # the same backend as the registry, never the global default
+                extra_tags={
+                    **tags,
+                    "role": CHALLENGER,
+                    TRAIN_END_TAG: str(train_end),
+                    TRAIN_FINGERPRINT_TAG: fingerprint,
+                },
+                run_name=f"challenger-{windows.holdout.start}",
+            )
+            challenger = ModelBundle.load(bundle_dir)
+        version = register_version(registry.client, run_id, CHALLENGER)
 
     y = holdout[LABEL].to_numpy(dtype=np.int64)
     champ_scores = champion.predict(holdout)
@@ -206,4 +266,5 @@ def retrain_and_compare(
         holdout_rows=len(holdout),
         holdout_positives=int(y.sum()),
         bootstrap=boot,
+        reused=reuse is not None,
     )
