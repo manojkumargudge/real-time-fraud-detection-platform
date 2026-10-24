@@ -1,0 +1,63 @@
+# Drift monitoring and retraining trigger (python -m src.monitoring.run_drift).
+# Every value is required: src/monitoring/config.py has no defaults and rejects unknown keys.
+# Thresholds were set on 2026-10-24 before the first real run (Evidently defaults where one
+# exists) and must not be tuned to make a run fire.
+# All times are in transaction time (TransactionDT seconds), never wall-clock time.
+
+[labels]
+# Chargeback delay: a label is usable only if its transaction is at least this old, measured
+# from "now" = the latest transaction_dt in scored_transactions. A label exactly at the cutoff
+# (now - delay) is usable; anything newer is never read.
+delay_days = 30
+
+[reference]
+# Reference = the last N days of the champion's training window (point-in-time features from
+# the same code as serving). Not the whole window: history features depend on how much earlier
+# history exists, so the cold-start early weeks would look like drift against any later window.
+days = 30
+
+[current]
+# Window used when the CLI gets no --window-start-day / --window-end-day: the last N days
+# before now.
+default_days = 7
+
+[feature_drift]
+# Per-feature test on the model's input features (Evidently DataDriftPreset). Both methods are
+# distances; a feature drifts when score >= threshold (Evidently's default threshold, 0.1).
+num_method = "wasserstein"
+cat_method = "jensenshannon"
+column_threshold = 0.1
+# Fires when the share of drifted features is greater than this (Evidently's default 0.5).
+share_threshold = 0.5
+top_n = 5
+
+[prediction_drift]
+# Score distribution of the current window vs out-of-sample scores of the champion's recipe on
+# the reference window. PSI >= 0.2 is a common "act on it" level.
+method = "psi"
+threshold = 0.2
+
+[performance]
+# Delayed-label PR-AUC on scored transactions in (cutoff - window_days, cutoff].
+window_days = 7
+# Fires when delayed PR-AUC < champion validation PR-AUC - max_drop.
+max_drop = 0.05
+# Fewer labelled frauds than this -> the check is reported as not available (does not fire).
+min_positives = 30
+
+[retrain]
+# Holdout = the last N days of usable labels: (cutoff - N days, cutoff]. The challenger trains on
+# everything labelled before it. The job fails if any training window overlaps the holdout.
+holdout_days = 7
+seed = 42
+imbalance = "none"
+
+[promotion]
+# Paired bootstrap of PR-AUC(challenger) - PR-AUC(champion) on the holdout. `champion` moves
+# only if the lower bound of the 95% CI is above margin. `production` is never moved.
+margin = 0.01
+resamples = 1000
+seed = 42
+# "day" resamples whole transaction days (time-correlated rows stay together), the project's
+# usual bootstrap (src/models/metrics.py); "transaction" resamples rows.
+unit = "day"

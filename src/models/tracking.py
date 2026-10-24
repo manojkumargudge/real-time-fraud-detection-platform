@@ -164,6 +164,12 @@ def log_training_run(
 def register_champion(client: MlflowClient, run_id: str) -> str:
     """Register the run's model directory as a new ``fraud-xgboost`` version and point the
     ``champion`` alias at it; returns the version number."""
+    return register_version(client, run_id, CHAMPION_ALIAS)
+
+
+def register_version(client: MlflowClient, run_id: str, alias: str) -> str:
+    """Register the run's model directory as a new ``fraud-xgboost`` version and point
+    ``alias`` at it; returns the version number."""
     try:
         client.create_registered_model(MODEL_NAME)
     except MlflowException as exc:
@@ -173,6 +179,6 @@ def register_champion(client: MlflowClient, run_id: str) -> str:
     version = client.create_model_version(
         MODEL_NAME, source=f"{artifact_uri}/{ARTIFACT_PATH}", run_id=run_id
     )
-    client.set_registered_model_alias(MODEL_NAME, CHAMPION_ALIAS, str(version.version))
-    logger.info("registered %s version=%s alias=%s", MODEL_NAME, version.version, CHAMPION_ALIAS)
+    client.set_registered_model_alias(MODEL_NAME, alias, str(version.version))
+    logger.info("registered %s version=%s alias=%s", MODEL_NAME, version.version, alias)
     return str(version.version)

@@ -516,3 +516,89 @@ def test_feast_redis_replay_matches_the_store_path(bundle_dir: Path, tmp_path: P
             assert b.score == pytest.approx(a.score, abs=1e-6)
     finally:
         store.teardown()  # deletes this project's keys from Redis
+
+
+@needs_db
+def test_drift_job_end_to_end_writes_drift_reports(
+    synthetic_frame: pd.DataFrame,
+    pg_store: PostgresStore,
+    pg_dsn: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drift job on the test stack: scored rows in Postgres, a throwaway MLflow registry with
+    champion = production = v1, retraining enabled. Checks the drift_reports row and that
+    production never moves."""
+    pytest.importorskip("mlflow")
+    from mlflow.tracking import MlflowClient
+
+    from src.data.load import KEY
+    from src.features.history import TIME, HistoryConfig
+    from src.models.compare import build_model_frame
+    from src.models.tracking import log_training_run
+    from src.models.train import fit_baseline, save_bundle
+    from src.monitoring import run_drift as job
+    from tests.test_models import FAST
+    from tests.test_monitoring import small_cfg
+    from tests.test_tracking import _repo_state
+
+    before = _repo_state()  # the repo's own mlflow.db / mlruns must stay untouched
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "sqlite:///unused-default-must-not-be-hit.db")
+    run = fit_baseline(synthetic_frame, FAST)
+    bundle_dir = save_bundle(run.trained, run.metadata, tmp_path / "champion")
+    log_training_run(run, bundle_dir, imbalance_method="none", register=True, uri=uri)
+    client = MlflowClient(tracking_uri=uri, registry_uri=uri)
+    client.set_registered_model_alias("fraud-xgboost", "production", "1")
+
+    champion, source = job._load_champion(True, bundle_dir, uri)
+    frame = build_model_frame(synthetic_frame, "baseline", HistoryConfig())
+    after = frame.loc[frame[TIME] >= int(champion.metadata["split"]["train_end"])]
+    scores = champion.predict(after)
+    for tid, dt, s in zip(after[KEY], after[TIME], scores, strict=True):
+        pg_store.save(
+            ScoredRecord(
+                transaction_id=int(tid),
+                transaction_dt=int(dt),
+                card_id="c",
+                uid="u",
+                event={"TransactionID": int(tid)},
+                score=float(s),
+                threshold=champion.threshold,
+                is_alert=bool(s >= champion.threshold),
+                model_version=champion.model_version,
+            )
+        )
+
+    from src.monitoring.report_store import load_scored
+
+    cfg = small_cfg(feature_drift={"share_threshold": 0.01})  # low on purpose: must fire
+    report_id = job.run_job(
+        job.JobInputs(raw=synthetic_frame, scored=load_scored(pg_dsn), champion=champion),
+        cfg,
+        job.JobOptions(reports_dir=tmp_path / "reports", mlflow_uri=uri, champion_source=source),
+        pg_dsn,
+    )
+
+    with psycopg.connect(pg_dsn) as conn:
+        row = conn.execute(
+            "SELECT triggered, retrain_run_id, challenger_version, promotion, windows, "
+            "report_path, synthetic, current_rows FROM drift_reports WHERE id = %s",
+            (report_id,),
+        ).fetchone()
+    assert row is not None
+    triggered, run_id, version, promotion, windows, report_path, synthetic, current_rows = row
+    assert triggered and run_id and version == "2" and not synthetic and current_rows > 0
+    assert {"challenger_pr_auc", "champion_pr_auc", "ci95_low", "ci95_high"} <= set(promotion)
+    assert promotion["bootstrap"]["resamples"] > 0
+    assert windows["holdout"]["end_dt"] == windows["label_cutoff"]["dt"]
+    assert windows["challenger_train"]["end_dt"] < windows["holdout"]["start_dt"]
+    assert Path(report_path).is_file()
+    assert str(client.get_model_version_by_alias("fraud-xgboost", "challenger").version) == "2"
+    assert str(client.get_model_version_by_alias("fraud-xgboost", "production").version) == "1"
+    expected_champion = "2" if promotion["promote"] else "1"
+    assert str(client.get_model_version_by_alias("fraud-xgboost", "champion").version) == (
+        expected_champion
+    )
+    assert _repo_state() == before
+    assert not Path("unused-default-must-not-be-hit.db").exists()

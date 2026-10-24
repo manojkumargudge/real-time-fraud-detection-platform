@@ -139,6 +139,32 @@ services:
     # after a Docker restart while Kafka, PostgreSQL and the API come back.
     restart: unless-stopped
 
+  # Drift job (src/monitoring): drift checks only, never retraining. Retraining needs the MLflow
+  # registry, a local SQLite file whose artifact paths are Windows file:///C:/... paths that this
+  # Linux container cannot open; it runs on the host (README "Monitoring"). One-shot, like a
+  # future Kubernetes CronJob:
+  #   docker compose --profile monitoring run --rm drift [--window-start-day D --window-end-day D]
+  drift:
+    profiles: ["monitoring"]
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements-monitoring.txt
+    entrypoint: ["python", "-m", "src.monitoring.run_drift", "--no-retrain"]
+    command: []
+    environment:
+      DATABASE_URL: postgresql://fraud:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/fraud
+      EVIDENTLY_DISABLE_TELEMETRY: "1"
+      DO_NOT_TRACK: "1"
+    volumes:
+      - ./artifacts/baseline:/app/artifacts/baseline:ro
+      - ./data/raw:/app/data/raw:ro
+      - ./reports/drift:/app/reports/drift
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   pgdata:
   kafkadata:

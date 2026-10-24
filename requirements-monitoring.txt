@@ -1,0 +1,5 @@
+# Drift job image (docker compose --profile monitoring): the serving runtime plus Evidently.
+# Drift checks only; retraining (mlflow) runs on the host. Keep evidently in step with
+# requirements.txt.
+-r requirements-serving.txt
+evidently==0.7.23
