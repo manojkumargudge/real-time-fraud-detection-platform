@@ -620,3 +620,82 @@ def test_force_retrain_with_no_retrain_is_rejected(
         )
     with pytest.raises(SystemExit):
         job.main(["--force-retrain", "--no-retrain"])
+
+
+# --- challenger reuse guard -----------------------------------------------------------------
+
+
+def test_same_training_rows_reuse_the_challenger(
+    synthetic_frame: pd.DataFrame, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    pytest.importorskip("mlflow")
+    import logging
+
+    from mlflow.tracking import MlflowClient
+
+    from src.models.tracking import log_training_run
+    from src.models.train import fit_baseline, save_bundle
+    from src.monitoring.retrain import (
+        TRAIN_FINGERPRINT_TAG,
+        MlflowRegistry,
+        retrain_and_compare,
+    )
+    from tests.test_models import FAST
+
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    run = fit_baseline(synthetic_frame, FAST)
+    bundle = save_bundle(run.trained, run.metadata, tmp_path / "champion")
+    log_training_run(run, bundle, imbalance_method="none", register=True, uri=uri)
+    client = MlflowClient(tracking_uri=uri, registry_uri=uri)
+    client.set_registered_model_alias("fraud-xgboost", "production", "1")
+    registry = MlflowRegistry(uri)
+    champion = ModelBundle.load(bundle)
+
+    frame = build_model_frame(synthetic_frame, "baseline", HistoryConfig())
+    now = int(frame[TIME].max())
+    cfg = small_cfg()
+    cutoff = label_cutoff(now, cfg.labels.delay_days)
+    labelled = usable_labels(frame, cutoff)
+    train_window = job.champion_train_window(champion)
+
+    def compare(holdout_days: int) -> Any:
+        windows = plan_retrain(
+            champion_train=train_window,
+            train_dt_min=train_window.start,
+            cutoff=cutoff,
+            holdout_days=holdout_days,
+        )
+        return retrain_and_compare(labelled, windows, champion, cfg, registry, tags={})
+
+    def versions() -> list[str]:
+        return sorted(str(m.version) for m in client.search_model_versions("name='fraud-xgboost'"))
+
+    first = compare(2)
+    assert not first.reused and first.challenger_version == "2"
+    assert client.get_run(first.run_id).data.tags[TRAIN_FINGERPRINT_TAG]
+
+    with caplog.at_level(logging.INFO, logger="src.monitoring.retrain"):
+        second = compare(2)  # same window, same rows -> no new fit, no new version
+    assert second.reused and second.challenger_version == "2" and second.run_id == first.run_id
+    assert "reused challenger v2" in caplog.text
+    assert versions() == ["1", "2"]
+    assert second.decision.challenger_pr_auc == first.decision.challenger_pr_auc
+
+    third = compare(3)  # different training window -> retrained
+    assert not third.reused and third.challenger_version == "3"
+    assert versions() == ["1", "2", "3"]
+    assert str(client.get_model_version_by_alias("fraud-xgboost", "production").version) == "1"
+
+
+def test_fingerprint_changes_with_rows_labels_and_window() -> None:
+    from src.monitoring.retrain import training_fingerprint
+
+    train = pd.DataFrame({KEY: [3, 1, 2], LABEL: [0, 1, 0]})
+    base = training_fingerprint(train, 0, 100, CFG)
+    assert training_fingerprint(train.sample(frac=1, random_state=1), 0, 100, CFG) == base
+    flipped = train.assign(**{LABEL: [1, 1, 0]})
+    assert training_fingerprint(flipped, 0, 100, CFG) != base
+    assert training_fingerprint(train.iloc[:2], 0, 100, CFG) != base
+    assert training_fingerprint(train, 0, 101, CFG) != base
+    other_seed = config_with(retrain={"seed": 7})
+    assert training_fingerprint(train, 0, 100, other_seed) != base

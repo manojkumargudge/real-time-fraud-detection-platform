@@ -38,10 +38,25 @@ Aim for production-style engineering, but document operational, security,
 scalability, and compliance limitations honestly. Do not claim financial-sector
 production readiness without appropriate evidence.
 
-## Current project state (2026-10-23, after the GNN merge)
+## Current project state (end of 2026-10-24: security, drift, drift-rules, drift-reuse merged)
 
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
+
+### Where things stand (end of 2026-10-24)
+- `main` holds four merged branches from 2026-10-24: `security`, `drift`, `drift-rules`, and
+  `drift-reuse` (the challenger-reuse guard). CI is green through run #8 (drift-rules). The
+  drift-reuse run is reported in the session summary; check it again with the public API.
+- **Trigger rules and thresholds are final** (user decision 2026-10-24). Do not change them
+  without being asked.
+- MLflow registry `fraud-xgboost`: champion = v2, production = v2, challenger = v7.
+  - v1 and v2 are the trained baselines; v7 is the real-data challenger (not promoted).
+  - v3-v6 were identical challengers. They were deleted with `delete_model_version`; their
+    runs are kept, and the SQL store keeps tombstone rows (`Deleted_Internal`), so version
+    numbers are not reused.
+  - v7 has no reuse tags, so the next real retrain trains once more and registers v8.
+- Demo stack: the whole validation window is streamed (118,108 events). `drift_reports` holds
+  ids 1-9. Both Compose stacks were left running, with all volumes kept.
 
 ### Done (on `main`)
 - Data: IEEE-CIS loader + EDA + data-quality report (`src/data/`, reports/). Fraud rate 3.499%.
@@ -140,12 +155,18 @@ matters (files, numbers, running services) before relying on it.
       2x TransactionAmt shift is still not what fires (TransactionAmt is not a top-5 feature).
     - Challenger vs champion on the holdout: 0.3290 vs 0.3238, CI [-0.0160, +0.0254], kept
       champion.
-    - Registry: champion = 2, production = 2, challenger = 7 (v3-v7 are identical challengers).
+    - Registry then: challenger v3-v7, all identical. v3-v6 have since been deleted (see
+      "Where things stand").
     - Row 8 = forced run stored before the `forced` fix; row 9 is the corrected one.
   - Velocity features verified (naive recount and served scores match). The late-window drift
     is a heavy tail of bursty uids.
   - The two stray runs `challenger-4750731` were soft-deleted on 2026-10-24 (`delete_run`,
     restorable).
+  - Challenger reuse: if the current challenger's tags `train_end_dt` and `train_data_sha256`
+    (sorted IDs + labels, window, seed, imbalance) match the planned training rows, retraining
+    is skipped and it logs "reused challenger vN".
+  - Design trade-off (README): the trigger is cheap and sensitive. Retraining takes about 73 s,
+    and the bootstrap promotion gate is what protects production.
 
 ### Demo stack (docker-compose.yml, project `fraud-platform`)
 - Services: kafka (localhost:9092), postgres (15432), redis (16379), api (18000), consumer
@@ -206,10 +227,13 @@ matters (files, numbers, running services) before relying on it.
 - Not production-ready: single-node Kafka (RF=1), no auth/TLS, local MLflow, drift job not
   scheduled.
 
-### Next
-- Planned: analyst dashboard (can read tables `fraud_rings`, `drift_reports`), Kubernetes
-  (Minikube; drift job as a CronJob), consumer commit-error fix.
-- Open decision: the top-feature rule fires on every window (noisy) and missed the
-  TransactionAmt shift. Keep it, raise its threshold or widen it (user's call).
+### Next (pick with the user; nothing is in progress)
+- Consumer commit-error fix: treat `NOT_COORDINATOR` / `COORDINATOR_LOAD_IN_PROGRESS` like the
+  rebalance errors (redeliver, do not crash). Small and well understood.
+- Analyst dashboard (React), reading `alerts`, `fraud_rings` and `drift_reports`.
+- Kubernetes (Minikube): API, consumer, drift job as a CronJob. Retraining would need an MLflow
+  server with a shared artifact store first (host-only today).
+- Idea, not built and not approved: rank features for drift by their impact on the score
+  instead of by gain (both existing rules missed the 2x TransactionAmt shift).
 - Windows gotcha: venvs under the long scratchpad path break psycopg's DLL load ("filename or
   extension is too long"); use a short path such as %TEMP%\civ for throwaway venvs.
