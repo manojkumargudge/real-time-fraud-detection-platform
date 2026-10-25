@@ -556,6 +556,29 @@ class TestConsumerLoop:
             consumer_mod.run(fake, scorer, "t", dead_letters=FakeDeadLetterSink(), max_messages=1)
         assert fake.committed == [] and fake.closed
 
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_stage_timings_are_logged_only_when_enabled(
+        self, scorer: Scorer, caplog: pytest.LogCaptureFixture, enabled: bool
+    ) -> None:
+        fake = FakeConsumer([encode(event(TransactionID=i))[1] for i in (1, 2)])
+        with caplog.at_level("INFO", logger="src.streaming.consumer"):
+            consumer_mod.run(
+                fake,
+                scorer,
+                "t",
+                dead_letters=FakeDeadLetterSink(),
+                idle_timeout=0,
+                stage_timings=enabled,
+            )
+        lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("stages ")]
+        assert len(lines) == (2 if enabled else 0)
+        if enabled:
+            stages = json.loads(lines[0].split(" ", 3)[3])
+            assert {"poll", "process", "commit", "dedupe_get", "entity_keys", "predict"} <= set(
+                stages
+            )
+            assert lines[0].startswith("stages id=1 status=scored ")
+
     def test_idle_timeout_stops(self, scorer: Scorer) -> None:
         counts = consumer_mod.run(
             FakeConsumer([]), scorer, "t", dead_letters=FakeDeadLetterSink(), idle_timeout=0
@@ -778,7 +801,7 @@ class TestServingSpeedups:
             vector = build_entity_key(frame, cols)  # <= 64 rows: the vectorised renderer
             for i in range(len(rows)):
                 single = build_entity_key(frame.iloc[[i]], cols)
-                pd.testing.assert_series_equal(single, vector.iloc[[i]])
+                pd.testing.assert_series_equal(single, vector.iloc[i : i + 1])
 
     def test_single_row_encoding_equals_the_frame_encoder(self, bundle: ModelBundle) -> None:
         cfg = bundle.history_config

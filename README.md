@@ -132,6 +132,30 @@ same features as batch.
 Earlier (2026-10-22) the at-least-once path was checked on the first IEEE-CIS transactions:
 2,300 messages = 2,000 unique `TransactionID`s + 300 duplicates, each stored once.
 
+### Consumer throughput (2026-10-25)
+
+Benchmark on a clone of the demo database (`fraud_bench`), with 3 consumers exactly as in the
+demo (`FEATURE_SOURCE=feast`) and the same 4,000 held-out events
+(`python -m scripts.bench_throughput`; details in docs/serving.md "Throughput benchmark").
+
+| | Before | After |
+|---|---|---|
+| Unthrottled throughput, 3 consumers | 13.1 events/s | **46.8 events/s** |
+| End-to-end latency at 5 events/s, p50 / p95 | 114 / 669 ms | 31 / 61 ms |
+| Scorer latency under load, p50 / p95 | 203 / 357 ms | 48 / 105 ms |
+| Consumer CPU under load | ~1.8 cores each | ~0.5 cores each |
+
+**Cause:**
+- PostgreSQL, Redis and Kafka were not the bottleneck.
+- XGBoost used all 12 cores for every one-row prediction, so 3 consumers oversubscribed the
+  CPU.
+- The Feast scoring path rebuilt the full batch feature frame per event, only to overwrite it.
+- The Feast SDK deserialised every feature view on each read.
+
+**Fix:** single-threaded predict, the per-event work done once, and Feast feature views
+resolved once. Delivery, model, features and feature source are unchanged. The 4,000 replayed
+scores are bit-identical to the scores the demo stored.
+
 ### Consumer crash fix and chaos test (2026-10-25)
 
 **The crash:**

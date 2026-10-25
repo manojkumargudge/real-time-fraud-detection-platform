@@ -1,0 +1,55 @@
+# Throughput benchmark (scripts/bench_throughput.py, docs/serving.md "Throughput benchmark").
+# A separate Compose project that runs the consumer exactly as the demo does (3 replicas,
+# FEATURE_SOURCE=feast, image built from this checkout), but against the benchmark database
+# fraud_bench (a clone of the demo database on the demo PostgreSQL), its own Kafka topic and
+# consumer group on the demo broker, and its own Redis (Feast online store), so the demo's data,
+# topic, group and Redis state are never touched. Joins the demo network for postgres/kafka.
+#
+#   python -m scripts.bench_throughput setup      # clone, trim, Redis state, build, start
+#   python -m scripts.bench_throughput run ...    # one measured replay
+#   python -m scripts.bench_throughput teardown   # drop fraud_bench, topic, group, Redis
+name: fraud-bench
+
+services:
+  bench-redis:
+    image: redis:7.4.1-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:36379:6379"
+    networks: [demo]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  consumer:
+    build: .
+    image: fraud-bench-consumer:latest
+    command: ["python", "-m", "src.streaming.consumer"]
+    deploy:
+      replicas: 3
+    environment:
+      MODEL_DIR: /app/artifacts/baseline
+      DATABASE_URL: postgresql://fraud:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/fraud_bench
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      KAFKA_TOPIC: bench-transactions
+      KAFKA_GROUP_ID: bench-scorer
+      KAFKA_DLQ_TOPIC: bench-transactions.dlq
+      FEAST_REDIS: bench-redis:6379
+      FEAST_REPO_DIR: /tmp/feast
+      FEATURE_SOURCE: feast
+      STAGE_TIMINGS: "1"
+    volumes:
+      - ./artifacts/baseline:/app/artifacts/baseline:ro
+    networks: [demo]
+    depends_on:
+      bench-redis:
+        condition: service_healthy
+    stop_grace_period: 30s
+    restart: "no"
+
+networks:
+  demo:
+    external: true
+    name: fraud-platform_default

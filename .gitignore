@@ -63,3 +63,5 @@ reports/*.json
 reports/drift/
 # Chaos-test runs (scripts/chaos_kafka_restart.py): consumer logs and summary.json.
 reports/chaos/
+# Throughput benchmark results (scripts/bench_throughput.py).
+reports/bench/
