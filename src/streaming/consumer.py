@@ -9,6 +9,11 @@ record is confirmed. Anything that interrupts a message -- shutdown, a rebalance
 leaves it uncommitted, so it is redelivered; the ``TransactionID`` primary key makes the
 redelivery a no-op. Retry and DLQ rules are in ``reliability.py``; operations in
 docs/serving.md ("Reliability").
+
+Commit errors: a rebalance rejection is accepted at once (the group moved on). Retriable
+coordinator errors (``NOT_COORDINATOR`` after a broker restart, ...) are retried a few times;
+if the commit still fails the message is left for redelivery and the consumer keeps running.
+Anything else raises.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import signal
 import threading
 import time
 from collections import Counter
+from collections.abc import Callable
 from typing import Any
 
 from confluent_kafka import Consumer, KafkaError, KafkaException, TopicPartition
@@ -46,6 +52,24 @@ logger = logging.getLogger(__name__)
 REBALANCE_COMMIT_ERRORS = frozenset(
     {KafkaError.ILLEGAL_GENERATION, KafkaError.UNKNOWN_MEMBER_ID, KafkaError.REBALANCE_IN_PROGRESS}
 )
+# The group coordinator moved, is loading or is unreachable (broker restart, heavy load): retry
+# the commit; if it still fails, the message is redelivered later. Also any error that
+# librdkafka flags as retriable (``KafkaError.retriable()``).
+RETRIABLE_COMMIT_ERRORS = frozenset(
+    {
+        KafkaError.NOT_COORDINATOR,
+        KafkaError.COORDINATOR_LOAD_IN_PROGRESS,
+        KafkaError.COORDINATOR_NOT_AVAILABLE,
+        KafkaError.REQUEST_TIMED_OUT,
+        KafkaError._TIMED_OUT,
+    }
+)
+COMMIT_RETRY_DELAYS = (0.2, 0.5, 1.0)  # seconds before retries 1, 2 and 3
+COMMIT_FAILURE_ALERT_S = 30.0  # failing longer than this: ERROR, repeated at this interval
+
+
+def is_retriable_commit_error(err: KafkaError) -> bool:
+    return err.code() in RETRIABLE_COMMIT_ERRORS or bool(err.retriable())
 
 
 def build_consumer(settings: Settings) -> Consumer:
@@ -171,6 +195,90 @@ class _Worker:
             self.consumer.resume(self.consumer.assignment())
 
 
+class _Committer:
+    """Synchronous offset commit that survives rebalances and coordinator outages.
+
+    A commit that is not accepted leaves the message uncommitted: it is redelivered (to this
+    or another consumer) and the primary key deduplicates it, so delivery stays at-least-once.
+    ``counts["consecutive_commit_failures"]`` is a gauge, not a total: commits that failed in a
+    row after all retries, reset by the next successful commit.
+    """
+
+    def __init__(
+        self,
+        consumer: Consumer,
+        counts: Counter[str],
+        *,
+        delays: tuple[float, ...] = COMMIT_RETRY_DELAYS,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.consumer, self.counts, self.delays = consumer, counts, delays
+        self.sleep, self.clock = sleep, clock
+        self.failing_since: float | None = None  # first failed commit of the current streak
+        self.last_alert: float | None = None
+
+    def commit(self, msg: Any) -> bool:
+        """True if the offset was committed; raises for errors that are not retriable."""
+        for attempt in range(1, len(self.delays) + 2):
+            if attempt > 1:
+                self.counts["commit_retries"] += 1
+                self.sleep(self.delays[attempt - 2])
+            try:
+                self.consumer.commit(message=msg, asynchronous=False)  # after DB write or DLQ ack
+            except KafkaException as exc:
+                err: KafkaError = exc.args[0]
+                if err.code() in REBALANCE_COMMIT_ERRORS:
+                    logger.warning(
+                        "commit rejected by a rebalance; will be redelivered %s", _where(msg)
+                    )
+                    self.counts["commit_rejected"] += 1
+                    return False
+                if not is_retriable_commit_error(err):
+                    raise
+                if self.failing_since is None:
+                    self.failing_since = self.clock()
+                logger.warning(
+                    "commit failed attempt=%d/%d error=%s %s",
+                    attempt,
+                    len(self.delays) + 1,
+                    err.name(),
+                    _where(msg),
+                )
+                continue
+            self._succeeded()
+            return True
+        self._gave_up(msg)
+        return False
+
+    def _gave_up(self, msg: Any) -> None:
+        self.counts["commit_rejected"] += 1
+        self.counts["consecutive_commit_failures"] += 1
+        logger.warning("commit not accepted after retries; will be redelivered %s", _where(msg))
+        now = self.clock()
+        failing_for = now - (self.failing_since if self.failing_since is not None else now)
+        if failing_for > COMMIT_FAILURE_ALERT_S and (
+            self.last_alert is None or now - self.last_alert >= COMMIT_FAILURE_ALERT_S
+        ):
+            self.last_alert = now
+            logger.error(
+                "offset commits failing for %.0f s consecutive_commit_failures=%d; "
+                "messages are redelivered once the coordinator is back",
+                failing_for,
+                self.counts["consecutive_commit_failures"],
+            )
+
+    def _succeeded(self) -> None:
+        if self.failing_since is not None:
+            logger.info(
+                "offset commits recovered after %.1f s consecutive_commit_failures=%d",
+                self.clock() - self.failing_since,
+                self.counts["consecutive_commit_failures"],
+            )
+        self.failing_since = self.last_alert = None
+        self.counts.pop("consecutive_commit_failures", None)
+
+
 def _rewind(consumer: Consumer, msg: Any) -> None:
     try:
         consumer.seek(TopicPartition(msg.topic(), msg.partition(), msg.offset()))
@@ -200,6 +308,7 @@ def run(
     max_messages: int | None = None,
     idle_timeout: float | None = None,
     stop: threading.Event | None = None,
+    commit_delays: tuple[float, ...] = COMMIT_RETRY_DELAYS,
 ) -> Counter[str]:
     """Consume until ``max_messages`` processed, no message for ``idle_timeout`` seconds, or
     ``stop`` is set (checked between messages and during retry waits; an interrupted message
@@ -207,6 +316,7 @@ def run(
     """
     counts: Counter[str] = Counter()
     worker = _Worker(consumer, scorer, dead_letters, policy or RetryPolicy(), stop, counts)
+    committer = _Committer(consumer, counts, delays=commit_delays)
     processed = 0  # counts also holds "alerts"/"retries", so it cannot be summed for this
     consumer.subscribe([topic], on_assign=worker.on_assign, on_revoke=worker.on_revoke)
     last_message = time.monotonic()
@@ -235,15 +345,7 @@ def run(
                 logger.info("left uncommitted (%s) %s", why, _where(msg))
                 counts["interrupted"] += 1
                 continue  # stop -> loop exits at the top; revoked -> next poll
-            try:
-                consumer.commit(message=msg, asynchronous=False)  # after DB write or DLQ ack
-            except KafkaException as exc:
-                if exc.args[0].code() not in REBALANCE_COMMIT_ERRORS:
-                    raise
-                logger.warning(
-                    "commit rejected by a rebalance; will be redelivered %s", _where(msg)
-                )
-                counts["commit_rejected"] += 1
+            committer.commit(msg)
             counts[outcome.status] += 1
             processed += 1
             if outcome.is_alert and outcome.status == "scored":

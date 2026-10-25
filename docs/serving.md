@@ -179,6 +179,17 @@ are kept.
 - If the dead-letter write fails, it is retried with backoff and nothing is committed.
 - A commit rejected by a rebalance (`ILLEGAL_GENERATION`, `UNKNOWN_MEMBER_ID`,
   `REBALANCE_IN_PROGRESS`) is logged; the message is redelivered and deduplicated.
+- A commit failing with a **retriable** error (`NOT_COORDINATOR`,
+  `COORDINATOR_LOAD_IN_PROGRESS`, `COORDINATOR_NOT_AVAILABLE`, `REQUEST_TIMED_OUT`,
+  `_TIMED_OUT`, or any error with `KafkaError.retriable()` true) is retried 3 times after
+  0.2 s, 0.5 s and 1 s. If it still fails, a warning is logged, it counts as `commit_rejected`
+  and the consumer carries on: the offset stays uncommitted, a later commit on the partition
+  or a redelivery covers it, and the primary key deduplicates (at-least-once).
+- If commits keep failing for more than 30 s in a row, an ERROR is logged (at most once per
+  30 s) with `consecutive_commit_failures`; the consumer does not exit. The first successful
+  commit logs "offset commits recovered" and resets the streak.
+- Any other commit error (for example `_TRANSPORT` without the retriable flag, authorization
+  errors) still raises and stops the consumer.
 - The dead-letter topic is at-least-once: a crash between its acknowledgement and the commit
   writes a second copy, identifiable by the same `dlq.source.*` headers.
 
@@ -187,7 +198,10 @@ are kept.
 - `dead_lettered`: confirmed dead-letter writes;
 - `retries`;
 - `interrupted`: left uncommitted;
-- `commit_rejected`.
+- `commit_rejected`: commits not accepted (rebalance, or retriable errors after all retries);
+- `commit_retries`: commit attempts after the first;
+- `consecutive_commit_failures`: a gauge, not a total. It is present only while commits are
+  failing in a row.
 
 **Operations and recovery.** In Git Bash, prefix `docker exec` with `MSYS_NO_PATHCONV=1`.
 
@@ -278,13 +292,45 @@ Throughput was about the same with and without them (8.05 vs 8.29 events/s). Lat
 above the Feast figure from the 10,000-event run (p50 107.5 ms), with the same 3 consumers
 competing for one CPU; this was not profiled further.
 
-**Consumer crashes (pre-existing bug, not fixed here).** All 3 consumers exited twice, at 06:38
-and 07:41 UTC. A synchronous offset commit failed with `NOT_COORDINATOR` /
-`COORDINATOR_LOAD_IN_PROGRESS` during heavy load on the laptop. `consumer.py` tolerates only the
-rebalance errors (`ILLEGAL_GENERATION`, `UNKNOWN_MEMBER_ID`, `REBALANCE_IN_PROGRESS`) and
-re-raises anything else. Docker restarted the consumers. No data was lost or duplicated: offsets
-are committed after the DB write, and redelivered events are deduplicated. Fix: treat retriable
-coordinator errors like the rebalance errors (redeliver).
+**Consumer crashes (fixed 2026-10-25, branch `consumer-crash-fix`).** All 3 consumers exited
+twice, at 06:38 and 07:41 UTC. A synchronous offset commit failed with `NOT_COORDINATOR` /
+`COORDINATOR_LOAD_IN_PROGRESS` during heavy load on the laptop. `consumer.py` then tolerated
+only the rebalance errors (`ILLEGAL_GENERATION`, `UNKNOWN_MEMBER_ID`, `REBALANCE_IN_PROGRESS`)
+and re-raised anything else. Docker restarted the consumers. No data was lost or duplicated:
+offsets are committed after the DB write, and redelivered events are deduplicated. The fix
+retries retriable commit errors and then leaves the message for redelivery instead of exiting
+(see "Offsets" above and the chaos test below).
+
+### Chaos test: Kafka restart mid-stream (2026-10-25)
+
+`python -m scripts.chaos_kafka_restart [--mode restart|kill|pause]` runs only against the test
+stack (`docker-compose.test.yml`). It uses a fresh `chaos` database, a new topic and a new
+group per run, and 3 host consumers (`FEATURE_SOURCE=store`). It replays 500
+validation-period events and disrupts test Kafka once a third of them are stored. It exits 0
+only if every check passes. Logs and `summary.json` go to `reports/chaos/<run id>/`
+(gitignored).
+
+| Mode (run id) | Kafka back after | Consumers alive | Rows written / events sent | Duplicate IDs | Lag / DLQ | `commit_rejected` | Redelivered duplicates skipped |
+|---|---|---|---|---|---|---|---|
+| restart, `docker compose restart` (20261025T035507Z) | 12.4 s | 3/3 | 500 / 500 | 0 | 0 / 0 | 0 | 0 |
+| kill + start, forced log recovery (20261025T035926Z) | 24.8 s | 3/3 | 500 / 500 | 0 | 0 / 0 | 0 | 0 |
+| pause 70 s, frozen broker (20261025T040653Z) | 104.5 s | 3/3 | 500 / 500 | 0 | 0 / 0 | 3 (rebalance) | 3 |
+
+What it shows and what it does not:
+- In every mode the consumers stayed up, no event was lost and each was stored exactly once.
+- With the broker gone (restart/kill), librdkafka holds the synchronous commit until a
+  coordinator is back, so no commit error reached `consumer.py`. The group session timed out
+  (45 s), and partitions were revoked and reassigned.
+- In the pause run, 3 commits were rejected by that rebalance (`commit_rejected` = 3). Their
+  messages were redelivered and skipped as duplicates.
+- None of the runs produced `NOT_COORDINATOR` / `COORDINATOR_LOAD_IN_PROGRESS` on a commit.
+  The new retry path is covered by unit tests (`tests/test_streaming_reliability.py`), not by
+  this chaos test. The 2026-10-24 errors came from a live broker under heavy load, which a
+  restart does not reproduce.
+- A first pause run (20261025T040322Z) failed because of the harness, not the consumer. The
+  consumers exited on their 90 s idle timeout while Kafka was frozen, and the producer's 30 s
+  flush gave up with 89 events queued. The script now raises the idle timeout in pause mode
+  and pauses only after the producer has finished.
 
 ## 7. Limitations
 

@@ -61,3 +61,5 @@ data/*
 reports/*.json
 # Evidently drift reports (src.monitoring.run_drift); their paths are stored in drift_reports.
 reports/drift/
+# Chaos-test runs (scripts/chaos_kafka_restart.py): consumer logs and summary.json.
+reports/chaos/

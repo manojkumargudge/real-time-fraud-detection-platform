@@ -132,6 +132,37 @@ same features as batch.
 Earlier (2026-10-22) the at-least-once path was checked on the first IEEE-CIS transactions:
 2,300 messages = 2,000 unique `TransactionID`s + 300 duplicates, each stored once.
 
+### Consumer crash fix and chaos test (2026-10-25)
+
+**The crash:**
+- During the full-validation stream on 2026-10-24, all 3 consumers exited twice.
+- Cause: an offset commit failed with the retriable Kafka errors `NOT_COORDINATOR` /
+  `COORDINATOR_LOAD_IN_PROGRESS` (broker under heavy load). The consumer tolerated only
+  rebalance errors and re-raised everything else.
+- Docker restarted the consumers and nothing was lost or duplicated, but the stream stalled
+  each time.
+
+**The fix** (`src/streaming/consumer.py`):
+- The retriable coordinator and timeout errors (and any error librdkafka flags as retriable)
+  are retried 3 times (0.2 / 0.5 / 1 s).
+- If the commit still fails, it counts as `commit_rejected` and the consumer carries on. The
+  message is redelivered later and the `TransactionID` primary key deduplicates it
+  (at-least-once).
+- If commits keep failing for more than 30 s, an ERROR is logged every 30 s with
+  `consecutive_commit_failures`. Other errors still stop the consumer. Details: docs/serving.md
+  ("Offsets").
+
+**Chaos test** (test stack only, `python -m scripts.chaos_kafka_restart [--mode restart|kill|pause]`):
+- Each mode ran 500 events and disrupted test Kafka mid-stream: restart, kill + start, or a
+  70 s pause.
+- In every mode, all 3 consumers stayed alive, 500 of 500 rows were written, there were 0
+  duplicate IDs, lag was 0 and the DLQ was empty.
+- `commit_rejected` was 0, 0 and 3. The 3 in the pause run came from a rebalance and were
+  redelivered and skipped as duplicates.
+- None of the runs triggered `NOT_COORDINATOR` on a commit. librdkafka waits for the
+  coordinator instead, so the new retry path is verified by unit tests only. Results:
+  docs/serving.md ("Chaos test").
+
 ## Security
 
 CI job `security` (.github/workflows/ci.yml) runs on every push and pull request; the image is
@@ -393,7 +424,7 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements-dev.txt
 .venv\Scripts\python -m pytest --ignore=tests/test_integration.py   # unit tests, no services
 .venv\Scripts\ruff check .
-.venv\Scripts\python -m mypy        # strict type check of src/ and tests/ (pyproject.toml)
+.venv\Scripts\python -m mypy        # strict type check of src/, tests/ and scripts/ (pyproject.toml)
 ```
 
 Integration tests run against a **separate Compose project** (`docker-compose.test.yml`:
