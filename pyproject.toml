@@ -21,7 +21,7 @@ ignore = ["PD901"]
 [tool.mypy]
 # Run: python -m mypy   (checks `files`; listed with the other checks in README "Setup")
 python_version = "3.11"
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
 plugins = ["pydantic.mypy"]
 strict = true
 warn_unreachable = true

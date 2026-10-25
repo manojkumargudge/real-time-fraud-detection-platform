@@ -74,7 +74,9 @@ class FakeConsumer:
         self.pause_calls = 0
         self.closed = False
         self.ignore_pause = False
-        self.commit_errors: list[int] = []  # KafkaError codes raised by the next commits
+        # KafkaError codes (or errors) raised by the next commits
+        self.commit_errors: list[int | KafkaError] = []
+        self.commit_calls = 0
         self.poll_hook: Callable[[FakeConsumer], None] | None = None
         self.on_assign: Callable[..., None] | None = None
         self.on_revoke: Callable[..., None] | None = None
@@ -125,8 +127,10 @@ class FakeConsumer:
 
     def commit(self, message: FakeMessage, asynchronous: bool) -> None:
         assert asynchronous is False
+        self.commit_calls += 1
         if self.commit_errors:
-            raise KafkaException(KafkaError(self.commit_errors.pop(0)))
+            err = self.commit_errors.pop(0)
+            raise KafkaException(err if isinstance(err, KafkaError) else KafkaError(err))
         self.committed.append(message)
 
     def close(self) -> None:

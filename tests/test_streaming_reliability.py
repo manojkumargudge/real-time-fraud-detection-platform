@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import threading
+from collections import Counter
 from concurrent.futures import Future
 from datetime import UTC, datetime
 from pathlib import Path
@@ -298,6 +299,112 @@ class TestConsumerReliability:
         with pytest.raises(KafkaException):
             run(fake, FlakyScorer(), FakeDeadLetterSink())
         assert fake.closed
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            KafkaError.NOT_COORDINATOR,
+            KafkaError.COORDINATOR_LOAD_IN_PROGRESS,
+            KafkaError.COORDINATOR_NOT_AVAILABLE,
+            KafkaError.REQUEST_TIMED_OUT,
+            KafkaError._TIMED_OUT,
+            KafkaError(KafkaError._TRANSPORT, retriable=True),  # flagged retriable by librdkafka
+        ],
+    )
+    def test_retriable_commit_error_is_retried_then_counted_not_fatal(
+        self, error: int | KafkaError
+    ) -> None:
+        fake, dlq = FakeConsumer(values(1, 2)), FakeDeadLetterSink()
+        fake.commit_errors = [error] * 4  # first attempt + 3 retries for message 1
+        counts = run(fake, FlakyScorer(), dlq, commit_delays=(0.0, 0.0, 0.0))
+        assert fake.commit_calls == 5 and offsets(fake) == [1]  # message 2 commits normally
+        assert counts["commit_retries"] == 3 and counts["commit_rejected"] == 1
+        assert counts["scored"] == 2 and fake.closed
+        assert "consecutive_commit_failures" not in counts  # reset by message 2's commit
+
+    def test_commit_retry_that_succeeds_commits_the_message(self) -> None:
+        fake, dlq = FakeConsumer(values(1, 2)), FakeDeadLetterSink()
+        fake.commit_errors = [KafkaError.NOT_COORDINATOR]
+        counts = run(fake, FlakyScorer(), dlq, commit_delays=(0.0, 0.0, 0.0))
+        assert offsets(fake) == [0, 1] and fake.commit_calls == 3
+        assert counts["commit_retries"] == 1 and "commit_rejected" not in counts
+
+    @pytest.mark.parametrize(
+        "code",
+        [KafkaError._TRANSPORT, KafkaError.TOPIC_AUTHORIZATION_FAILED, KafkaError.INVALID_GROUP_ID],
+    )
+    def test_non_retriable_commit_error_raises_without_retry(self, code: int) -> None:
+        fake = FakeConsumer(values(1))
+        fake.commit_errors = [code]
+        with pytest.raises(KafkaException):
+            run(fake, FlakyScorer(), FakeDeadLetterSink(), commit_delays=(0.0, 0.0, 0.0))
+        assert fake.commit_calls == 1 and fake.closed
+
+    def test_non_retriable_error_during_commit_retries_raises(self) -> None:
+        fake = FakeConsumer(values(1))
+        fake.commit_errors = [KafkaError.NOT_COORDINATOR, KafkaError._TRANSPORT]
+        with pytest.raises(KafkaException):
+            run(fake, FlakyScorer(), FakeDeadLetterSink(), commit_delays=(0.0, 0.0, 0.0))
+
+    def test_rebalance_during_commit_retries_stops_retrying(self) -> None:
+        fake, dlq = FakeConsumer(values(1, 2)), FakeDeadLetterSink()
+        fake.commit_errors = [KafkaError.NOT_COORDINATOR, KafkaError.ILLEGAL_GENERATION]
+        counts = run(fake, FlakyScorer(), dlq, commit_delays=(0.0, 0.0, 0.0))
+        assert fake.commit_calls == 3 and offsets(fake) == [1]
+        assert counts["commit_rejected"] == 1 and counts["commit_retries"] == 1
+
+
+class TestCommitter:
+    """``_Committer`` alone, with a fake clock: retry backoff and the sustained-failure alarm."""
+
+    @staticmethod
+    def make() -> tuple[FakeConsumer, consumer_mod._Committer, list[float], list[float]]:
+        fake, now, sleeps = FakeConsumer(values(*range(20))), [1_000.0], []
+
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            now[0] += seconds
+
+        committer = consumer_mod._Committer(fake, Counter(), sleep=sleep, clock=lambda: now[0])
+        return fake, committer, now, sleeps
+
+    def test_retries_use_the_backoff_schedule(self) -> None:
+        fake, committer, _, sleeps = self.make()
+        fake.commit_errors = [KafkaError.NOT_COORDINATOR] * 4
+        assert committer.commit(fake.all[0]) is False
+        assert sleeps == [0.2, 0.5, 1.0] and fake.commit_calls == 4
+        assert committer.counts["commit_rejected"] == 1
+        assert committer.counts["consecutive_commit_failures"] == 1
+
+    def test_sustained_failures_log_an_error_every_30_s_and_count_up(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake, committer, now, _ = self.make()
+        with caplog.at_level("INFO", logger="src.streaming.consumer"):
+            for i in range(14):  # each failed commit takes 1.7 s of retries + 3.3 s of work
+                fake.commit_errors = [KafkaError.COORDINATOR_LOAD_IN_PROGRESS] * 4
+                assert committer.commit(fake.all[i]) is False
+                assert committer.counts["consecutive_commit_failures"] == i + 1
+                now[0] += 3.3
+            errors = [r for r in caplog.records if r.levelname == "ERROR"]
+            # The streak starts at t=0 and failure i ends at 5i + 1.7 s: the first beyond 30 s
+            # is the 7th (31.7 s), the next one at least 30 s later the 13th (61.7 s).
+            assert len(errors) == 2
+            assert "consecutive_commit_failures=7" in errors[0].getMessage()
+            assert "consecutive_commit_failures=13" in errors[1].getMessage()
+
+            assert committer.commit(fake.all[14]) is True  # coordinator back
+        assert "consecutive_commit_failures" not in committer.counts
+        assert "offset commits recovered" in caplog.text and offsets(fake) == [14]
+
+    def test_short_outage_logs_no_error(self, caplog: pytest.LogCaptureFixture) -> None:
+        fake, committer, now, _ = self.make()
+        with caplog.at_level("WARNING", logger="src.streaming.consumer"):
+            for i in range(3):
+                fake.commit_errors = [KafkaError.NOT_COORDINATOR] * 4
+                committer.commit(fake.all[i])
+                now[0] += 5.0
+        assert not [r for r in caplog.records if r.levelname == "ERROR"]
 
     def test_partition_assignment_and_revocation_are_logged(
         self, caplog: pytest.LogCaptureFixture
