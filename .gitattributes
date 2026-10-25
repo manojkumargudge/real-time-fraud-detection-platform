@@ -1,0 +1,2 @@
+# Shell scripts must keep LF endings (core.autocrlf=true would check them out as CRLF).
+*.sh text eol=lf
