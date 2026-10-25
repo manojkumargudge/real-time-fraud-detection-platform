@@ -1,0 +1,8 @@
+# Kubernetes smoke-test image (docs/kubernetes.md): the serving image (Dockerfile) plus the model
+# bundle from artifacts/baseline, so pods need no host mount. Local only: built by
+# k8s/build-image.sh, loaded into Minikube with `minikube image load`, never pushed. The bundle
+# stays gitignored; Dockerfile.k8s.dockerignore lets only artifacts/baseline into this build.
+ARG BASE_IMAGE=fraud-serving:base-local
+FROM ${BASE_IMAGE}
+COPY --chown=app:app artifacts/baseline/ /app/artifacts/baseline/
+ENV MODEL_DIR=/app/artifacts/baseline

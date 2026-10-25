@@ -1,0 +1,93 @@
+# Kafka 3.8.1, single-node KRaft (broker + controller in one pod), with a PVC.
+# enableServiceLinks: false -- otherwise Kubernetes injects KAFKA_PORT=tcp://... for this Service
+# and the apache/kafka image turns every KAFKA_* variable into a broker setting.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  labels: {app: kafka}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: kafka}
+  template:
+    metadata:
+      labels: {app: kafka}
+    spec:
+      enableServiceLinks: false
+      initContainers:
+        # Minikube's hostPath volumes ignore fsGroup: hand the data dir to the image user (1000).
+        - name: data-owner
+          image: apache/kafka:3.8.1
+          imagePullPolicy: IfNotPresent
+          securityContext: {runAsUser: 0}
+          command: ["sh", "-c", "chown -R 1000:1000 /var/lib/kafka/data"]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/kafka/data}
+      containers:
+        - name: kafka
+          image: apache/kafka:3.8.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9092
+          env:
+            - {name: KAFKA_NODE_ID, value: "1"}
+            - {name: KAFKA_PROCESS_ROLES, value: "broker,controller"}
+            - {name: KAFKA_LISTENERS, value: "PLAINTEXT://:9092,CONTROLLER://:9093"}
+            - {name: KAFKA_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka:9092"}
+            - {name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"}
+            - {name: KAFKA_CONTROLLER_LISTENER_NAMES, value: CONTROLLER}
+            - {name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@localhost:9093"}
+            - {name: KAFKA_INTER_BROKER_LISTENER_NAME, value: PLAINTEXT}
+            - {name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1"}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1"}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1"}
+            - {name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS, value: "0"}
+            - {name: KAFKA_NUM_PARTITIONS, value: "3"}
+            - {name: KAFKA_AUTO_CREATE_TOPICS_ENABLE, value: "true"}
+            - {name: KAFKA_HEAP_OPTS, value: "-Xms256m -Xmx384m"}
+            - {name: KAFKA_LOG_DIRS, value: /var/lib/kafka/data}
+          # TCP checks: the broker CLI check used in Compose starts a second JVM every period,
+          # too heavy for a 4 GB node.
+          readinessProbe:
+            tcpSocket: {port: 9092}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket: {port: 9092}
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 200m, memory: 512Mi}
+            limits: {cpu: "1", memory: 768Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/kafka/data}
+      terminationGracePeriodSeconds: 60  # controlled shutdown flushes the logs
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: kafka-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+spec:
+  selector: {app: kafka}
+  ports:
+    - {port: 9092, targetPort: 9092}
