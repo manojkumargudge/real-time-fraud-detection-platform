@@ -2,7 +2,7 @@
 
 Usage: ``python -m src.streaming.consumer [--max-messages N] [--idle-timeout S]``
 (env: ``KAFKA_BOOTSTRAP_SERVERS``, ``KAFKA_TOPIC``, ``KAFKA_GROUP_ID``, ``KAFKA_DLQ_TOPIC``,
-``MODEL_DIR``, ``DATABASE_URL``).
+``MODEL_DIR``, ``DATABASE_URL``; ``STAGE_TIMINGS=1`` logs per-stage timings per message).
 
 Offset safety: a message's offset is committed only after its result is persisted or its DLQ
 record is confirmed. Anything that interrupts a message -- shutdown, a rebalance, a crash --
@@ -19,7 +19,9 @@ Anything else raises.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import signal
 import threading
 import time
@@ -30,6 +32,7 @@ from typing import Any
 from confluent_kafka import Consumer, KafkaError, KafkaException, TopicPartition
 from confluent_kafka.admin import AdminClient
 
+from src import timing
 from src.serving.config import Settings
 from src.serving.scorer import Scorer
 from src.streaming.processor import ProcessOutcome, process_message
@@ -309,10 +312,15 @@ def run(
     idle_timeout: float | None = None,
     stop: threading.Event | None = None,
     commit_delays: tuple[float, ...] = COMMIT_RETRY_DELAYS,
+    stage_timings: bool = False,
 ) -> Counter[str]:
     """Consume until ``max_messages`` processed, no message for ``idle_timeout`` seconds, or
     ``stop`` is set (checked between messages and during retry waits; an interrupted message
     is left uncommitted).
+
+    ``stage_timings`` logs one ``stages {...}`` line per message with the milliseconds spent in
+    each stage (``poll`` = the call that returned the message, ``process`` = validate + score +
+    persist, ``commit``, plus the scorer's stages; see ``src.timing``).
     """
     counts: Counter[str] = Counter()
     worker = _Worker(consumer, scorer, dead_letters, policy or RetryPolicy(), stop, counts)
@@ -325,7 +333,9 @@ def run(
             if stop is not None and stop.is_set():
                 logger.info("stop requested; leaving the consumer group")
                 break
+            polled_at = time.perf_counter()
             msg = consumer.poll(1.0)
+            poll_ms = (time.perf_counter() - polled_at) * 1000
             if msg is None:
                 if idle_timeout is not None and time.monotonic() - last_message > idle_timeout:
                     break
@@ -339,13 +349,27 @@ def run(
                     continue
                 raise KafkaException(msg.error())
             last_message = time.monotonic()
+            stages = timing.collect() if stage_timings else None
             try:
-                outcome = worker.handle(msg)
+                with timing.stage("process"):
+                    outcome = worker.handle(msg)
             except _MessageAbandonedError as why:
                 logger.info("left uncommitted (%s) %s", why, _where(msg))
                 counts["interrupted"] += 1
                 continue  # stop -> loop exits at the top; revoked -> next poll
+            finally:
+                timing.clear()
+            committed_at = time.perf_counter()
             committer.commit(msg)
+            if stages is not None:
+                stages["poll"] = poll_ms
+                stages["commit"] = (time.perf_counter() - committed_at) * 1000
+                logger.info(
+                    "stages id=%s status=%s %s",
+                    outcome.transaction_id,
+                    outcome.status,
+                    json.dumps({k: round(v, 3) for k, v in stages.items()}),
+                )
             counts[outcome.status] += 1
             processed += 1
             if outcome.is_alert and outcome.status == "scored":
@@ -384,6 +408,7 @@ def main(argv: list[str] | None = None) -> Counter[str]:
             max_messages=args.max_messages,
             idle_timeout=args.idle_timeout,
             stop=stop,
+            stage_timings=os.environ.get("STAGE_TIMINGS") == "1",
         )
     finally:
         scorer.store.close()

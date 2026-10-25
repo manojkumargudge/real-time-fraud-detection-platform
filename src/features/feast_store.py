@@ -50,6 +50,7 @@ from src.features.entity_state import (
 )
 from src.features.history import AMOUNT, TIME, HistoryConfig
 from src.features.split import validation_start
+from src.timing import stage
 
 logger = logging.getLogger(__name__)
 
@@ -425,7 +426,8 @@ class FeastFeatures:
         else:
             refs = [r for r in feature_refs(self.config) if not r.startswith(f"{ODFV}:")]
             entity = {USER_ID: row[USER_ID], CARD_ID: row[CARD_ID]}
-        resp = self.store.get_online_features(features=refs, entity_rows=[entity]).to_dict()
+        with stage("feast_read"):
+            resp = self.store.get_online_features(features=refs, entity_rows=[entity]).to_dict()
         flat = {k: v[0] for k, v in resp.items()}
         if self.use_odfv:
             feats = {
@@ -434,12 +436,13 @@ class FeastFeatures:
             }
         else:
             keyed = uid is not None and card is not None
-            feats = history_features(
-                uid_from_row(flat) if keyed else None,
-                card_from_row(flat, self.config.change_columns) if keyed else None,
-                event,
-                self.config,
-            )
+            with stage("state_features"):
+                feats = history_features(
+                    uid_from_row(flat) if keyed else None,
+                    card_from_row(flat, self.config.change_columns) if keyed else None,
+                    event,
+                    self.config,
+                )
         return feats, flat
 
     def push(
