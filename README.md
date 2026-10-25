@@ -482,6 +482,17 @@ Dataset download instructions: [data/README.md](data/README.md).
   `/score`, Kafka producer/consumer, PostgreSQL persistence with duplicate handling, Docker
   Compose ([docs/serving.md](docs/serving.md)). Local demo only; see its limitations.
 
+## How this project was built
+
+I (Manojkumar M Hegde) own this project. I planned the milestones, set the
+requirements and engineering rules, made the design decisions (for example the
+model choice, the Feast feature source, the drift-trigger rules and the
+reliability approach), reviewed every change and verified the results.
+
+I used Claude Code (Anthropic) as an AI coding assistant to implement most of
+the code, tests and documentation under my direction. Commits it helped write
+carry a "Co-Authored-By: Claude" line.
+
 ## Documentation
 
 Architecture, installation instructions, API documentation, test results,
