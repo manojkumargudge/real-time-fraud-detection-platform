@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import threading
+import time
 from collections import Counter
 from concurrent.futures import Future
 from datetime import UTC, datetime
@@ -520,3 +521,58 @@ class TestEnsureDlqTopic:
 
         with pytest.raises(KafkaException):
             ensure_dlq_topic(Broken(existing={"t.dlq": "1"}), "t.dlq")
+
+
+class CountingHeartbeat(consumer_mod.Heartbeat):
+    def __init__(self) -> None:
+        super().__init__(None)
+        self.beats = 0
+
+    def beat(self) -> None:
+        self.beats += 1
+
+
+class TestHeartbeat:
+    """Liveness heartbeat for the Kubernetes exec probe (docs/kubernetes.md)."""
+
+    def test_idle_loop_writes_the_heartbeat_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "heartbeat"
+        before = time.time()
+        run(
+            FakeConsumer([]),
+            FlakyScorer(),
+            FakeDeadLetterSink(),
+            heartbeat=consumer_mod.Heartbeat(path),
+        )
+        assert path.is_file() and path.stat().st_mtime >= before - 1
+
+    def test_every_loop_iteration_and_retry_wait_beats(self) -> None:
+        beat = CountingHeartbeat()
+        policy = RetryPolicy(base_delay=0.02, max_delay=0.02)
+        scorer = FlakyScorer(psycopg.OperationalError(), psycopg.OperationalError())
+        counts = run(
+            FakeConsumer(values(1, 2)), scorer, FakeDeadLetterSink(), policy=policy, heartbeat=beat
+        )
+        assert counts["scored"] == 2 and counts["retries"] == 2
+        # 2 messages + the idle exit poll in the main loop, plus at least one per retry wait
+        assert beat.beats >= 3 + 2
+
+    def test_no_path_means_no_file_and_no_change(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        counts = run(FakeConsumer(values(1)), FlakyScorer(), FakeDeadLetterSink())
+        assert counts["scored"] == 1 and list(tmp_path.iterdir()) == []
+        consumer_mod.Heartbeat().beat()  # off: a no-op
+        assert list(tmp_path.iterdir()) == []
+
+    def test_unwritable_path_warns_once_and_keeps_consuming(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        bad = consumer_mod.Heartbeat(tmp_path / "missing-dir" / "heartbeat")
+        with caplog.at_level("WARNING", logger="src.streaming.consumer"):
+            counts = run(
+                FakeConsumer(values(1, 2)), FlakyScorer(), FakeDeadLetterSink(), heartbeat=bad
+            )
+        assert counts["scored"] == 2
+        assert caplog.text.count("cannot update heartbeat file") == 1

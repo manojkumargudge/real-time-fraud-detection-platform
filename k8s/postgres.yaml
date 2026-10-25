@@ -39,11 +39,13 @@ spec:
                 secretKeyRef: {name: fraud-postgres, key: password}
             - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
           readinessProbe:
+            timeoutSeconds: 5
             exec:
               command: ["pg_isready", "-U", "fraud", "-d", "fraud"]
             periodSeconds: 5
             failureThreshold: 6
           livenessProbe:
+            timeoutSeconds: 5
             exec:
               command: ["pg_isready", "-U", "fraud", "-d", "fraud"]
             initialDelaySeconds: 30

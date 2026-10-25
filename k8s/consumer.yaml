@@ -1,6 +1,7 @@
 # Kafka consumers (src/streaming/consumer.py): one per partition of transactions (3).
-# No probes: the consumer has no HTTP endpoint; a crash restarts the container, and an
-# uncommitted message is redelivered (idempotent writes).
+# Liveness: the consumer touches CONSUMER_HEARTBEAT_FILE on every poll-loop iteration (also when
+# idle, and during retry waits); the probe fails when the file is older than 60 s, i.e. when the
+# loop itself has stopped. A restart redelivers the uncommitted message (idempotent writes).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,6 +39,7 @@ spec:
                         sys.exit(f"{host}:{port} not reachable")
             - postgres:5432
             - kafka:9092
+            - redis:6379
           resources:
             requests: {cpu: 10m, memory: 32Mi}
             limits: {cpu: 100m, memory: 64Mi}
@@ -54,6 +56,24 @@ spec:
                 secretKeyRef: {name: fraud-postgres, key: password}
             - name: DATABASE_URL
               value: postgresql://fraud:$(POSTGRES_PASSWORD)@postgres:5432/fraud
+            - {name: CONSUMER_HEARTBEAT_FILE, value: /tmp/heartbeat}
+          # Startup: model load + Feast registration before the first heartbeat (up to 3 min).
+          # Exec probes get 5 s: the 1 s default timed out once under CPU load on the 4 GB node.
+          startupProbe:
+            timeoutSeconds: 5
+            exec:
+              command: ["test", "-f", "/tmp/heartbeat"]
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            timeoutSeconds: 5
+            exec:
+              command:
+                - sh
+                - -c
+                - test $(( $(date +%s) - $(stat -c %Y /tmp/heartbeat) )) -lt 60
+            periodSeconds: 10
+            failureThreshold: 3
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {cpu: "1", memory: 512Mi}

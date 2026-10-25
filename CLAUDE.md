@@ -47,8 +47,18 @@ matters (files, numbers, running services) before relying on it.
 - `main` holds four merged branches from 2026-10-24: `security`, `drift`, `drift-rules`, and
   `drift-reuse` (the challenger-reuse guard). CI is green through run #8 (drift-rules). The
   drift-reuse run is reported in the session summary; check it again with the public API.
+- 2026-10-25: `k8s-full` merged. Kubernetes deployment on Minikube (docs/kubernetes.md),
+  namespace `fraud-k8s`: FEATURE_SOURCE=feast with a Feast materialize Job, consumer heartbeat
+  liveness probe (`CONSUMER_HEARTBEAT_FILE`), drift CronJob (`--no-retrain`; retraining stays
+  on the host).
+  - Raw data: copied once into the node's `/data/fraud-raw`, mounted read-only.
+  - Results: 20 replayed scores bit-identical to the demo DB; frozen consumer restarted by the
+    probe; drift row written.
+  - The namespace was deleted afterwards and Minikube stopped (cluster and the node's
+    /data/fraud-raw kept). Images `fraud-serving:k8s-local` and `fraud-monitoring:k8s-local`
+    are local only.
 - 2026-10-25: Kubernetes smoke test on Minikube 1.39.0 (Docker driver, 4 CPUs / 4 GB; Docker
-  VM 10 GB via `%UserProfile%\.wslconfig`): branch `k8s-smoke`, pushed, **not merged**. All pods
+  VM 10 GB via `%UserProfile%\.wslconfig`): branch `k8s-smoke`, merged at 01fd172. All pods
   ready, 20 + 10 events scored, consumer kill recovered (docs/kubernetes.md). The namespace was
   deleted afterwards and Minikube stopped (cluster kept). Docker Desktop's built-in Kubernetes
   cannot be enabled from the CLI, so it was not used.
@@ -256,8 +266,8 @@ matters (files, numbers, running services) before relying on it.
 
 ### Next (pick with the user; nothing is in progress)
 - Analyst dashboard (Streamlit), reading `alerts`, `fraud_rings` and `drift_reports`.
-- Kubernetes (Minikube): smoke test done on branch `k8s-smoke` (not merged; docs/kubernetes.md).
-  Full deployment: Feast materialize Job, drift job as a CronJob, Ingress, real secrets.
+- Kubernetes beyond the local Minikube deployment (docs/kubernetes.md "Not production"):
+  replication, Ingress/TLS, a secrets manager, an MLflow server for in-cluster retraining.
   Retraining would need an MLflow server with a shared artifact store first (host-only today).
 - Idea, not built and not approved: rank features for drift by their impact on the score
   instead of by gain (both existing rules missed the 2x TransactionAmt shift).

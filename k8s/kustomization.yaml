@@ -10,3 +10,4 @@ resources:
   - redis.yaml
   - api.yaml
   - consumer.yaml
+  - drift-cronjob.yaml
