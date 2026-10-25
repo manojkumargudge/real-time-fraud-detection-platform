@@ -137,11 +137,17 @@ def build_model_frame(df: pd.DataFrame, variant: str, config: HistoryConfig) -> 
     else:
         raise ValueError(f"unknown variant {variant!r}; expected one of {VARIANTS}")
     hist = compute_history_features(df, config, keys=keys)
+    return pd.concat([raw_model_columns(df), hist[config.feature_names()]], axis=1)
+
+
+def raw_model_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """The non-history part of ``build_model_frame`` (ID, time, raw inputs, label if present);
+    serving with Feast adds the history features itself."""
     raw = df[[KEY, TIME, *RAW_NUMERIC, *DEFAULT_CATEGORICAL]].copy()
     raw[HAS_IDENTITY] = raw[HAS_IDENTITY].astype("float32")
     if LABEL in df.columns:
         raw[LABEL] = df[LABEL]
-    return pd.concat([raw, hist[config.feature_names()]], axis=1)
+    return raw
 
 
 def _matrix(frame: pd.DataFrame, encoder: CategoricalEncoder, cols: list[str]) -> pd.DataFrame:

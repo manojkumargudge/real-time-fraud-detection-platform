@@ -12,6 +12,7 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd
 import pytest
+import xgboost as xgb
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -21,7 +22,13 @@ from src.models.compare import build_model_frame
 from src.serving.api import create_app
 from src.serving.config import Settings
 from src.serving.model import ModelBundle, ModelBundleError
-from src.serving.online_features import entity_keys, events_to_frame, online_model_row
+from src.serving.online_features import (
+    entity_keys,
+    entity_keys_from_frame,
+    events_to_frame,
+    model_row_from_features,
+    online_model_row,
+)
 from src.serving.schema import MAX_SAFE_INT, MAX_TRANSACTION_DT, ScoreResponse, TransactionEvent
 from src.serving.scorer import Scorer
 from src.serving.store import InMemoryStore, ScoredRecord
@@ -666,3 +673,128 @@ def test_real_data_online_replay_matches_batch(bundle: ModelBundle) -> None:
         online, batch[NAMES].astype("float64"), check_names=False, check_index_type=False
     )
     np.testing.assert_allclose([r.score for r in results], bundle.predict(batch), rtol=1e-6)
+
+
+class TestServingSpeedups:
+    """Throughput fixes (docs/serving.md "Throughput benchmark") must not change a single value."""
+
+    @staticmethod
+    def old_feast_row(ev: dict[str, Any], feats: dict[str, float], cfg: HistoryConfig) -> Any:
+        """The previous implementation: full batch frame, history columns then overwritten."""
+        row = build_model_frame(events_to_frame([ev]), "baseline", cfg).reset_index(drop=True)
+        for name in cfg.feature_names():
+            row[name] = np.float32(feats[name])
+        return row
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {},
+            {"card1": None},
+            {"addr1": None, "card2": None, "card4": None},
+            {"ProductCD": "C", "card6": "credit", "TransactionAmt": 0.001},
+            {
+                "card3": 150.0,
+                "card5": 226.0,
+                "addr2": 87.0,
+                "dist1": 12.0,
+                "P_emaildomain": "gmail.com",
+                "R_emaildomain": "unseen.example",
+                "DeviceType": "mobile",
+                "DeviceInfo": "iOS Device",
+                "has_identity": True,
+            },
+        ],
+    )
+    def test_feast_model_row_equals_the_batch_frame(
+        self, bundle: ModelBundle, overrides: dict[str, Any]
+    ) -> None:
+        cfg = bundle.history_config
+        ev = event(**overrides)
+        rng = np.random.default_rng(len(overrides))
+        feats = {n: float(rng.uniform(0, 500)) for n in NAMES}
+        feats[NAMES[0]] = float("nan")  # missing state
+        new = model_row_from_features(events_to_frame([ev]), feats, cfg)
+        old = self.old_feast_row(ev, feats, cfg)
+        pd.testing.assert_frame_equal(new, old)
+        np.testing.assert_array_equal(bundle.predict(new), bundle.predict(old))
+
+    @pytest.mark.real_data
+    @pytest.mark.skipif(
+        not (DEFAULT_RAW_DIR / "train_transaction.csv").is_file(),
+        reason="IEEE-CIS dataset not downloaded",
+    )
+    def test_feast_model_row_equals_the_batch_frame_on_real_events(
+        self, bundle: ModelBundle
+    ) -> None:
+        df = load_ieee_cis(DEFAULT_RAW_DIR, usecols=[])
+        cfg = bundle.history_config
+        rng = np.random.default_rng(7)
+        for ev in replay_events(df.sample(REAL_PARITY_EVENTS, random_state=7)):
+            feats = {n: float(rng.uniform(0, 50)) for n in NAMES}
+            frame = events_to_frame([ev])
+            pd.testing.assert_frame_equal(
+                model_row_from_features(frame, feats, cfg), self.old_feast_row(ev, feats, cfg)
+            )
+            assert entity_keys_from_frame(frame) == entity_keys(ev)
+
+    def test_single_thread_scores_equal_the_default_thread_count(
+        self, bundle: ModelBundle, bundle_dir: Path
+    ) -> None:
+        config = json.loads(bundle.booster.save_config())
+        assert config["learner"]["generic_param"]["nthread"] == "1"
+        multi = xgb.Booster()
+        multi.load_model(bundle_dir / "model.json")  # default: all cores
+        rng = np.random.default_rng(3)
+        events = [
+            event(
+                TransactionID=i,
+                TransactionAmt=float(rng.uniform(1, 2_000)),
+                card1=int(rng.integers(1_000, 18_000)),
+                addr1=float(rng.choice([315.0, 204.0, np.nan])),
+            )
+            for i in range(PARITY_EVENTS)
+        ]
+        frame = build_model_frame(events_to_frame(events), "baseline", bundle.history_config)
+        x = bundle.encoder.transform(frame[bundle.feature_columns]).astype("float32")
+        np.testing.assert_array_equal(
+            bundle.booster.inplace_predict(x, missing=np.nan),
+            multi.inplace_predict(x, missing=np.nan),
+        )
+
+    def test_single_row_keys_equal_the_vectorised_keys(self) -> None:
+        from src.features.entity import CARD_COLUMNS, USER_COLUMNS, build_entity_key
+
+        rows = [
+            event(),
+            event(card1=None),
+            event(card2=None, addr1=None, card4=None),
+            event(card2=321.5, card3=1e-05, card5=2.0**53 + 2, addr1=-3.0),
+            event(card2=1e16, card3=123456789012.0, card4="mastercard", card6="credit"),
+            event(card2=float("inf")),
+        ]
+        frame = events_to_frame(rows)
+        for cols in (CARD_COLUMNS, USER_COLUMNS):
+            vector = build_entity_key(frame, cols)  # <= 64 rows: the vectorised renderer
+            for i in range(len(rows)):
+                single = build_entity_key(frame.iloc[[i]], cols)
+                pd.testing.assert_series_equal(single, vector.iloc[[i]])
+
+    def test_single_row_encoding_equals_the_frame_encoder(self, bundle: ModelBundle) -> None:
+        cfg = bundle.history_config
+        rows = [
+            event(),
+            event(ProductCD="C", card4=None, card6="credit", P_emaildomain="gmail.com"),
+            event(R_emaildomain="never-seen.example", DeviceType="desktop", has_identity=True),
+            event(DeviceInfo="SM-G960U", has_identity=True, dist1=None, TransactionAmt=1e-3),
+        ]
+        rng = np.random.default_rng(11)
+        for ev in rows:
+            feats = {n: float(rng.uniform(0, 9)) for n in NAMES}
+            feats[NAMES[-1]] = float("nan")
+            row = model_row_from_features(events_to_frame([ev]), feats, cfg)
+            old = bundle.encoder.transform(row[bundle.feature_columns]).astype("float32")
+            np.testing.assert_array_equal(bundle._encode_row(row), old.to_numpy())
+            np.testing.assert_array_equal(
+                bundle.predict(row), bundle.booster.inplace_predict(old, missing=np.nan)
+            )

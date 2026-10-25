@@ -21,7 +21,7 @@ import pandas as pd
 from src.data.load import HAS_IDENTITY, KEY
 from src.features.entity import CARD_ID, USER_ID, build_entity_keys
 from src.features.history import TIME, HistoryConfig
-from src.models.compare import build_model_frame
+from src.models.compare import build_model_frame, raw_model_columns
 
 NUMERIC_FIELDS = (
     KEY,
@@ -61,7 +61,12 @@ def events_to_frame(events: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def entity_keys(event: dict[str, Any]) -> tuple[str | None, str | None]:
-    keys = build_entity_keys(events_to_frame([event])).iloc[0]
+    return entity_keys_from_frame(events_to_frame([event]))
+
+
+def entity_keys_from_frame(frame: pd.DataFrame) -> tuple[str | None, str | None]:
+    """Keys of a one-event frame from ``events_to_frame`` (lets the scorer build it once)."""
+    keys = build_entity_keys(frame).iloc[0]
     card, uid = keys[CARD_ID], keys[USER_ID]
     return (None if pd.isna(card) else card), (None if pd.isna(uid) else uid)
 
@@ -81,17 +86,20 @@ def online_model_row(
 
 
 def model_row_from_features(
-    event: dict[str, Any], features: dict[str, float], config: HistoryConfig
+    frame: pd.DataFrame, features: dict[str, float], config: HistoryConfig
 ) -> pd.DataFrame:
-    """Model-frame row for ``event`` with history features computed elsewhere (Feast).
+    """Model-frame row for a one-event ``frame`` (``events_to_frame``) with history features
+    computed elsewhere (Feast).
 
-    Raw columns come from the same ``build_model_frame`` call as ``online_model_row``; only the
-    history feature columns are replaced.
+    Same columns, order and dtypes as ``build_model_frame``: the raw columns come from the
+    function it uses (``raw_model_columns``), the history columns are float32. The batch
+    history computation is skipped because Feast replaces all of its values (tested equal).
     """
-    row = build_model_frame(events_to_frame([event]), "baseline", config).reset_index(drop=True)
-    for name in config.feature_names():
-        row[name] = np.float32(features[name])
-    return row
+    raw = raw_model_columns(frame).reset_index(drop=True)
+    hist = pd.DataFrame(
+        {n: np.array([features[n]], dtype=np.float32) for n in config.feature_names()}
+    )
+    return pd.concat([raw, hist], axis=1)
 
 
 def history_feature_values(row: pd.DataFrame, config: HistoryConfig) -> dict[str, float | None]:

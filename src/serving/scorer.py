@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 from src.serving.model import ModelBundle
 from src.serving.online_features import (
-    entity_keys,
+    entity_keys_from_frame,
+    events_to_frame,
     history_feature_values,
     model_row_from_features,
     online_model_row,
@@ -72,13 +73,14 @@ class Scorer:
             return self._duplicate(existing, ev, started)
 
         with stage("entity_keys"):
-            card_id, uid = entity_keys(ev)
+            frame = events_to_frame([ev])  # once per event: keys and the model row
+            card_id, uid = entity_keys_from_frame(frame)
         config = self.bundle.history_config
         online: dict[str, Any] | None = None
         if self.read_from_feast and self.feast is not None:
             feats, online = self.feast.read(ev, card_id, uid)
             with stage("model_frame"):
-                row = model_row_from_features(ev, feats, config)
+                row = model_row_from_features(frame, feats, config)
             prior = feats["uid_prior_txn_count"]
             history_rows = 0 if prior != prior else int(prior)  # NaN (missing key) -> 0
         else:
