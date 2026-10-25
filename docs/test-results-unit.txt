@@ -5,13 +5,13 @@ Command (Git Bash, repo root; service variables unset, tests/conftest.py points 
 unreachable services and selects FEATURE_SOURCE=store):
   env -u DATABASE_URL -u KAFKA_BOOTSTRAP_SERVERS -u TEST_DATABASE_URL -u TEST_KAFKA_BOOTSTRAP -u TEST_REDIS -u MLFLOW_TRACKING_URI -u FEAST_REDIS -u FEATURE_SOURCE .venv/Scripts/python.exe -m pytest --ignore=tests/test_integration.py -p no:cacheprovider -rfEs
 
-Commit tested: consumer-crash-fix branch (retriable commit errors), 2026-10-25 (IST)
+Commit tested: consumer-throughput branch (serving speed-ups + parity tests), 2026-10-25 (IST)
 Python:        Python 3.11.9 (pytest 9.1.1, win32); evidently 0.7.23, mlflow 3.17.2
 
 Summary:
-  With the GNN stack (.venv, torch 2.8.0+cpu):    483 passed in 827.21s (0:13:47)
+  With the GNN stack (.venv, torch 2.8.0+cpu):    495 passed in 796.76s (0:13:16)
   Without it, as in CI (venv from requirements-dev.txt only):
-                                                  473 passed, 1 skipped in 847.22s (0:14:07)
+                                                  485 passed, 1 skipped in 789.07s (0:13:09)
   Skipped (without the GNN stack): tests/test_graph.py (could not import 'torch_geometric').
   New: 8 tests in tests/test_monitoring.py (top-feature rule, top 5 read from the booster,
   stored lists, --force-retrain with and without a firing check, flag conflict).
@@ -19,4 +19,4 @@ Summary:
 Warnings: third-party deprecations (starlette testclient, Feast / its dependencies).
 Failed: none.
 
-Previous runs: 466 passed on drift-rules (2026-10-24); 458 passed on main bd282be (2026-10-24); 417 passed on main 2fe7b70 (2026-10-24); 417 passed on 304ae06 with mlflow 3.16.1 (2026-10-24); 396 passed on d375de9 (2026-10-23); 389 passed on 9994458 (2026-10-23); 369 passed on 614e31f (2026-10-23).
+Previous runs: 483 passed on consumer-crash-fix (2026-10-25); 466 passed on drift-rules (2026-10-24); 458 passed on main bd282be (2026-10-24); 417 passed on main 2fe7b70 (2026-10-24); 417 passed on 304ae06 with mlflow 3.16.1 (2026-10-24); 396 passed on d375de9 (2026-10-23); 389 passed on 9994458 (2026-10-23); 369 passed on 614e31f (2026-10-23).

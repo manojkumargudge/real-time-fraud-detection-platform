@@ -15,7 +15,7 @@ import xgboost as xgb
 
 from src.array_types import FloatArray
 from src.features.history import HistoryConfig
-from src.features.preprocess import CategoricalEncoder
+from src.features.preprocess import UNSEEN, CategoricalEncoder
 from src.models.compare import feature_columns
 from src.models.train import METADATA_FILE, MODEL_FILE, SCHEMA_VERSION
 
@@ -70,6 +70,10 @@ class ModelBundle:
             raise ModelBundleError(f"threshold must be a probability in [0, 1], got {threshold}")
         booster = xgb.Booster()
         booster.load_model(model_path)
+        # Serving predicts one row at a time: with the default (all cores) every call starts
+        # an OpenMP team, about 10 ms per row instead of 0.5 ms, and 3 consumers oversubscribe
+        # the CPU. Thread count does not change the scores (each row is one tree walk).
+        booster.set_param({"nthread": 1})
         if booster.feature_names != expected:
             raise ModelBundleError("booster feature names do not match the metadata schema")
         bundle = cls(
@@ -86,7 +90,28 @@ class ModelBundle:
 
     def predict(self, frame: pd.DataFrame) -> FloatArray:
         """Fraud probabilities for model-frame rows (see ``compare.build_model_frame``)."""
-        x = self.encoder.transform(frame[self.feature_columns]).astype("float32")
-        # inplace_predict skips DMatrix construction (same scores, lower per-event overhead).
+        if len(frame) == 1:
+            x = self._encode_row(frame)
+        else:
+            x = self.encoder.transform(frame[self.feature_columns]).to_numpy(dtype=np.float32)
+        # inplace_predict skips DMatrix construction, and a NumPy array (columns in
+        # feature_columns order = booster.feature_names, checked at load) skips the per-call
+        # DataFrame conversion (same scores, lower per-event overhead).
         scores: FloatArray = self.booster.inplace_predict(x, missing=np.nan)
         return scores
+
+    def _encode_row(self, frame: pd.DataFrame) -> FloatArray:
+        """One row of ``encoder.transform(...).astype("float32")`` without pandas per-column
+        work (the serving path scores one event at a time; equality is tested)."""
+        vocab = self.encoder.vocab_
+        if vocab is None:
+            raise ModelBundleError("bundle encoder is not fitted")
+        values = frame[self.feature_columns].iloc[0]
+        out = np.empty((1, len(self.feature_columns)), dtype=np.float32)
+        for i, col in enumerate(self.feature_columns):
+            v = values[col]
+            if col in vocab:  # transform: present -> str -> code (unseen -1), missing -> NaN
+                out[0, i] = np.nan if pd.isna(v) else vocab[col].get(str(v), UNSEEN)
+            else:
+                out[0, i] = np.nan if v is None else v
+        return out

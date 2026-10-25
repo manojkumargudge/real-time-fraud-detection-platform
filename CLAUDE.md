@@ -47,6 +47,7 @@ matters (files, numbers, running services) before relying on it.
 - `main` holds four merged branches from 2026-10-24: `security`, `drift`, `drift-rules`, and
   `drift-reuse` (the challenger-reuse guard). CI is green through run #8 (drift-rules). The
   drift-reuse run is reported in the session summary; check it again with the public API.
+- 2026-10-25: `consumer-throughput` merged (3.6x consumer throughput, see Demo stack).
 - 2026-10-25: `consumer-crash-fix` merged (retriable commit errors no longer kill consumers;
   chaos-test script). Its CI run is in the session summary; check it with the public API.
   The demo stack was not changed: no restream, the consumers run the old image until rebuilt.
@@ -187,25 +188,36 @@ matters (files, numbers, running services) before relying on it.
   Rest-of-validation stream (2026-10-24): 8.05 events/s, scorer p50/p95/p99 207/549/843 ms
   (docs/serving.md). Consumers crashed twice on retriable commit errors (`NOT_COORDINATOR`);
   no loss or duplicates. Fixed 2026-10-25 (`consumer-crash-fix`, see Known limitations).
-- Throughput: 7.3 events/s with 1 consumer, 12.0 with 3 (1.6x; per-event latency doubled,
-  likely CPU-bound on one laptop, not profiled). Redis state verified against batch after the
+- Throughput (2026-10-25, `consumer-throughput`, docs/serving.md "Throughput benchmark"):
+  **46.8 events/s on 3 consumers** (was 13.1 on the same benchmark), scorer p50 48 ms (was
+  203). Causes:
+  - XGBoost used all 12 cores per one-row predict, about 10 ms each, so 3 consumers
+    oversubscribed the CPU;
+  - the Feast model row recomputed the whole batch frame;
+  - the Feast SDK rebuilt every feature view per call (~30 ms per read).
+  Fixed without changing values: 4,000 replayed scores were bit-identical to the demo's.
+  Remaining: Feast push 16 ms, event frame 17 ms. Older figures: 7.3 events/s with 1 consumer,
+  12.0 with 3. Redis state verified against batch after the
   rebalance (300 uids / 216 cards, 0 mismatches).
 
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
-  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **483 passed** with the
-  GNN stack installed; **473 passed, 1 skipped** without it (2026-10-25, consumer-crash-fix) (as in CI: `tests/test_graph.py`
+  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **495 passed** with the
+  GNN stack installed; **485 passed, 1 skipped** without it (2026-10-25, consumer-throughput) (as in CI: `tests/test_graph.py`
   skips when torch_geometric is missing; the ring tests need no torch).
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
   `TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 python -m pytest
-  tests/test_integration.py` -- 17 passed (2026-10-25, consumer-crash-fix). Never point them at the demo stack.
+  tests/test_integration.py` -- 17 passed (2026-10-25, consumer-throughput). Never point them at the demo stack.
 - GNN: `python -m src.graph.train`, `python -m src.graph.stack --degree-limit 1000 --epochs 7`,
   `DATABASE_URL=... python -m src.graph.rings` (needs requirements-gnn.txt; 10-45 min on CPU).
 - Lint/types: `ruff check .`, `ruff format --check .`, `python -m mypy` (strict; src, tests, scripts).
 - Chaos test (test stack only): `python -m scripts.chaos_kafka_restart [--mode restart|kill|pause]`.
+- Throughput benchmark (clone `fraud_bench` of the demo DB, own Redis/topic/group;
+  docker-compose.bench.yml): `python -m scripts.bench_throughput setup|run|reset|restart|teardown`.
+  Consumer env `STAGE_TIMINGS=1` logs per-stage ms per message.
 - Results files: docs/test-results-unit.txt, docs/test-results-integration.txt.
 
 ### Environment notes
@@ -225,7 +237,8 @@ matters (files, numbers, running services) before relying on it.
 - Feast: late events are approximate; concurrent writes to one entity can lose an update (fix:
   atomic per-entity update or single writer); a failed push is only logged (fix: catch-up
   replay per entity); Feast SDK adds ~50 ms per read.
-- Consumer throughput does not scale linearly on one host.
+- Serving reads/writes Feast through `FeatureStore._get_provider()` (private; feast 0.47.0 is
+  pinned; tested equal to the SDK path, `FeastFeatures(direct_online=False)` keeps the SDK).
 - Consumer commits (fixed 2026-10-25): retriable commit errors (`NOT_COORDINATOR`,
   `COORDINATOR_LOAD_IN_PROGRESS`, `COORDINATOR_NOT_AVAILABLE`, `REQUEST_TIMED_OUT`,
   `_TIMED_OUT`, `retriable()`) are retried 0.2/0.5/1 s, then counted as `commit_rejected` and
@@ -237,7 +250,6 @@ matters (files, numbers, running services) before relying on it.
   scheduled.
 
 ### Next (pick with the user; nothing is in progress)
-- Throughput / performance work (separate run; not started).
 - Analyst dashboard (Streamlit), reading `alerts`, `fraud_rings` and `drift_reports`.
 - Kubernetes (Docker Desktop's built-in Kubernetes): API, consumer, drift job as a CronJob.
   Retraining would need an MLflow server with a shared artifact store first (host-only today).

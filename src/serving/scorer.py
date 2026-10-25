@@ -14,13 +14,15 @@ from typing import TYPE_CHECKING, Any
 
 from src.serving.model import ModelBundle
 from src.serving.online_features import (
-    entity_keys,
+    entity_keys_from_frame,
+    events_to_frame,
     history_feature_values,
     model_row_from_features,
     online_model_row,
 )
 from src.serving.schema import ScoreResponse, TransactionEvent
 from src.serving.store import ScoredRecord, TransactionStore
+from src.timing import stage
 
 if TYPE_CHECKING:
     from src.features.feast_store import FeastFeatures
@@ -65,16 +67,20 @@ class Scorer:
     def score_event(self, event: TransactionEvent) -> ScoreResponse:
         started = time.perf_counter()
         ev = event.to_record()
-        existing = self.store.get(event.TransactionID)
+        with stage("dedupe_get"):
+            existing = self.store.get(event.TransactionID)
         if existing is not None:
             return self._duplicate(existing, ev, started)
 
-        card_id, uid = entity_keys(ev)
+        with stage("entity_keys"):
+            frame = events_to_frame([ev])  # once per event: keys and the model row
+            card_id, uid = entity_keys_from_frame(frame)
         config = self.bundle.history_config
         online: dict[str, Any] | None = None
         if self.read_from_feast and self.feast is not None:
             feats, online = self.feast.read(ev, card_id, uid)
-            row = model_row_from_features(ev, feats, config)
+            with stage("model_frame"):
+                row = model_row_from_features(frame, feats, config)
             prior = feats["uid_prior_txn_count"]
             history_rows = 0 if prior != prior else int(prior)  # NaN (missing key) -> 0
         else:
@@ -83,7 +89,8 @@ class Scorer:
             )
             row = online_model_row(ev, history, config)
             history_rows = len(history)
-        score = float(self.bundle.predict(row)[0])
+        with stage("predict"):
+            score = float(self.bundle.predict(row)[0])
         record = ScoredRecord(
             transaction_id=event.TransactionID,
             transaction_dt=event.TransactionDT,
@@ -95,13 +102,16 @@ class Scorer:
             is_alert=score >= self.bundle.threshold,
             model_version=self.bundle.model_version,
         )
-        if not self.store.save(record):  # lost a race with a concurrent duplicate
+        with stage("pg_save"):
+            saved = self.store.save(record)
+        if not saved:  # lost a race with a concurrent duplicate
             stored = self.store.get(event.TransactionID)
             if stored is None:
                 raise RuntimeError(f"save reported a duplicate but id {event.TransactionID} absent")
             return self._duplicate(stored, ev, started)
         if self.feast is not None:
-            self._update_feast(ev, card_id, uid, online)
+            with stage("feast_push"):
+                self._update_feast(ev, card_id, uid, online)
 
         latency_ms = (time.perf_counter() - started) * 1000
         logger.info(

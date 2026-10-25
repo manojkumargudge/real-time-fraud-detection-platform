@@ -332,6 +332,177 @@ What it shows and what it does not:
   flush gave up with 89 events queued. The script now raises the idle timeout in pause mode
   and pauses only after the producer has finished.
 
+### Throughput benchmark (2026-10-25, branch `consumer-throughput`)
+
+**Problem:**
+- The full-validation stream ran at about 8 events/s on 3 consumers, falling from about 10 to
+  6.7 events/s as the stream went on.
+- Scorer latency was p50/p95/p99 207/549/843 ms, about 2x earlier figures.
+- Target: 30+ events/s on 3 consumers, unthrottled, with the same delivery guarantees.
+
+**Setup** (`scripts/bench_throughput.py`, `docker-compose.bench.yml`; identical for BEFORE and
+AFTER):
+- Database `fraud_bench`: a `pg_dump` clone of the demo database on the demo PostgreSQL.
+  - The last 4,000 events by (TransactionDT, TransactionID) were deleted from it; they are the
+    replay events. The cut is at TransactionDT 15,700,530, and no timestamp straddles it.
+  - Left: 114,108 transactions and 4,948 alerts.
+  - The demo database is only read.
+- Feast state in a separate Redis (`bench-redis`), built with `feast_store materialize --before
+  15700530`. Those are the same transactions fraud_bench holds (transaction IDs checked
+  identical); 57,791 keys.
+- Consumers: 3 containers from the serving image, joined to the demo network, exactly as the demo
+  runs them (`FEATURE_SOURCE=feast`).
+  - Own topic `bench-transactions` (3 partitions) and group `bench-scorer` on the demo broker.
+  - `STAGE_TIMINGS=1` (per-stage timing log line, otherwise no change).
+- Producer: a container on the same network, with pre-encoded events.
+  - Produce times and `scored_at` share the Docker VM clock. The VM clock drifted by up to ~1 s
+    against the Windows host clock, which spoiled the first end-to-end attempt (see below).
+- Laptop: 12 vCPUs in the Docker VM. The wall clock was logged every 5 s in each run: the
+  largest gap was 5 s, so no suspend.
+
+**Feature source:** the demo consumers run `FEATURE_SOURCE=feast` (container environment, and
+`features=feast` in every scored log line). So no per-event history query reaches PostgreSQL.
+
+**PostgreSQL** (EXPLAIN ANALYZE on fraud_bench, busiest card `9500|321|150|visa|226|debit`,
+2,894 rows):
+
+| Per-event query | Plan | Time |
+|---|---|---|
+| dedupe `get` by `transaction_id` | PK index scan | 0.8 ms |
+| `INSERT scored_transactions ... ON CONFLICT DO NOTHING RETURNING` | PK arbiter | 2.0 ms |
+| `INSERT alerts ... ON CONFLICT DO NOTHING` (alerts only) | unique-key arbiter + FK check | 1.5 ms |
+| `card_history` (`FEATURE_SOURCE=store` only; not run by the Feast consumers) | bitmap scan on `ix_scored_card_dt` + sort | 39.0 ms |
+
+Indexes: `scored_transactions_pkey (transaction_id)`, `ix_scored_card_dt (card_id,
+transaction_dt)`, `alerts_pkey`, `alerts_transaction_id_key`. Nothing is missing for the Feast
+path. Only `card_history` grows with a card's history, and it is not on the served path.
+
+**BEFORE** (main + timing logs; replay events 0-999 at 5/s, then 1,000-1,999 unthrottled):
+
+| Measure | Run 1 (5 events/s) | Run 2 (unthrottled) |
+|---|---|---|
+| Throughput, first to last `scored_at` | 5.2 events/s (= input rate) | **13.07 events/s** |
+| End-to-end, produce -> `scored_at`, p50 / p95 / p99 | 114 / 669 / 2,668 ms | 38.1 / 71.9 / 76.1 s (backlog) |
+| Scorer latency (features + score + save + push), p50 / p95 / p99 | 125 / 396 / 660 ms | 203 / 357 / 427 ms |
+
+Per stage, Run 2 (ms, p50 / p95), with Run 1 p50 in brackets:
+
+| Stage | p50 / p95 | Run 1 p50 |
+|---|---|---|
+| Kafka poll (returning call; backlog) | 0.02 / 0.04 | (266, waiting) |
+| dedupe `get` (PostgreSQL) | 0.75 / 2.95 | (0.84) |
+| entity keys (pandas, one row) | 31.0 / 61.6 | (22.3) |
+| Feast read (`get_online_features`) | 46.6 / 84.9 | (28.3) |
+| features from state (`history_features`) | 0.09 / 0.21 | (0.08) |
+| model frame (`build_model_frame` on one row) | 40.2 / 76.6 | (24.2) |
+| model predict (encoder + XGBoost) | 51.4 / 116.1 | (28.4) |
+| PostgreSQL write (`save`) | 7.2 / 20.3 | (6.5) |
+| Feast push (2 pushes) | 15.8 / 38.3 | (13.1) |
+| commit (synchronous) | 2.0 / 13.0 | (1.6) |
+| whole message (`process`) | 204.8 / 359.9 | (126.1) |
+
+CPU during Run 2 (`docker stats`, mean / max, 100% = one core): consumers 186 / 280, 168 / 265
+and 199 / 293%; Kafka 38 / 173%; PostgreSQL 3.6 / 8.8%; bench Redis 3.5 / 34.5%.
+
+**Findings:**
+- PostgreSQL, Redis and Kafka are not the bottleneck. The database work is under 10 ms per
+  event, and Redis and PostgreSQL stay below 4% CPU.
+- **The consumers are CPU-bound on overhead, not on useful work.**
+  - Each single-threaded consumer burns about 2 cores (42 threads per process). XGBoost
+    predicts with `nthread` = all 12 cores, so 3 consumers start 36 OpenMP workers for
+    one-row predictions.
+  - In the consumer image, one `inplace_predict` takes 9.75 ms with 12 threads vs 0.51 ms with
+    `nthread=1`, before any contention. Under 3-way contention, predict is 51 ms and every
+    other CPU stage slows down too (Run 2 stages are 1.4-1.8x Run 1).
+- **Repeated pandas work per event:**
+  - The event is turned into a one-row DataFrame twice (entity keys, model frame).
+  - With Feast, `model_row_from_features` runs the whole batch `build_model_frame`, which
+    recomputes the entity keys and every history feature, and then overwrites all 12 history
+    features with the Feast values.
+  - Entity keys + model frame + encoder are about 60% of the message time.
+- Feast SDK overhead: `get_online_features` takes 28-47 ms and the two pushes 13-16 ms, for
+  about 2 ms of Redis round trips.
+- The earlier slowdown "as `scored_transactions` grew" is not caused by the table on the Feast
+  path. The per-event queries are index lookups and inserts. The 2026-10-24 stream also shared
+  the CPU with tests and image builds; that run was not instrumented, so this is not proven.
+
+**Fixes** (all allowed kinds: repeated work removed, objects cached; no change to the model, the
+features, the feature source, the schema or delivery):
+1. XGBoost `nthread=1` for serving. Scores are bit-identical (tested against the default
+   thread count).
+2. `predict` passes a NumPy array (columns in `feature_columns` order, checked against the
+   booster at load) and has a single-row encoder path.
+3. The one-event frame is built once (keys + model row), and one-row entity keys are rendered
+   value by value with the same NumPy formatting.
+4. Feast path: model row = `raw_model_columns` (the helper `build_model_frame` now uses) + the
+   Feast values. The batch history computation it used to run was fully overwritten.
+5. Feast reads and writes go through Feast's provider (`online_read` / `ingest_df`, the calls
+   behind `get_online_features` / `push`), with the two state feature views resolved once.
+   - Same online store, keys and value conversion.
+   - Uses `FeatureStore._get_provider()`, a private accessor; `feast==0.47.0` is pinned, and a
+     test compares the result with the SDK path. `FeastFeatures(direct_online=False)` keeps the
+     SDK path.
+
+Every fast path has an equality test against the old code (model row, entity keys, encoder,
+scores, single- vs multi-thread predictions, and Feast direct vs SDK reads, writes and final
+state). The existing serving-vs-batch parity tests pass unchanged.
+
+**AFTER** (same fraud_bench, same setup; replay events 2,000-2,999 at 5/s, then 3,000-3,999
+unthrottled. These are different, adjacent events of the same clone, and the history includes
+the BEFORE events):
+
+| Measure | BEFORE | AFTER |
+|---|---|---|
+| Run 2 throughput (unthrottled, first to last `scored_at`) | 13.07 events/s | **46.83 events/s** (3.6x) |
+| Run 1 end-to-end p50 / p95 / p99 (5 events/s) | 114 / 669 / 2,668 ms | **30.6 / 60.8 / 74.0 ms** |
+| Run 2 end-to-end p50 / p95 / p99 (backlog of 1,000) | 38.1 / 71.9 / 76.1 s | 11.0 / 19.1 / 20.7 s |
+| Scorer latency Run 1, p50 / p95 / p99 | 125 / 396 / 660 ms | 41 / 84 / 109 ms |
+| Scorer latency Run 2, p50 / p95 / p99 | 203 / 357 / 427 ms | 48 / 105 / 147 ms |
+| Run 2 stage p50 / p95: Kafka poll | 0.02 / 0.04 ms | 0.03 / 0.05 ms |
+| dedupe `get` | 0.75 / 2.95 ms | 0.95 / 2.13 ms |
+| entity keys (now incl. building the event frame) | 31.0 / 61.6 ms | 17.2 / 43.2 ms |
+| Feast read | 46.6 / 84.9 ms | **1.7 / 4.2 ms** |
+| features from state | 0.09 / 0.21 ms | 0.12 / 0.29 ms |
+| model frame | 40.2 / 76.6 ms | 4.0 / 9.6 ms |
+| model predict | 51.4 / 116.1 ms | **3.1 / 7.1 ms** |
+| PostgreSQL write | 7.2 / 20.3 ms | 4.2 / 9.4 ms |
+| Feast push | 15.8 / 38.3 ms | 15.6 / 30.9 ms |
+| commit | 2.0 / 13.0 ms | 1.8 / 5.1 ms |
+| whole message | 204.8 / 359.9 ms | 50.0 / 107.6 ms |
+| Run 2 CPU mean / max, consumers | 186/280, 168/265, 199/293% | 49/87, 55/89, 49/88% |
+| Run 2 CPU mean / max, Kafka / PostgreSQL / bench Redis | 38/173, 3.6/8.8, 3.5/34.5% | 56/192, 8.2/15.9, 7.5/15.6% |
+| Run 1 CPU mean, consumers | 69, 56, 78% | 5.8, 7.0, 6.1% |
+
+All 4,000 replay events were stored exactly once (status `scored`, none duplicate or
+dead-lettered; DLQ empty, lag 0). fraud_bench ended at 118,108 rows and 5,093 alerts, the
+demo database's counts.
+
+**End-to-end parity:** each of the 4,000 replayed scores is bit-identical to the score the demo
+database stored on 2026-10-24 for the same transaction, with the old code (max difference 0.0,
+0 alert decisions differ). This holds for events 0-1,999 (BEFORE code) and 2,000-3,999 (AFTER
+code).
+
+**What is left** (not needed for the target):
+- Feast push, 15.6 ms: Feast's DataFrame -> Arrow -> protobuf conversion for one row, twice.
+  Fix: build the two value protos directly and call the online store's `online_write_batch`.
+- Event frame + keys, 17 ms: `events_to_frame` (pandas `from_records` + per-column
+  `to_numeric`) for one event. Fix: a single-event constructor with the same dtypes, tested
+  equal.
+- Both are allowed kinds of change and were not needed to reach 30 events/s.
+
+**Discarded runs:**
+- The first BEFORE pair (`reports/bench/discarded-before-*.json`) was not discarded for
+  suspend (largest gap 5 s), but for measurement reasons:
+  - Its producer ran on the Windows host, so end-to-end latency compared the host clock with
+    the Docker VM's `scored_at`. The two clocks moved about 480 ms apart between the two runs,
+    and within Run 1 they drifted and stepped by up to about 1 s.
+  - In Run 2 the host producer needed 33.8 s for 1,000 events, because it encoded inside the
+    loop and competed for CPU.
+- Its Run 2 throughput (13.28 events/s) agrees with the repeat (13.07).
+- `bench_throughput reset` restored fraud_bench and the bench Redis to the post-setup state
+  (same counts and key count), and both BEFORE runs were repeated with the containerised,
+  pre-encoded producer.
+
 ## 7. Limitations
 
 - **Cold start:** history contains only events this system has ingested. Until earlier history
@@ -341,9 +512,11 @@ What it shows and what it does not:
   already been scored.
 - **Ordering:** ordering is guaranteed only within a card's partition. Events of one `uid` all
   share a card key, so they are ordered too.
-- **Throughput:** about 10 events/s per consumer, and the cost grows with card history. Raising
-  it needs incremental per-entity aggregates or a feature store; Feast is planned. Moving off
-  the shared batch code requires the parity test to keep passing.
+- **Throughput:**
+  - With Feast (the default): 46.8 events/s on 3 consumers on one laptop, about 16 per
+    consumer ("Throughput benchmark", 2026-10-25). Not a production capacity figure.
+  - The `FEATURE_SOURCE=store` path still reads the card's whole history per event, so its cost
+    grows with card history (39 ms for the busiest card's query alone).
 - **Single connection:** each process uses one PostgreSQL connection behind a lock. There is no
   connection pool, retry policy or migration tool; tables are created at startup.
 - **Security:** the API has no authentication. Kafka uses plaintext with no authentication or

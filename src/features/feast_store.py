@@ -30,7 +30,7 @@ import argparse
 import logging
 import os
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -50,6 +50,7 @@ from src.features.entity_state import (
 )
 from src.features.history import AMOUNT, TIME, HistoryConfig
 from src.features.split import validation_start
+from src.timing import stage
 
 logger = logging.getLogger(__name__)
 
@@ -414,6 +415,39 @@ class FeastFeatures:
     # False: read only the state and compute the features in-process with the function the
     # on-demand view runs (same values, about 100 ms less SDK overhead per event).
     use_odfv: bool = False
+    # True: read and write the two state views through Feast's provider (the online store
+    # behind get_online_features / push) with the feature views resolved once. The SDK calls
+    # rebuild every feature view from the registry on each call (~22 FeatureView.from_proto with
+    # runtime type checks, ~30 ms per read); same keys, values and store (tested equal).
+    direct_online: bool = True
+    _views: dict[str, Any] | None = field(default=None, init=False, repr=False)
+
+    def _state_views(self) -> dict[str, Any]:
+        if self._views is None:
+            views = {v.name: v for v in self.store.list_feature_views()}
+            self._views = {UID_VIEW: views[UID_VIEW], CARD_VIEW: views[CARD_VIEW]}
+        return self._views
+
+    def _read_direct(self, entity: dict[str, Any], refs: list[str]) -> dict[str, Any]:
+        """``get_online_features(refs, [entity]).to_dict()`` flattened, for the state views."""
+        from feast.protos.feast.types.EntityKey_pb2 import EntityKey
+        from feast.protos.feast.types.Value_pb2 import Value
+        from feast.type_map import feast_value_type_to_python_type
+
+        provider = self.store._get_provider()
+        flat: dict[str, Any] = dict(entity)
+        for view_name, join_key in ((UID_VIEW, USER_ID), (CARD_VIEW, CARD_ID)):
+            view = self._state_views()[view_name]
+            names = [r.split(":", 1)[1] for r in refs if r.startswith(f"{view_name}:")]
+            key = EntityKey(
+                join_keys=[join_key], entity_values=[Value(string_val=entity[join_key])]
+            )
+            ((_, data),) = provider.online_read(
+                config=self.store.config, table=view, entity_keys=[key], requested_features=names
+            )
+            for n in names:  # not found -> None, as get_online_features returns it
+                flat[n] = feast_value_type_to_python_type(data[n]) if data and n in data else None
+        return flat
 
     def read(
         self, event: dict[str, Any], card: str | None, uid: str | None
@@ -425,8 +459,12 @@ class FeastFeatures:
         else:
             refs = [r for r in feature_refs(self.config) if not r.startswith(f"{ODFV}:")]
             entity = {USER_ID: row[USER_ID], CARD_ID: row[CARD_ID]}
-        resp = self.store.get_online_features(features=refs, entity_rows=[entity]).to_dict()
-        flat = {k: v[0] for k, v in resp.items()}
+        with stage("feast_read"):
+            if self.direct_online and not self.use_odfv:
+                flat = self._read_direct(entity, refs)
+            else:
+                resp = self.store.get_online_features(features=refs, entity_rows=[entity])
+                flat = {k: v[0] for k, v in resp.to_dict().items()}
         if self.use_odfv:
             feats = {
                 n: (float("nan") if flat[n] is None else float(flat[n]))
@@ -434,12 +472,13 @@ class FeastFeatures:
             }
         else:
             keyed = uid is not None and card is not None
-            feats = history_features(
-                uid_from_row(flat) if keyed else None,
-                card_from_row(flat, self.config.change_columns) if keyed else None,
-                event,
-                self.config,
-            )
+            with stage("state_features"):
+                feats = history_features(
+                    uid_from_row(flat) if keyed else None,
+                    card_from_row(flat, self.config.change_columns) if keyed else None,
+                    event,
+                    self.config,
+                )
         return feats, flat
 
     def push(
@@ -460,16 +499,26 @@ class FeastFeatures:
         t, tid = int(event[TIME]), int(event["TransactionID"])
         u = apply_uid(uid_from_row(online), t, float(event[AMOUNT]), self.config)
         c = apply_card(card_from_row(online, cols), t, tid, event_values(event, cols), cols)
-        for view_push, field, row in (
-            (UID_PUSH, UID_WRITE_TS, uid_row(uid, u, _next_write(online.get(UID_WRITE_TS), t))),
+        for view_name, view_push, ts_field, row in (
             (
+                UID_VIEW,
+                UID_PUSH,
+                UID_WRITE_TS,
+                uid_row(uid, u, _next_write(online.get(UID_WRITE_TS), t)),
+            ),
+            (
+                CARD_VIEW,
                 CARD_PUSH,
                 CARD_WRITE_TS,
                 card_row(card, c, cols, _next_write(online.get(CARD_WRITE_TS), t)),
             ),
         ):
-            stamp = {EVENT_TIMESTAMP: to_datetime(row[field]), CREATED: datetime.now(UTC)}
-            self.store.push(view_push, pd.DataFrame([row | stamp]), to=PushMode.ONLINE)
+            stamp = {EVENT_TIMESTAMP: to_datetime(row[ts_field]), CREATED: datetime.now(UTC)}
+            df = pd.DataFrame([row | stamp])
+            if self.direct_online:  # what push -> write_to_online_store runs for this view
+                self.store._get_provider().ingest_df(self._state_views()[view_name], df)
+            else:
+                self.store.push(view_push, df, to=PushMode.ONLINE)
 
 
 def _next_write(previous: Any, t: int) -> int:

@@ -165,3 +165,37 @@ def test_pre_stream_events_are_strictly_earlier_with_batch_keys() -> None:
     assert len(pre) == int((frame["TransactionDT"] < before).sum())  # ties at `before` excluded
     keys = keys_by_id(events)
     assert all((e.card, e.uid) == keys[e.event["TransactionID"]] for e in pre)
+
+
+def test_direct_online_access_equals_the_feast_sdk(bundle_dir: Path, tmp_path: Path) -> None:
+    """The provider path (feature views resolved once) reads and writes exactly what
+    get_online_features / push do: same features, scores, raw rows and final state."""
+    from src.serving.model import ModelBundle
+    from src.serving.schema import TransactionEvent
+    from src.serving.scorer import Scorer
+    from src.serving.store import InMemoryStore
+    from tests.test_entity_state import arrival_order
+
+    bundle = ModelBundle.load(bundle_dir)
+    cfg = bundle.history_config
+    pre, stream = stream_scenario()
+    feasts = {}
+    for name, direct in (("direct", True), ("sdk", False)):
+        store = fs.open_store(tmp_path / name, config=cfg)
+        fs.materialize_initial_state(store, tmp_path / name, entity_events(pre), cfg)
+        feasts[name] = fs.FeastFeatures(store, cfg, direct_online=direct)
+    scorers = {
+        n: Scorer(bundle, InMemoryStore(), feast=f, read_from_feast=True) for n, f in feasts.items()
+    }
+    for ev in arrival_order(stream, 5):
+        a, b = (s.score_event(TransactionEvent.model_validate(ev)) for s in scorers.values())
+        assert a.score == b.score and a.history_features == b.history_features
+        card, uid = keys_by_id([ev])[ev["TransactionID"]]
+        assert feasts["direct"].read(ev, card, uid)[1] == feasts["sdk"].read(ev, card, uid)[1]
+    keys = {k for k in keys_by_id(pre + stream).values() if k[0] is not None and k[1] is not None}
+    probe = stream[0]
+    for card, uid in sorted(keys) + [("no-such-card", "no-such-uid")]:
+        direct_store_by_sdk = fs.FeastFeatures(feasts["direct"].store, cfg, direct_online=False)
+        via_sdk = direct_store_by_sdk.read(probe, card, uid)[1]
+        assert feasts["direct"].read(probe, card, uid)[1] == via_sdk  # direct read == SDK read
+        assert feasts["sdk"].read(probe, card, uid)[1] == via_sdk  # direct writes == SDK pushes

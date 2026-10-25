@@ -81,6 +81,10 @@ def build_entity_key(
     if df.empty:
         return pd.Series(np.nan, index=df.index, dtype=object, name=name)
     sub = df[list(columns)]
+    if len(sub) == 1:  # serving: one event; pandas string ops cost ~20 ms for one row
+        return pd.Series(
+            [_render_row(sub, columns, required)], index=df.index, dtype=object, name=name
+        )
     if len(sub) <= SMALL_FRAME_ROWS:  # online path: grouping costs more than it saves
         return _render_keys(sub, columns, required).rename(name)
     # Render strings once per distinct combination (~14x fewer rows on IEEE-CIS), then broadcast.
@@ -99,6 +103,24 @@ def _render_keys(
     parts = [_component_to_str(sub[c]) for c in columns]
     key = parts[0].str.cat(parts[1:], sep=SEPARATOR) if len(parts) > 1 else parts[0]
     return key.where(sub[list(required)].notna().all(axis=1).to_numpy())
+
+
+def _render_row(sub: pd.DataFrame, columns: tuple[str, ...], required: tuple[str, ...]) -> Any:
+    """``_render_keys`` for a one-row frame, value by value (same rendering; tested equal)."""
+    parts = []
+    for c in columns:
+        v = sub[c].iloc[0]
+        if pd.isna(v):
+            if c in required:
+                return np.nan
+            parts.append(MISSING_TOKEN)
+        elif pd.api.types.is_numeric_dtype(sub[c]):
+            f = np.array([v], dtype="float64")  # the same numpy rendering as the vector path
+            integral = np.isfinite(f[0]) and f[0] == np.floor(f[0]) and abs(f[0]) <= 2**53
+            parts.append(str(f.astype("int64")[0]) if integral else f.astype(str)[0])
+        else:
+            parts.append(str(v))
+    return SEPARATOR.join(parts)
 
 
 def build_entity_keys(df: pd.DataFrame) -> pd.DataFrame:
