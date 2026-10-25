@@ -38,34 +38,34 @@ Aim for production-style engineering, but document operational, security,
 scalability, and compliance limitations honestly. Do not claim financial-sector
 production readiness without appropriate evidence.
 
-## Current project state (end of 2026-10-24: security, drift, drift-rules, drift-reuse merged)
+## Current project state (end of 2026-10-25: crash fix, throughput, k8s-smoke, k8s-full merged)
 
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
 
-### Where things stand (end of 2026-10-24)
-- `main` holds four merged branches from 2026-10-24: `security`, `drift`, `drift-rules`, and
-  `drift-reuse` (the challenger-reuse guard). CI is green through run #8 (drift-rules). The
-  drift-reuse run is reported in the session summary; check it again with the public API.
-- 2026-10-25: `k8s-full` merged. Kubernetes deployment on Minikube (docs/kubernetes.md),
-  namespace `fraud-k8s`: FEATURE_SOURCE=feast with a Feast materialize Job, consumer heartbeat
-  liveness probe (`CONSUMER_HEARTBEAT_FILE`), drift CronJob (`--no-retrain`; retraining stays
-  on the host).
-  - Raw data: copied once into the node's `/data/fraud-raw`, mounted read-only.
-  - Results: 20 replayed scores bit-identical to the demo DB; frozen consumer restarted by the
-    probe; drift row written.
-  - The namespace was deleted afterwards and Minikube stopped (cluster and the node's
-    /data/fraud-raw kept). Images `fraud-serving:k8s-local` and `fraud-monitoring:k8s-local`
-    are local only.
-- 2026-10-25: Kubernetes smoke test on Minikube 1.39.0 (Docker driver, 4 CPUs / 4 GB; Docker
-  VM 10 GB via `%UserProfile%\.wslconfig`): branch `k8s-smoke`, merged at 01fd172. All pods
-  ready, 20 + 10 events scored, consumer kill recovered (docs/kubernetes.md). The namespace was
-  deleted afterwards and Minikube stopped (cluster kept). Docker Desktop's built-in Kubernetes
-  cannot be enabled from the CLI, so it was not used.
-- 2026-10-25: `consumer-throughput` merged (3.6x consumer throughput, see Demo stack).
-- 2026-10-25: `consumer-crash-fix` merged (retriable commit errors no longer kill consumers;
-  chaos-test script). Its CI run is in the session summary; check it with the public API.
-  The demo stack was not changed: no restream, the consumers run the old image until rebuilt.
+### Where things stand (end of 2026-10-25)
+- `main` = `origin/main` at the merge of `k8s-full` (0207862) or later; CI is green through
+  run #14. Merged on 2026-10-25, in order:
+  - `consumer-crash-fix` (CI #10): retriable commit errors are retried, then left for
+    redelivery instead of killing the consumer; chaos script `scripts/chaos_kafka_restart.py`.
+  - `consumer-throughput` (CI #11): 13.1 -> 46.8 events/s on 3 consumers, scores unchanged;
+    benchmark `scripts/bench_throughput.py`.
+  - README "How this project was built" (CI #12, direct on main).
+  - `k8s-smoke` (CI #13) and `k8s-full` (CI #14): Minikube deployment, docs/kubernetes.md.
+- Earlier (2026-10-24): `security`, `drift`, `drift-rules`, `drift-reuse`.
+- State at shutdown: backups/state-2026-10-25.txt (gitignored backups/, with a pg_dump and an
+  mlflow.db copy). Both Compose stacks were stopped cleanly (`docker compose stop`, volumes
+  kept). Restart commands are in that file.
+- Demo stack: API and consumers rebuilt from main ca57b2c (crash fix + throughput) on
+  2026-10-25; no restream since, row counts unchanged (118,108 / 5,093 / 9 / 20).
+- Kubernetes: Minikube 1.39.0 (Docker driver, 4 CPUs / 4 GB, Kubernetes 1.37.0).
+  - The Docker VM has 10 GB via `%UserProfile%\.wslconfig`.
+  - The cluster is stopped and kept; namespace `fraud-k8s` deleted (manifests in `k8s/`).
+  - The node keeps the raw-data copy at `/data/fraud-raw` (on the `minikube` volume).
+  - Images `fraud-serving:k8s-local` and `fraud-monitoring:k8s-local` are local only.
+  - Docker Desktop's built-in Kubernetes cannot be enabled from the CLI, so it was not used.
+- Other projects' containers (kasparro, healthcare-crm) were stopped for memory and left
+  stopped; kasparro has restart policy `always`, so it comes back with every Docker start.
 - **Trigger rules and thresholds are final** (user decision 2026-10-24). Do not change them
   without being asked.
 - MLflow registry `fraud-xgboost`: champion = v2, production = v2, challenger = v7.
@@ -75,7 +75,7 @@ matters (files, numbers, running services) before relying on it.
     numbers are not reused.
   - v7 has no reuse tags, so the next real retrain trains once more and registers v8.
 - Demo stack: the whole validation window is streamed (118,108 events). `drift_reports` holds
-  ids 1-9. Both Compose stacks were left running, with all volumes kept.
+  ids 1-9.
 
 ### Done (on `main`)
 - Data: IEEE-CIS loader + EDA + data-quality report (`src/data/`, reports/). Fraud rate 3.499%.
