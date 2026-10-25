@@ -1,0 +1,12 @@
+# kubectl apply -k k8s   (after creating the Secret fraud-postgres; docs/kubernetes.md)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fraud-k8s
+resources:
+  - namespace.yaml
+  - app-config.yaml
+  - postgres.yaml
+  - kafka.yaml
+  - redis.yaml
+  - api.yaml
+  - consumer.yaml

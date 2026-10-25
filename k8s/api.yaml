@@ -1,0 +1,77 @@
+# FastAPI scoring service (src/serving/api.py): /health and /score on port 8000.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels: {app: api}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: api}
+  template:
+    metadata:
+      labels: {app: api}
+    spec:
+      enableServiceLinks: false
+      initContainers:
+        # The API exits at startup without PostgreSQL; wait instead of crash-looping.
+        - name: wait-for-postgres
+          image: fraud-serving:k8s-local
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+                import socket, sys, time
+                targets = [t.split(":") for t in sys.argv[1:]]
+                for host, port in targets:
+                    for _ in range(120):
+                        try:
+                            socket.create_connection((host, int(port)), timeout=2).close()
+                            print("reachable", host, port, flush=True)
+                            break
+                        except OSError:
+                            time.sleep(2)
+                    else:
+                        sys.exit(f"{host}:{port} not reachable")
+            - postgres:5432
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      containers:
+        - name: api
+          image: fraud-serving:k8s-local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef: {name: fraud-app-config}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: fraud-postgres, key: password}
+            - name: DATABASE_URL
+              value: postgresql://fraud:$(POSTGRES_PASSWORD)@postgres:5432/fraud
+          # /health is 503 while PostgreSQL is unreachable: readiness takes the pod out of the
+          # Service; liveness allows 60 s before a restart.
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: 8000}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector: {app: api}
+  ports:
+    - {port: 8000, targetPort: 8000}

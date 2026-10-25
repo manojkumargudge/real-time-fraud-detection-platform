@@ -1,0 +1,38 @@
+# One-off producer (same image): publishes the events in ConfigMap smoke-events (events.json,
+# exported from the local IEEE-CIS files by scripts/k8s_events.py) with src.streaming.producer.
+#   kubectl -n fraud-k8s create configmap smoke-events --from-file=events.json=k8s/local/events.json
+#   kubectl -n fraud-k8s apply -f k8s/jobs/produce-events.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: produce-events
+  namespace: fraud-k8s
+spec:
+  backoffLimit: 0  # never re-send: one run, one set of messages
+  template:
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      containers:
+        - name: producer
+          image: fraud-serving:k8s-local
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+              import json, logging
+              from confluent_kafka import Producer
+              from src.streaming.producer import publish
+              logging.basicConfig(level=logging.INFO)
+              events = json.load(open("/events/events.json", encoding="utf-8"))
+              producer = Producer({"bootstrap.servers": "kafka:9092", "acks": "all"})
+              print("published", publish(producer, "transactions", events), flush=True)
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - {name: events, mountPath: /events, readOnly: true}
+      volumes:
+        - name: events
+          configMap: {name: smoke-events}

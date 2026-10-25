@@ -83,7 +83,7 @@ from the holdout's. Next step: an alert-budget threshold, checked on post-deploy
 - PyTorch Geometric GNN for fraud rings
 - Evidently drift reports and a retraining trigger
 - Analyst dashboard
-- Kubernetes (Minikube)
+- Kubernetes (Minikube): smoke test in [docs/kubernetes.md](docs/kubernetes.md) (branch `k8s-smoke`)
 
 Note: the IEEE-CIS fraud rate is about 3.5% (3.499% overall), not under 1%.
 

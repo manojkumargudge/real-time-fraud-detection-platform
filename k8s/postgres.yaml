@@ -1,0 +1,68 @@
+# PostgreSQL 16.4 (single instance) with a PVC. Password: Secret fraud-postgres, key password,
+# created at deploy time (docs/kubernetes.md), never in a file.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels: {app: postgres}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}  # one pod owns the volume
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: postgres
+          image: postgres:16.4-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - {name: POSTGRES_USER, value: fraud}
+            - {name: POSTGRES_DB, value: fraud}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: fraud-postgres, key: password}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "fraud", "-d", "fraud"]
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "fraud", "-d", "fraud"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {cpu: 500m, memory: 384Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: postgres-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app: postgres}
+  ports:
+    - {port: 5432, targetPort: 5432}

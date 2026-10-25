@@ -1,0 +1,4 @@
+# Build context for Dockerfile.k8s: only the model bundle (BuildKit reads <Dockerfile>.dockerignore).
+*
+!artifacts/baseline/model.json
+!artifacts/baseline/metadata.json

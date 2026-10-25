@@ -1,0 +1,59 @@
+# Kafka consumers (src/streaming/consumer.py): one per partition of transactions (3).
+# No probes: the consumer has no HTTP endpoint; a crash restarts the container, and an
+# uncommitted message is redelivered (idempotent writes).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer
+  labels: {app: consumer}
+spec:
+  replicas: 3
+  selector:
+    matchLabels: {app: consumer}
+  template:
+    metadata:
+      labels: {app: consumer}
+    spec:
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30  # SIGTERM: finish + commit the in-flight message
+      initContainers:
+        - name: wait-for-dependencies
+          image: fraud-serving:k8s-local
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+                import socket, sys, time
+                targets = [t.split(":") for t in sys.argv[1:]]
+                for host, port in targets:
+                    for _ in range(120):
+                        try:
+                            socket.create_connection((host, int(port)), timeout=2).close()
+                            print("reachable", host, port, flush=True)
+                            break
+                        except OSError:
+                            time.sleep(2)
+                    else:
+                        sys.exit(f"{host}:{port} not reachable")
+            - postgres:5432
+            - kafka:9092
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      containers:
+        - name: consumer
+          image: fraud-serving:k8s-local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "src.streaming.consumer"]
+          envFrom:
+            - configMapRef: {name: fraud-app-config}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: fraud-postgres, key: password}
+            - name: DATABASE_URL
+              value: postgresql://fraud:$(POSTGRES_PASSWORD)@postgres:5432/fraud
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 512Mi}
