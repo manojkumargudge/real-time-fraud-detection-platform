@@ -14,7 +14,8 @@ spec:
     spec:
       enableServiceLinks: false
       initContainers:
-        # The API exits at startup without PostgreSQL; wait instead of crash-looping.
+        # The API exits at startup without PostgreSQL (and Feast needs Redis); wait instead of
+        # crash-looping.
         - name: wait-for-postgres
           image: fraud-serving:k8s-local
           imagePullPolicy: IfNotPresent
@@ -35,6 +36,7 @@ spec:
                     else:
                         sys.exit(f"{host}:{port} not reachable")
             - postgres:5432
+            - redis:6379
           resources:
             requests: {cpu: 10m, memory: 32Mi}
             limits: {cpu: 100m, memory: 64Mi}

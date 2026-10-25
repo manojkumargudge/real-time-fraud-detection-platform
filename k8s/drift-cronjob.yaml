@@ -1,0 +1,51 @@
+# Drift job (src/monitoring/run_drift.py --no-retrain) every 6 hours (UTC): feature drift,
+# prediction drift and delayed-label PR-AUC over the in-cluster scored_transactions; one row in
+# drift_reports per run. Drift checks only: retraining needs the MLflow registry, a local SQLite
+# file on the host (docs/kubernetes.md). Run once by hand:
+#   kubectl -n fraud-k8s create job drift-manual --from=cronjob/drift
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: drift
+spec:
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false
+          containers:
+            - name: drift
+              image: fraud-monitoring:k8s-local
+              imagePullPolicy: IfNotPresent
+              command:
+                - python
+                - -m
+                - src.monitoring.run_drift
+                - --no-retrain
+                - --raw-dir
+                - /data/raw
+                - --reports-dir
+                - /tmp/drift-reports  # HTML report: pod-local (the result is the drift_reports row)
+              env:
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef: {name: fraud-postgres, key: password}
+                - name: DATABASE_URL
+                  value: postgresql://fraud:$(POSTGRES_PASSWORD)@postgres:5432/fraud
+                - {name: EVIDENTLY_DISABLE_TELEMETRY, value: "1"}
+                - {name: DO_NOT_TRACK, value: "1"}
+              resources:
+                requests: {cpu: 500m, memory: 1Gi}
+                limits: {cpu: "2", memory: 2Gi}
+              volumeMounts:
+                - {name: raw, mountPath: /data/raw, readOnly: true}
+          volumes:
+            - name: raw
+              hostPath: {path: /data/fraud-raw, type: Directory}

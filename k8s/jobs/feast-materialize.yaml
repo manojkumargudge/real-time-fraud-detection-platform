@@ -1,0 +1,67 @@
+# Feast cold start (src/features/feast_store.py materialize): each entity's state after all batch
+# transactions before the validation cut-off, written to the in-cluster Redis -- the starting
+# state the demo stack was materialized with. Run once after deploying, before any event:
+#   kubectl apply -f k8s/jobs/feast-materialize.yaml
+#   kubectl -n fraud-k8s wait --for=condition=complete job/feast-materialize --timeout=15m
+# Raw data: hostPath /data/fraud-raw on the Minikube node, read-only, copied there once with
+# 'minikube cp' (docs/kubernetes.md). Never in an image or in git.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: feast-materialize
+  namespace: fraud-k8s
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      initContainers:
+        - name: wait-for-redis
+          image: fraud-serving:k8s-local
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+                import socket, sys, time
+                targets = [t.split(":") for t in sys.argv[1:]]
+                for host, port in targets:
+                    for _ in range(120):
+                        try:
+                            socket.create_connection((host, int(port)), timeout=2).close()
+                            print("reachable", host, port, flush=True)
+                            break
+                        except OSError:
+                            time.sleep(2)
+                    else:
+                        sys.exit(f"{host}:{port} not reachable")
+            - redis:6379
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      containers:
+        - name: materialize
+          image: fraud-serving:k8s-local
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - src.features.feast_store
+            - materialize
+            - --before
+            - validation
+            - --raw-dir
+            - /data/raw
+            - --repo-dir
+            - /tmp/feast-materialize
+          envFrom:
+            - configMapRef: {name: fraud-app-config}
+          resources:  # peak ~0.9 GiB (590,540 rows + state fold, measured on the host)
+            requests: {cpu: 500m, memory: 1Gi}
+            limits: {cpu: "2", memory: 1536Mi}
+          volumeMounts:
+            - {name: raw, mountPath: /data/raw, readOnly: true}
+      volumes:
+        - name: raw
+          hostPath: {path: /data/fraud-raw, type: Directory}

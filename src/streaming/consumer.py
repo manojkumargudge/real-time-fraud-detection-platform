@@ -2,7 +2,8 @@
 
 Usage: ``python -m src.streaming.consumer [--max-messages N] [--idle-timeout S]``
 (env: ``KAFKA_BOOTSTRAP_SERVERS``, ``KAFKA_TOPIC``, ``KAFKA_GROUP_ID``, ``KAFKA_DLQ_TOPIC``,
-``MODEL_DIR``, ``DATABASE_URL``; ``STAGE_TIMINGS=1`` logs per-stage timings per message).
+``MODEL_DIR``, ``DATABASE_URL``; ``STAGE_TIMINGS=1`` logs per-stage timings per message;
+``CONSUMER_HEARTBEAT_FILE`` enables the liveness heartbeat file, see ``Heartbeat``).
 
 Offset safety: a message's offset is committed only after its result is persisted or its DLQ
 record is confirmed. Anything that interrupts a message -- shutdown, a rebalance, a crash --
@@ -27,6 +28,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from confluent_kafka import Consumer, KafkaError, KafkaException, TopicPartition
@@ -97,6 +99,29 @@ def build_dead_letter_sink(settings: Settings) -> DeadLetterSink:
     )
 
 
+class Heartbeat:
+    """Liveness file for a Kubernetes exec probe (docs/kubernetes.md), off unless a path is set.
+
+    Touched on every poll-loop iteration (also when idle) and during retry waits, so it goes
+    stale only when the loop itself stops (hung or frozen process), not while the consumer is
+    waiting out a database or DLQ outage.
+    """
+
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path
+        self._warned = False
+
+    def beat(self) -> None:
+        if self.path is None:
+            return
+        try:
+            self.path.touch()
+        except OSError as exc:  # never let the probe file stop consumption
+            if not self._warned:
+                logger.warning("cannot update heartbeat file %s: %s", self.path, exc)
+                self._warned = True
+
+
 class _MessageAbandonedError(Exception):
     """Stop requested or the in-flight partition was revoked: leave the message uncommitted."""
 
@@ -112,9 +137,11 @@ class _Worker:
         policy: RetryPolicy,
         stop: threading.Event | None,
         counts: Counter[str],
+        heartbeat: Heartbeat | None = None,
     ) -> None:
         self.consumer, self.scorer, self.dead_letters = consumer, scorer, dead_letters
         self.policy, self.stop, self.counts = policy, stop, counts
+        self.heartbeat = heartbeat or Heartbeat()
         self.revoked: set[tuple[str, int]] = set()  # revoked while the current message ran
 
     def on_assign(self, _consumer: Any, partitions: list[TopicPartition]) -> None:
@@ -183,6 +210,7 @@ class _Worker:
         try:
             deadline = time.monotonic() + seconds
             while True:
+                self.heartbeat.beat()
                 if self.stop is not None and self.stop.is_set():
                     raise _MessageAbandonedError("stop requested")
                 if tp in self.revoked:
@@ -313,6 +341,7 @@ def run(
     stop: threading.Event | None = None,
     commit_delays: tuple[float, ...] = COMMIT_RETRY_DELAYS,
     stage_timings: bool = False,
+    heartbeat: Heartbeat | None = None,
 ) -> Counter[str]:
     """Consume until ``max_messages`` processed, no message for ``idle_timeout`` seconds, or
     ``stop`` is set (checked between messages and during retry waits; an interrupted message
@@ -321,15 +350,19 @@ def run(
     ``stage_timings`` logs one ``stages {...}`` line per message with the milliseconds spent in
     each stage (``poll`` = the call that returned the message, ``process`` = validate + score +
     persist, ``commit``, plus the scorer's stages; see ``src.timing``).
+
+    ``heartbeat`` is beaten on every loop iteration (see ``Heartbeat``).
     """
     counts: Counter[str] = Counter()
-    worker = _Worker(consumer, scorer, dead_letters, policy or RetryPolicy(), stop, counts)
+    beat = heartbeat or Heartbeat()
+    worker = _Worker(consumer, scorer, dead_letters, policy or RetryPolicy(), stop, counts, beat)
     committer = _Committer(consumer, counts, delays=commit_delays)
     processed = 0  # counts also holds "alerts"/"retries", so it cannot be summed for this
     consumer.subscribe([topic], on_assign=worker.on_assign, on_revoke=worker.on_revoke)
     last_message = time.monotonic()
     try:
         while max_messages is None or processed < max_messages:
+            beat.beat()
             if stop is not None and stop.is_set():
                 logger.info("stop requested; leaving the consumer group")
                 break
@@ -409,6 +442,9 @@ def main(argv: list[str] | None = None) -> Counter[str]:
             idle_timeout=args.idle_timeout,
             stop=stop,
             stage_timings=os.environ.get("STAGE_TIMINGS") == "1",
+            heartbeat=Heartbeat(Path(hb))
+            if (hb := os.environ.get("CONSUMER_HEARTBEAT_FILE"))
+            else None,
         )
     finally:
         scorer.store.close()

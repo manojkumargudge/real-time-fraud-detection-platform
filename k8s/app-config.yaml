@@ -1,13 +1,17 @@
-# Settings shared by the API and the consumers (src/serving/config.py). FEATURE_SOURCE=store:
-# history features from PostgreSQL, no Feast state in this smoke test (the full deployment needs
-# a Feast materialize Job and FEATURE_SOURCE=feast, FEAST_REDIS=redis:6379).
+# Settings shared by the API and the consumers (src/serving/config.py), as in the demo stack:
+# history features from the Feast entity state in the in-cluster Redis. The state must be loaded
+# first by the Feast materialize Job (k8s/jobs/feast-materialize.yaml, docs/kubernetes.md).
+# Each pod registers the Feast objects in its own local registry (FEAST_REPO_DIR, a temp dir);
+# the online keys in Redis are shared (Feast project "fraud").
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: fraud-app-config
 data:
   MODEL_DIR: /app/artifacts/baseline
-  FEATURE_SOURCE: store
+  FEATURE_SOURCE: feast
+  FEAST_REDIS: redis:6379
+  FEAST_REPO_DIR: /tmp/feast
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   KAFKA_TOPIC: transactions
   KAFKA_GROUP_ID: fraud-scorer

@@ -33,10 +33,12 @@ spec:
           ports:
             - containerPort: 6379
           readinessProbe:
+            timeoutSeconds: 5
             exec:
               command: ["redis-cli", "ping"]
             periodSeconds: 5
           livenessProbe:
+            timeoutSeconds: 5
             exec:
               command: ["redis-cli", "ping"]
             initialDelaySeconds: 15
