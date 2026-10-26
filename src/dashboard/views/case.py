@@ -18,6 +18,37 @@ HISTORY_COLUMNS = [
     "alert_version",
 ]
 
+FORM_SEEN = "case_form_seen"  # the alert version/status the status form was last rendered with
+
+
+def save_status(alert_id: int) -> None:
+    """Form callback: apply the analyst's choice against the version they were looking at."""
+    seen = st.session_state.get(FORM_SEEN)
+    if not seen or seen["alert_id"] != alert_id:
+        st.session_state["case_message"] = ("error", "The form is out of date; reload the case.")
+        return
+    to_status = str(st.session_state.get("case_to_status"))
+    try:
+        version = ui.repo().change_status(
+            alert_id,
+            seen["version"],
+            to_status,
+            ui.analyst_name(),
+            st.session_state.get("case_notes", ""),
+        )
+    except StaleAlertError as exc:
+        st.session_state["case_message"] = ("error", str(exc))
+    except (workflow.InvalidTransitionError, AlertNotFoundError, ValueError) as exc:
+        st.session_state["case_message"] = ("error", str(exc))
+    else:
+        st.session_state["case_message"] = (
+            "success",
+            f"Saved: {seen['status']} -> {to_status} (version {version}).",
+        )
+        st.session_state["case_notes"] = ""
+    ui.invalidate()  # re-read the case either way: after a conflict it shows the new state
+
+
 ui.require_schema()
 st.title("Case detail")
 
@@ -33,9 +64,10 @@ if case is None:
     st.warning(f"Alert {alert_id} does not exist.")
     st.stop()
 
-flash = st.session_state.pop("case_flash", None)
-if flash is not None:
-    st.success(flash)
+message = st.session_state.pop("case_message", None)
+if message is not None:
+    kind, text = message
+    (st.success if kind == "success" else st.error)(text)
 
 m = st.columns(5)
 m[0].metric("Fraud score", f"{case['score']:.4f}")
@@ -74,31 +106,24 @@ with right:
     else:
         analyst = ui.analyst_name()
         with st.form("change_status"):
-            to_status = st.selectbox("New status", options)
-            notes = st.text_area("Notes")
-            submitted = st.form_submit_button("Save", disabled=not analyst)
+            st.selectbox("New status", options, key="case_to_status")
+            st.text_area("Notes", key="case_notes")
+            # The save runs in the callback, before the page re-reads the case: it must use the
+            # version and status this form was rendered with (FORM_SEEN), not a fresh read.
+            st.form_submit_button(
+                "Save", disabled=not analyst, on_click=save_status, args=(int(alert_id),)
+            )
+        st.session_state[FORM_SEEN] = {
+            "alert_id": int(alert_id),
+            "version": int(case["version"]),
+            "status": case["status"],
+        }
         st.caption(
             "Feedback label: confirmed_fraud records 'fraud', false_positive records "
             "'not_fraud', other statuses record no label."
         )
         if not analyst:
             st.caption("Enter your analyst name in the sidebar to change this case.")
-        if submitted and analyst:
-            try:
-                version = ui.repo().change_status(
-                    int(alert_id), int(case["version"]), str(to_status), analyst, notes
-                )
-            except StaleAlertError as exc:
-                ui.invalidate()
-                st.error(str(exc))
-            except (workflow.InvalidTransitionError, AlertNotFoundError, ValueError) as exc:
-                st.error(str(exc))
-            else:
-                ui.invalidate()
-                st.session_state["case_flash"] = (
-                    f"Saved: {case['status']} -> {to_status} (version {version})."
-                )
-                st.rerun()
 
 st.subheader("Review history")
 history = ui.load("review_history", int(alert_id))

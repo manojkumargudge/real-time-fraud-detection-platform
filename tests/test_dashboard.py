@@ -360,6 +360,26 @@ def test_optimistic_lock_conflict_is_rejected_with_a_clear_message(fake: FakeRep
     assert fake.cases[1]["status"] == "investigating" and len(fake.reviews[1]) == 1
 
 
+def test_conflict_between_two_ui_sessions_saves_nothing(fake: FakeRepository) -> None:
+    """Regression (found on the live demo data): bob saves through the UI, which clears the
+    shared read cache; alice's form, rendered at version 1, must still be checked against
+    version 1 and must never save a status she did not choose."""
+    alice = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    bob = app(fake, "views/case.py", alert_id=1, analyst="bob")
+    bob.selectbox[0].set_value("investigating")
+    next(b for b in bob.button if b.label == "Save").click()
+    bob.run()
+    assert fake.cases[1]["status"] == "investigating"
+    alice.selectbox[0].set_value("false_positive")
+    next(b for b in alice.button if b.label == "Save").click()
+    alice.run()
+    errors = [str(e.value) for e in alice.error]
+    assert any("was changed by bob" in e and "you had version 1" in e for e in errors), errors
+    assert fake.cases[1]["status"] == "investigating" and fake.cases[1]["version"] == 2
+    assert [r["analyst"] for r in fake.reviews[1]] == ["bob"]
+    assert {m.label: m.value for m in alice.metric}["Status"] == "investigating"  # reloaded
+
+
 def test_missing_schema_stops_every_page_with_a_clear_error(fake: FakeRepository) -> None:
     fake.missing = ["alerts.version", "case_reviews.id"]
     for page in (None, "views/alerts.py", "views/case.py", "views/rings.py", "views/drift.py"):
