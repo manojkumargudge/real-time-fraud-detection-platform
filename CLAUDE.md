@@ -309,9 +309,14 @@ matters (files, numbers, running services) before relying on it.
   scheduled.
 - Dashboard: no authentication (self-declared analyst name), no connection pool (add
   psycopg-pool before scaling), single instance with a 15 s read cache (docs/dashboard.md).
+- Served model is not linked to its MLflow registry version (bundle has no run id or version
+  tag). Fix planned: write the registry version into the bundle metadata at promotion, show it
+  on the dashboard.
 
 ### Next (pick with the user; nothing is in progress)
 - Retraining from analyst labels (`latest_labels`), planned 2026-10-27.
+- Link the served model to its MLflow registry version: write the version into the bundle
+  metadata at promotion and show it on the dashboard (see Known limitations).
 - Dashboard on Kubernetes (manifest), planned 2026-10-27.
 - Kubernetes beyond the local Minikube deployment (docs/kubernetes.md "Not production"):
   replication, Ingress/TLS, a secrets manager, an MLflow server for in-cluster retraining.
