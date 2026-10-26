@@ -626,3 +626,333 @@ def test_drift_job_end_to_end_writes_drift_reports(
     )
     assert _repo_state() == before
     assert not Path("unused-default-must-not-be-hit.db").exists()
+
+
+# --------------------------------------------------------------------------- dashboard data access
+# Schema setup (src/serving/store.py) and the analyst dashboard's SQL (src/dashboard/data.py).
+
+
+def _alert_ids(conn: psycopg.Connection[Any]) -> dict[int, int]:
+    return dict(conn.execute("SELECT transaction_id, alert_id FROM alerts").fetchall())
+
+
+@pytest.fixture
+def dash(pg_dsn: str, pg_store: PostgresStore) -> Iterator[psycopg.Connection[Any]]:
+    """30 alerts (scores 0.50..0.79, transaction days 100..129) and 10 non-alerts, plus the
+    ring and drift tables (normally created by their batch jobs)."""
+    from src.graph.rings import TABLE_DDL
+    from src.monitoring.report_store import DDL as DRIFT_DDL
+
+    for i in range(30):
+        tid = 9_000 + i
+        rec = replace(record(tid, (100 + i) * 86_400 + 5, card=f"card{i % 3}", alert=True),
+                      uid=f"card{i % 3}|addr", score=0.50 + i / 100)  # fmt: skip
+        assert pg_store.save(rec)
+    for i in range(10):
+        assert pg_store.save(record(9_500 + i, 50 * 86_400 + i))
+    with psycopg.connect(pg_dsn, autocommit=True) as conn:
+        conn.execute(TABLE_DDL)
+        conn.execute(DRIFT_DDL)
+        yield conn
+
+
+@needs_db
+class TestSchemaSetup:
+    def test_concurrent_setup_from_many_threads(self, pg_dsn: str) -> None:
+        barrier, errors = threading.Barrier(6), []
+
+        def setup() -> None:
+            try:
+                barrier.wait(timeout=30)
+                PostgresStore(pg_dsn).close()
+            except Exception as exc:  # collected and asserted below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=setup) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+        assert errors == []
+        with psycopg.connect(pg_dsn) as conn:
+            oid = conn.execute(
+                "SELECT oid FROM pg_constraint WHERE conname = 'alerts_status_check' "
+                "AND conrelid = 'alerts'::regclass"
+            ).fetchone()
+            PostgresStore(pg_dsn).close()  # rerun: idempotent, constraint not recreated
+            again = conn.execute(
+                "SELECT oid FROM pg_constraint WHERE conname = 'alerts_status_check' "
+                "AND conrelid = 'alerts'::regclass"
+            ).fetchone()
+            triggers = conn.execute(
+                "SELECT count(*) FROM pg_trigger WHERE tgrelid = 'case_reviews'::regclass "
+                "AND tgname = 'case_reviews_append_only'"
+            ).fetchone()
+        assert oid is not None and oid == again and triggers == (1,)
+
+    def test_upgrade_keeps_existing_alerts_and_only_adds_defaults(self, pg_dsn: str) -> None:
+        from src.serving import store as st
+
+        old = st.DDL.split("-- Analyst-owned fields")[0].replace("'investigating', ", "")
+        with psycopg.connect(pg_dsn, autocommit=True) as conn:
+            conn.execute(old)  # the schema before the dashboard (4 statuses, no version)
+            check = conn.execute(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conname = 'alerts_status_check' AND conrelid = 'alerts'::regclass"
+            ).fetchone()
+            assert check is not None and "investigating" not in check[0]
+            conn.execute(
+                "INSERT INTO scored_transactions VALUES "
+                "(1, 10, 'c', 'u', '{}', 0.9, 0.5, true, 'v', '2026-10-01')"
+            )
+            conn.execute(
+                "INSERT INTO alerts (transaction_id, score, status, created_at) "
+                "VALUES (1, 0.9, 'closed', '2026-10-01')"
+            )
+            before = conn.execute("SELECT alert_id, transaction_id, score, status, created_at "
+                                  "FROM alerts").fetchall()  # fmt: skip
+            PostgresStore(pg_dsn).close()
+            after = conn.execute(
+                "SELECT alert_id, transaction_id, score, status, created_at, version FROM alerts"
+            ).fetchall()
+            conn.execute(
+                "INSERT INTO scored_transactions VALUES "
+                "(2, 11, 'c', 'u', '{}', 0.9, 0.5, true, 'v', now())"
+            )
+            conn.execute(  # the widened CHECK accepts the new state
+                "INSERT INTO alerts (transaction_id, score, status) "
+                "VALUES (2, 0.9, 'investigating')"
+            )
+        assert [r + (1,) for r in before] == after
+
+    def test_case_reviews_is_append_only_but_truncate_works(
+        self, dash: psycopg.Connection[Any]
+    ) -> None:
+        from src.dashboard import data
+
+        alert = _alert_ids(dash)[9_000]
+        data.change_status(dash, alert, 1, "investigating", "alice")
+        for sql in ("UPDATE case_reviews SET notes = 'x'", "DELETE FROM case_reviews"):
+            with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+                dash.execute(sql)
+        dash.execute("TRUNCATE case_reviews")  # row triggers do not fire on TRUNCATE
+        assert dash.execute("SELECT count(*) FROM case_reviews").fetchone() == (0,)
+
+
+@needs_db
+class TestDashboardData:
+    def test_change_status_bumps_version_and_appends_a_review(
+        self, dash: psycopg.Connection[Any]
+    ) -> None:
+        from src.dashboard import data
+
+        alert = _alert_ids(dash)[9_029]
+        assert data.change_status(dash, alert, 1, "investigating", " alice ", "  ") == 2
+        assert data.change_status(dash, alert, 2, "confirmed_fraud", "bob", "card testing") == 3
+        status = dash.execute(
+            "SELECT status, version, updated_at > created_at FROM alerts WHERE alert_id = %s",
+            (alert,),
+        ).fetchone()
+        assert status == ("confirmed_fraud", 3, True)
+        history = data.review_history(dash, alert)
+        assert [(h["from_status"], h["to_status"], h["label"], h["analyst"], h["notes"],
+                 h["alert_version"]) for h in history] == [
+            ("open", "investigating", None, "alice", None, 2),
+            ("investigating", "confirmed_fraud", "fraud", "bob", "card testing", 3),
+        ]  # fmt: skip
+
+    def test_optimistic_lock_conflict_is_rejected(self, dash: psycopg.Connection[Any]) -> None:
+        from src.dashboard import data
+
+        alert = _alert_ids(dash)[9_001]
+        data.change_status(dash, alert, 1, "confirmed_fraud", "alice")
+        with pytest.raises(data.StaleAlertError) as err:
+            data.change_status(dash, alert, 1, "false_positive", "bob")  # stale version 1
+        assert (err.value.current_status, err.value.current_version) == ("confirmed_fraud", 2)
+        assert err.value.changed_by == "alice" and "nothing was saved" in str(err.value)
+        assert [h["analyst"] for h in data.review_history(dash, alert)] == ["alice"]
+
+    def test_invalid_or_anonymous_changes_write_nothing(
+        self, dash: psycopg.Connection[Any]
+    ) -> None:
+        from src.dashboard import data, workflow
+
+        alert = _alert_ids(dash)[9_002]
+        with pytest.raises(workflow.InvalidTransitionError):
+            data.change_status(dash, alert, 1, "closed", "alice")  # open -> closed not allowed
+        with pytest.raises(ValueError, match="analyst"):
+            data.change_status(dash, alert, 1, "investigating", "   ")
+        with pytest.raises(data.AlertNotFoundError):
+            data.change_status(dash, 10**9, 1, "investigating", "alice")
+        assert dash.execute("SELECT status, version FROM alerts WHERE alert_id = %s",
+                            (alert,)).fetchone() == ("open", 1)  # fmt: skip
+        assert data.review_history(dash, alert) == []
+
+    def test_concurrent_threads_one_writer_wins_and_reads_are_safe(
+        self, dash: psycopg.Connection[Any], pg_dsn: str
+    ) -> None:
+        from src.dashboard import data
+        from src.dashboard.db import Database
+
+        db, alert = Database(pg_dsn), _alert_ids(dash)[9_003]
+        barrier = threading.Barrier(8)
+        results: list[str] = []
+
+        def writer(name: str) -> None:
+            barrier.wait(timeout=30)
+            with db.connection() as conn:
+                try:
+                    data.change_status(conn, alert, 1, "investigating", name)
+                    results.append("ok")
+                except data.StaleAlertError:
+                    results.append("stale")
+
+        def reader() -> None:
+            barrier.wait(timeout=30)
+            for _ in range(5):
+                with db.connection() as conn:
+                    assert data.list_alerts(conn, data.AlertFilter(), 1, 10).total == 30
+                    assert data.overview(conn)["total"] == 30
+
+        threads = [threading.Thread(target=writer, args=(f"a{i}",)) for i in range(4)]
+        threads += [threading.Thread(target=reader) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+        assert sorted(results) == ["ok", "stale", "stale", "stale"]
+        assert len(data.review_history(dash, alert)) == 1
+
+    def test_pagination_and_filters(self, dash: psycopg.Connection[Any]) -> None:
+        from src.dashboard import data
+
+        first = data.list_alerts(dash, data.AlertFilter(), 1, 12)
+        third = data.list_alerts(dash, data.AlertFilter(), 3, 12)
+        assert (first.total, len(first.rows), len(third.rows)) == (30, 12, 6)
+        scores = [
+            r["score"]
+            for r in first.rows
+            + data.list_alerts(dash, data.AlertFilter(), 2, 12).rows
+            + third.rows
+        ]
+        assert scores == sorted(scores, reverse=True) and len(set(scores)) == 30
+        assert data.list_alerts(dash, data.AlertFilter(), 1, 10_000).page_size == data.MAX_PAGE_SIZE
+        rng = data.list_alerts(dash, data.AlertFilter(min_score=0.6, max_score=0.7), 1, 50)
+        assert rng.total == 11 and all(0.6 <= r["score"] <= 0.7 for r in rng.rows)
+        days = data.list_alerts(dash, data.AlertFilter(day_from=110, day_to=114), 1, 50)
+        assert sorted(r["transaction_day"] for r in days.rows) == [110, 111, 112, 113, 114]
+        data.change_status(dash, _alert_ids(dash)[9_010], 1, "investigating", "alice")
+        inv = data.list_alerts(dash, data.AlertFilter(statuses=("investigating",)), 1, 50)
+        assert [r["transaction_id"] for r in inv.rows] == [9_010]
+        none = data.list_alerts(dash, data.AlertFilter(statuses=("closed",)), 1, 50)
+        assert (none.total, none.rows) == (0, [])
+
+    def test_latest_labels_use_the_latest_labelled_review(
+        self, dash: psycopg.Connection[Any]
+    ) -> None:
+        from src.dashboard import data
+
+        ids = _alert_ids(dash)
+        data.change_status(dash, ids[9_020], 1, "confirmed_fraud", "alice")
+        data.change_status(dash, ids[9_020], 2, "false_positive", "bob")  # correction
+        data.change_status(dash, ids[9_021], 1, "investigating", "alice")  # no label yet
+        data.change_status(dash, ids[9_022], 1, "false_positive", "alice")
+        data.change_status(dash, ids[9_022], 2, "closed", "alice")  # closing keeps the label
+        data.change_status(dash, ids[9_023], 1, "confirmed_fraud", "carol")
+        labels = {r.transaction_id: r.label for r in data.latest_labels(dash)}
+        assert labels == {9_020: "not_fraud", 9_022: "not_fraud", 9_023: "fraud"}
+        ov = data.overview(dash)
+        expected = dash.execute(  # the same definition, written by hand
+            "SELECT count(*) FILTER (WHERE label = 'fraud')::float / count(*) FROM ("
+            "  SELECT DISTINCT ON (transaction_id) label FROM case_reviews"
+            "  WHERE label IS NOT NULL ORDER BY transaction_id, id DESC) l"
+        ).fetchone()
+        assert (ov["reviewed"], ov["confirmed_fraud"]) == (3, 1)
+        assert ov["precision"] == pytest.approx(1 / 3) == expected[0]  # type: ignore[index]
+        assert ov["by_status"] == {"open": 26, "false_positive": 1, "investigating": 1,
+                                   "closed": 1, "confirmed_fraud": 1}  # fmt: skip
+
+    def test_rings_link_by_uid_and_schema_check(self, dash: psycopg.Connection[Any]) -> None:
+        from src.dashboard import data
+
+        assert data.missing_schema(dash) == []
+        dash.execute(
+            "INSERT INTO fraud_rings VALUES (1, 7, 2, 2, 5, 100.0, '[\"dev\"]', 0.4, 5, 0.2, "
+            '1, 2, \'["card1|addr", "zzz|1"]\', now())'
+        )
+        ring = data.ring_for_uid(dash, "card1|addr")
+        assert ring is not None and ring["rank"] == 1
+        assert (
+            data.ring_for_uid(dash, "card0|addr") is None and data.ring_for_uid(dash, None) is None
+        )
+        members = data.ring_alerts(dash, ["card1|addr", "zzz|1"])
+        assert len(members) == 10 and {m["uid"] for m in members} == {"card1|addr"}
+        assert data.card_of_uid("1111|321|150|visa|226|debit|315") == "1111|321|150|visa|226|debit"
+
+    def test_missing_schema_is_reported(self, pg_dsn: str) -> None:
+        from src.dashboard import data
+
+        with psycopg.connect(pg_dsn, autocommit=True) as conn:  # empty schema
+            missing = data.missing_schema(conn)
+            assert "case_reviews.id" in missing and "alerts.version" in missing
+            with pytest.raises(data.SchemaNotReadyError, match="Start the API or a consumer"):
+                data.require_schema(conn)
+
+    def test_replayed_transaction_keeps_the_analyst_fields(
+        self, dash: psycopg.Connection[Any], pg_store: PostgresStore, bundle_dir: Path
+    ) -> None:
+        """The one allowed scoring-path guarantee: a replay or retry of a reviewed transaction
+        changes nothing on its alert (status, score, timestamps, version) or its reviews."""
+        from src.dashboard import data
+
+        alert = _alert_ids(dash)[9_005]
+        data.change_status(dash, alert, 1, "confirmed_fraud", "alice", "reviewed")
+        snapshot = (
+            "SELECT status, score, created_at, updated_at, version FROM alerts WHERE alert_id = %s"
+        )
+        before = dash.execute(snapshot, (alert,)).fetchone()
+        reviews = data.review_history(dash, alert)
+
+        scorer = Scorer(ModelBundle.load(bundle_dir), pg_store)
+        result = scorer.score_event(TransactionEvent.model_validate(event(TransactionID=9_005)))
+        assert result.duplicate  # the normal replay path: dedupe, no write
+        retried = replace(record(9_005, 105 * 86_400 + 5, alert=True), score=0.01)
+        assert pg_store.save(retried) is False  # a forced retry past the dedupe check
+        assert dash.execute(snapshot, (alert,)).fetchone() == before
+        assert data.review_history(dash, alert) == reviews
+
+
+@needs_db
+def test_benchmark_cleanup_works_on_a_clone_with_reviews() -> None:
+    """scripts/bench_throughput.py on a fraud_bench that holds reviews (cloned from a demo
+    database after analysts used the dashboard): FK + append-only trigger handled by TRUNCATE."""
+    from scripts import bench_throughput as bench
+    from src.dashboard import data
+
+    assert DB_URL
+    with psycopg.connect(DB_URL, autocommit=True) as admin:
+        admin.execute("DROP DATABASE IF EXISTS fraud_bench WITH (FORCE)")
+        admin.execute("CREATE DATABASE fraud_bench")
+    dsn = make_conninfo(DB_URL, dbname="fraud_bench")
+    try:
+        store = PostgresStore(dsn)
+        for i in range(6):
+            store.save(record(7_000 + i, 86_400 * (1 + i), alert=True))
+        store.close()
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            ids = _alert_ids(conn)
+            data.change_status(conn, ids[7_004], 1, "confirmed_fraud", "alice")
+            data.change_status(conn, ids[7_001], 1, "investigating", "alice")
+            reviews, alerts, rows = bench.delete_replay_rows(conn, [7_003, 7_004, 7_005])
+            assert (reviews, alerts, rows) == (2, 3, 3)
+            left = conn.execute("SELECT transaction_id FROM scored_transactions ORDER BY 1")
+            assert [r[0] for r in left.fetchall()] == [7_000, 7_001, 7_002]
+            assert conn.execute("SELECT count(*) FROM case_reviews").fetchone() == (0,)
+        with (  # the guard refuses any database other than fraud_bench
+            psycopg.connect(DB_URL, autocommit=True) as other,
+            pytest.raises(SystemExit, match="refused"),
+        ):
+            bench.delete_replay_rows(other, [1])
+    finally:
+        with psycopg.connect(DB_URL, autocommit=True) as admin:
+            admin.execute("DROP DATABASE IF EXISTS fraud_bench WITH (FORCE)")
