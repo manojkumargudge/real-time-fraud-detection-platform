@@ -5,8 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from src.dashboard import ui, workflow
-from src.dashboard.data import AlertNotFoundError, StaleAlertError
+from src.dashboard import case_form, ui, workflow
 
 HISTORY_COLUMNS = [
     "created_at",
@@ -18,35 +17,19 @@ HISTORY_COLUMNS = [
     "alert_version",
 ]
 
-FORM_SEEN = "case_form_seen"  # the alert version/status the status form was last rendered with
 
-
-def save_status(alert_id: int) -> None:
-    """Form callback: apply the analyst's choice against the version they were looking at."""
-    seen = st.session_state.get(FORM_SEEN)
-    if not seen or seen["alert_id"] != alert_id:
-        st.session_state["case_message"] = ("error", "The form is out of date; reload the case.")
-        return
-    to_status = str(st.session_state.get("case_to_status"))
-    try:
-        version = ui.repo().change_status(
-            alert_id,
-            seen["version"],
-            to_status,
-            ui.analyst_name(),
-            st.session_state.get("case_notes", ""),
-        )
-    except StaleAlertError as exc:
-        st.session_state["case_message"] = ("error", str(exc))
-    except (workflow.InvalidTransitionError, AlertNotFoundError, ValueError) as exc:
-        st.session_state["case_message"] = ("error", str(exc))
-    else:
-        st.session_state["case_message"] = (
-            "success",
-            f"Saved: {seen['status']} -> {to_status} (version {version}).",
-        )
-        st.session_state["case_notes"] = ""
+def save_status(token: str) -> None:
+    """Save callback: runs before the page re-reads the case, with the form's own token (the
+    alert, version and status it was rendered with); see src/dashboard/case_form.py."""
+    st.session_state["case_message"] = case_form.save(
+        st.session_state, ui.repo(), token, ui.analyst_name()
+    )
     ui.invalidate()  # re-read the case either way: after a conflict it shows the new state
+
+
+def reload_case(token: str) -> None:
+    case_form.discard(st.session_state, token)
+    ui.invalidate()
 
 
 ui.require_schema()
@@ -105,25 +88,46 @@ with right:
         st.info(f"{ui.status_label(case['status'])} is final: no further changes.")
     else:
         analyst = ui.analyst_name()
-        with st.form("change_status"):
-            st.selectbox("New status", options, key="case_to_status", format_func=ui.status_label)
-            st.text_area("Notes", key="case_notes")
-            # The save runs in the callback, before the page re-reads the case: it must use the
-            # version and status this form was rendered with (FORM_SEEN), not a fresh read.
-            st.form_submit_button(
-                "Save", disabled=not analyst, on_click=save_status, args=(int(alert_id),)
+        form = case_form.form_token(
+            st.session_state, int(alert_id), int(case["version"]), case["status"]
+        )
+        if form.version != case["version"]:
+            st.warning(
+                f"This case changed since this form was opened (you had version {form.version}, "
+                f"it is now version {case['version']}). A save will be rejected: reload the case."
             )
-        st.session_state[FORM_SEEN] = {
-            "alert_id": int(alert_id),
-            "version": int(case["version"]),
-            "status": case["status"],
-        }
+            st.button(
+                "Reload the case",
+                key=f"case_reload_{form.token}",
+                on_click=reload_case,
+                args=(form.token,),
+            )
+        # No st.form: Enter (and Ctrl+Enter in Notes) cannot submit, and Save is enabled as soon
+        # as a status is chosen. The widgets are keyed by the form's one-time token, so a new
+        # token (after a save, or another alert) starts an empty form.
+        to_status = st.selectbox(
+            "New status",
+            options,
+            index=None,
+            placeholder="Choose a status",
+            key=case_form.widget_key("case_to_status", form.token),
+            format_func=ui.status_label,
+        )
+        st.text_area("Notes", key=case_form.widget_key("case_notes", form.token))
+        reason = case_form.disabled_reason(analyst, to_status)
+        st.button(
+            "Save",
+            key=f"case_save_{form.token}",
+            disabled=reason is not None,
+            on_click=save_status,
+            args=(form.token,),
+        )
+        if reason is not None:
+            st.caption(f"Save is disabled. {reason}")
         st.caption(
             "Feedback label: confirmed_fraud records 'fraud', false_positive records "
             "'not_fraud', other statuses record no label."
         )
-        if not analyst:
-            st.caption("Enter your analyst name in the sidebar to change this case.")
 
 st.subheader("Review history")
 history = ui.load("review_history", int(alert_id))
