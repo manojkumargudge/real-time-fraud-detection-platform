@@ -1,0 +1,12 @@
+id,alert_id,transaction_id,from_status,to_status,label,analyst,notes,alert_version,created_at
+1,218,3461885,open,confirmed_fraud,fraud,alice,"A1: highest score, confirmed",2,2026-10-26 07:32:31.006302+00
+2,1629,3500000,open,false_positive,not_fraud,alice,A2: legitimate customer,2,2026-10-26 07:32:57.835691+00
+3,3131,3528538,open,investigating,,bob,A3: checking with issuer,2,2026-10-26 07:33:21.227166+00
+4,3131,3528538,investigating,confirmed_fraud,fraud,bob,A3: issuer confirmed fraud,3,2026-10-26 07:33:35.503028+00
+5,3131,3528538,confirmed_fraud,closed,,bob,A3: case closed,4,2026-10-26 07:33:49.78813+00
+6,4707,3562094,open,confirmed_fraud,fraud,carol,A4: looked like card testing,2,2026-10-26 07:34:12.511813+00
+7,4707,3562094,confirmed_fraud,false_positive,not_fraud,carol,"A4: correction, customer verified the purchases",3,2026-10-26 07:34:26.847996+00
+8,4705,3562044,open,investigating,,bob,,2,2026-10-26 07:34:49.497405+00
+9,4705,3562044,investigating,confirmed_fraud,fraud,alice,alice's stale decision,3,2026-10-26 07:35:00.086907+00
+10,1502,3493993,open,investigating,,bob,bob takes the case,2,2026-10-26 07:47:51.41737+00
+11,1502,3493993,investigating,false_positive,not_fraud,alice,"alice, after reloading",3,2026-10-26 07:47:52.356477+00
