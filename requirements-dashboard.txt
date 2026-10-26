@@ -1,0 +1,7 @@
+# Analyst dashboard image (docker compose service "dashboard"): the serving runtime plus Streamlit.
+# streamlit 1.66.1: the first release that allows pillow 13. 1.65.0 caps pillow < 13, and
+# pillow 12.3.0 has CVE-2026-96644, CVE-2026-96778, CVE-2026-96636, CVE-2026-114501,
+# CVE-2026-112398 and GHSA-78g4-xqwv-q3g8 (fixed in 13.0.0; pip-audit 2026-10-26).
+-r requirements-serving.txt
+streamlit==1.66.1
+pillow==13.0.0

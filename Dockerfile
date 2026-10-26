@@ -11,9 +11,12 @@ RUN apt-get update && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
 # REQUIREMENTS: requirements-serving.txt (default: API / consumer image, the one CI scans and
-# pushes) or requirements-monitoring.txt (the Compose drift job, which adds Evidently).
+# pushes), requirements-monitoring.txt (the Compose drift job, which adds Evidently) or
+# requirements-dashboard.txt (the analyst dashboard, which adds Streamlit; also scanned/pushed).
 ARG REQUIREMENTS=requirements-serving.txt
-COPY requirements-serving.txt requirements-monitoring.txt ./
+# The selected file is copied on top of the two always copied, so the default (API / consumer)
+# build copies exactly the same files as before the dashboard.
+COPY requirements-serving.txt requirements-monitoring.txt ${REQUIREMENTS} ./
 # The base image's setuptools / wheel have HIGH advisories (CVE-2024-6345, CVE-2025-47273,
 # CVE-2026-24049); they are build tools, upgraded to fixed releases.
 RUN pip install --upgrade "setuptools==84.0.0" "wheel==0.48.0" \
@@ -21,6 +24,8 @@ RUN pip install --upgrade "setuptools==84.0.0" "wheel==0.48.0" \
 
 COPY src/ src/
 COPY configs/drift.toml configs/drift.toml
+# Dashboard settings (toolbar in viewer mode); unused by the API and consumers.
+COPY .streamlit/config.toml .streamlit/config.toml
 RUN useradd --create-home --uid 10001 app
 USER app
 

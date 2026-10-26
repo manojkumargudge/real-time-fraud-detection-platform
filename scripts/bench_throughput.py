@@ -19,8 +19,8 @@ Setup (docker-compose.bench.yml, docs/serving.md "Throughput benchmark"):
 - 3 consumers (image built from this checkout, ``FEATURE_SOURCE=feast``, ``STAGE_TIMINGS=1``) on
   the demo network, topic ``bench-transactions``, group ``bench-scorer``.
 
-Safety: every DELETE / DROP first prints the current database name and aborts unless it is
-fraud_bench. Kafka deletes are limited to the ``bench-`` topic and group.
+Safety: every DELETE / TRUNCATE / DROP first prints the current database name and aborts unless
+it is fraud_bench. Kafka deletes are limited to the ``bench-`` topic and group.
 
 ``run`` replays replay events ``[index, index + limit)`` (``--rate`` events/s, default
 unthrottled) and reports end-to-end latency (produce -> ``scored_at``; the producer runs in
@@ -101,6 +101,30 @@ def guard(conn: psycopg.Connection[Any]) -> None:
         raise SystemExit(f"ABORT: destructive statement refused on database {name!r}")
 
 
+def delete_replay_rows(conn: psycopg.Connection[Any], ids: list[int]) -> tuple[int, int, int]:
+    """Remove the replay events (and their alerts) from fraud_bench: ``(reviews, alerts, rows)``.
+
+    The demo database (the clone's source) may hold analyst reviews (``case_reviews``). They
+    reference alerts, and the table is append-only (a trigger rejects row DELETE), so the clone's
+    reviews are emptied with TRUNCATE (row triggers do not fire) before alerts are deleted. The
+    benchmark never needs reviews. Each statement is guarded.
+    """
+    with conn.transaction():
+        reviews = 0
+        if conn.execute("SELECT to_regclass('case_reviews')").fetchone() not in (None, (None,)):
+            guard(conn)
+            reviews = int(conn.execute("SELECT count(*) FROM case_reviews").fetchone()[0])  # type: ignore[index]
+            guard(conn)
+            conn.execute("TRUNCATE case_reviews")
+        guard(conn)
+        alerts = conn.execute("DELETE FROM alerts WHERE transaction_id = ANY(%s)", (ids,)).rowcount
+        guard(conn)
+        rows = conn.execute(
+            "DELETE FROM scored_transactions WHERE transaction_id = ANY(%s)", (ids,)
+        ).rowcount
+    return reviews, alerts, rows
+
+
 def db_exists(name: str) -> bool:
     with psycopg.connect(dsn("postgres"), autocommit=True) as conn:
         return (
@@ -160,15 +184,7 @@ def setup(replay: int) -> None:
                 "the last events in fraud_bench differ from the raw data's last events"
             )
         log(f"deleting the last {replay} events (TransactionDT >= {cut_dt}) from fraud_bench")
-        with conn.transaction():
-            guard(conn)
-            alerts = conn.execute(
-                "DELETE FROM alerts WHERE transaction_id = ANY(%s)", (replay_ids,)
-            ).rowcount
-            guard(conn)
-            rows = conn.execute(
-                "DELETE FROM scored_transactions WHERE transaction_id = ANY(%s)", (replay_ids,)
-            ).rowcount
+        reviews, alerts, rows = delete_replay_rows(conn, replay_ids)
         if rows != replay:
             raise SystemExit(f"deleted {rows} rows, expected {replay}")
         kept = {r[0] for r in conn.execute("SELECT transaction_id FROM scored_transactions")}
@@ -245,17 +261,9 @@ def reset() -> None:
     state = json.loads(STATE.read_text(encoding="utf-8"))
     ids = state["replay_ids"]
     with psycopg.connect(dsn(BENCH_DB)) as conn:
-        with conn.transaction():
-            guard(conn)
-            alerts = conn.execute(
-                "DELETE FROM alerts WHERE transaction_id = ANY(%s)", (ids,)
-            ).rowcount
-            guard(conn)
-            rows = conn.execute(
-                "DELETE FROM scored_transactions WHERE transaction_id = ANY(%s)", (ids,)
-            ).rowcount
+        reviews, alerts, rows = delete_replay_rows(conn, ids)
         counts = bench_counts(conn)
-    log(f"removed replayed rows from fraud_bench: {rows} rows, {alerts} alerts; now {counts}")
+    log(f"removed from fraud_bench: {rows} rows, {alerts} alerts, {reviews} reviews; now {counts}")
     if counts != state["fraud_bench_counts"]:
         raise SystemExit(f"fraud_bench counts {counts} differ from setup")
     sh([*BENCH, "exec", "-T", "bench-redis", "redis-cli", "FLUSHALL"])  # benchmark Redis only
