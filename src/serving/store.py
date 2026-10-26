@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -90,7 +91,23 @@ class InMemoryStore:
         return len(self._records)
 
 
+# Alert workflow states (transitions: src/dashboard/workflow.py). 'open' is the start state.
+ALERT_STATUSES = ("open", "investigating", "confirmed_fraud", "false_positive", "closed")
+# Fixed key for pg_advisory_xact_lock: the API and every consumer run the setup at startup,
+# concurrently; the lock serialises them (concurrent CREATE TABLE IF NOT EXISTS can collide).
+SCHEMA_LOCK_KEY = 7291406001
+
+
+def _status_check_def(statuses: tuple[str, ...]) -> str:
+    """The CHECK as pg_get_constraintdef() renders it, to detect an outdated constraint."""
+    items = ", ".join(f"'{s}'::text" for s in statuses)
+    return f"CHECK ((status = ANY (ARRAY[{items}])))"
+
+
+# A plain literal (no SQL assembled at runtime); the checks below keep it in step with
+# ALERT_STATUSES and SCHEMA_LOCK_KEY.
 DDL = """
+SELECT pg_advisory_xact_lock(7291406001);
 CREATE TABLE IF NOT EXISTS scored_transactions (
     transaction_id BIGINT PRIMARY KEY,
     transaction_dt BIGINT NOT NULL CHECK (transaction_dt >= 0),
@@ -109,10 +126,71 @@ CREATE TABLE IF NOT EXISTS alerts (
     transaction_id BIGINT NOT NULL UNIQUE REFERENCES scored_transactions (transaction_id),
     score DOUBLE PRECISION NOT NULL,
     status TEXT NOT NULL DEFAULT 'open'
-        CHECK (status IN ('open', 'confirmed_fraud', 'false_positive', 'closed')),
+        CHECK (status IN ('open', 'investigating', 'confirmed_fraud', 'false_positive', 'closed')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Analyst-owned fields (the dashboard). The scoring path inserts (transaction_id, score) only,
+-- with ON CONFLICT DO NOTHING, so it never changes them. Existing rows get the defaults.
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+-- Widen an older status CHECK; only when it differs, so a restart takes no ACCESS EXCLUSIVE lock.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'alerts'::regclass AND conname = 'alerts_status_check'
+          -- adjacent literals on separate lines are concatenated by PostgreSQL
+          AND pg_get_constraintdef(oid) = 'CHECK ((status = ANY (ARRAY[''open''::text, '
+              '''investigating''::text, ''confirmed_fraud''::text, ''false_positive''::text, '
+              '''closed''::text])))'
+    ) THEN
+        ALTER TABLE alerts DROP CONSTRAINT IF EXISTS alerts_status_check;
+        ALTER TABLE alerts ADD CONSTRAINT alerts_status_check
+        CHECK (status IN ('open', 'investigating', 'confirmed_fraud', 'false_positive', 'closed'));
+    END IF;
+END $$;
+-- Analyst decisions, append-only (feeds retraining: latest labelled review per transaction).
+CREATE TABLE IF NOT EXISTS case_reviews (
+    id BIGSERIAL PRIMARY KEY,
+    alert_id BIGINT NOT NULL REFERENCES alerts (alert_id),
+    transaction_id BIGINT NOT NULL REFERENCES scored_transactions (transaction_id),
+    from_status TEXT NOT NULL,
+    to_status TEXT NOT NULL,
+    label TEXT CHECK (label IN ('fraud', 'not_fraud')),
+    analyst TEXT NOT NULL CHECK (btrim(analyst) <> ''),
+    notes TEXT,
+    alert_version INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_case_reviews_alert ON case_reviews (alert_id, id);
+CREATE INDEX IF NOT EXISTS ix_case_reviews_tx ON case_reviews (transaction_id, id);
+-- Row-level UPDATE/DELETE are rejected. TRUNCATE (whole table) does not fire row triggers; the
+-- benchmark clone uses it (scripts/bench_throughput.py).
+CREATE OR REPLACE FUNCTION case_reviews_append_only() RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+    RAISE EXCEPTION 'case_reviews is append-only: % rejected', TG_OP;
+END
+$fn$;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'case_reviews'::regclass AND tgname = 'case_reviews_append_only'
+    ) THEN
+        CREATE TRIGGER case_reviews_append_only BEFORE UPDATE OR DELETE ON case_reviews
+            FOR EACH ROW EXECUTE FUNCTION case_reviews_append_only();
+    END IF;
+END $$;
 """
+
+_JOINED = re.sub(r"'\s*\n\s*'", "", DDL)  # as PostgreSQL reads the split literal
+_STATUS_LIST = "CHECK (status IN ({}))".format(", ".join(f"'{s}'" for s in ALERT_STATUSES))
+if (
+    f"pg_advisory_xact_lock({SCHEMA_LOCK_KEY})" not in DDL
+    or _status_check_def(ALERT_STATUSES).replace("'", "''") not in _JOINED
+    or DDL.count(_STATUS_LIST) != 2
+):
+    raise RuntimeError("store.DDL is out of step with ALERT_STATUSES / SCHEMA_LOCK_KEY")
 
 
 class PostgresStore:
