@@ -3,4 +3,8 @@ pytest==9.1.1
 ruff==0.9.10
 httpx==0.28.1
 mypy==1.15.0
+# Dashboard AppTests (tests/test_dashboard.py); same pins as requirements-dashboard.txt, which is
+# the only image that installs Streamlit (never the API/consumer image).
+streamlit==1.66.1
+pillow==13.0.0
 pandas-stubs==2.2.3.250308
