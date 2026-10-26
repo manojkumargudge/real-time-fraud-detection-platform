@@ -34,9 +34,9 @@ if not rings:
 table = pd.DataFrame(rings)
 table["shared_devices"] = table["shared_devices"].map(", ".join)
 st.dataframe(
-    table[LIST_COLUMNS],
+    ui.labelled(table[LIST_COLUMNS]),
     hide_index=True,
-    column_config={"fraud_rate": st.column_config.NumberColumn(format="percent")},
+    column_config={"Fraud rate": st.column_config.NumberColumn(format="percent")},
 )
 
 rank = st.selectbox("Ring detail", [r["rank"] for r in rings], format_func=lambda r: f"#{r}")
@@ -48,10 +48,9 @@ if ring is not None:
     c2.metric("Cards", ring["card_count"])
     c3.metric("Labelled fraud rate", f"{ring['fraud_rate']:.1%}")
     st.write("Shared devices: " + ", ".join(ring["shared_devices"]))
-    st.dataframe(
-        pd.DataFrame({"uid": uids, "card": [card_of_uid(u) for u in uids]}), hide_index=True
-    )
+    members = pd.DataFrame({"uid": uids, "card": [card_of_uid(u) for u in uids]})
+    st.dataframe(ui.labelled(members), hide_index=True)
     alerts = ui.load("ring_alerts", uids)
     st.subheader(f"Alerts on ring members ({len(alerts)})")
     if alerts:
-        st.dataframe(pd.DataFrame(alerts), hide_index=True)
+        st.dataframe(ui.labelled(pd.DataFrame(alerts)), hide_index=True)

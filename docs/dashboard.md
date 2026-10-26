@@ -23,6 +23,8 @@ The Compose service:
 - `reports/drift` mounted read-only for the Evidently reports.
 
 Type your analyst name in the sidebar once per session; writes are disabled until it is set.
+`.streamlit/config.toml` (copied into the image) sets `client.toolbarMode = "viewer"`, which
+hides Streamlit's Deploy button and developer menu.
 
 ## Layout (`src/dashboard/`)
 
@@ -31,17 +33,23 @@ Type your analyst name in the sidebar once per session; writes are disabled unti
 | `workflow.py` | Status transitions and the feedback label: pure functions, no I/O |
 | `data.py` | **All SQL** (parameterised only). Every function takes a borrowed connection |
 | `db.py` | Connections: every read or write gets its own connection; none is shared between Streamlit sessions (threads) |
-| `ui.py` | Repository (one connection per call), read cache (`st.cache_data`, 15 s TTL, cleared after a write), analyst name, schema check |
+| `ui.py` | Repository (one connection per call), read cache (`st.cache_data`, 15 s TTL, cleared after a write), analyst name, schema check, display labels |
 | `app.py` | Entry point: `st.navigation` over the five pages |
 | `views/*.py` | Thin pages: Overview, Alert queue, Case detail, Fraud rings, Drift. No SQL |
 
 **Pages:**
 - **Overview:**
-  - alert counts by status;
-  - alerts per **transaction day** (`TransactionDT // 86400`). Creation dates would put every
-    replayed alert on two days;
-  - precision of reviewed alerts;
-  - the production model version (`model_version` of the newest scored row).
+  - one tile per status, in workflow order;
+  - precision of reviewed alerts as "X% (fraud of reviewed)". Below
+    `ui.MIN_REVIEWS_FOR_PRECISION` (30) reviewed alerts it shows "Too few reviews (n=N)", with
+    a tooltip explaining why;
+  - the production model: the model id (the first 12 hex digits of the model file's SHA-256)
+    in large text, the full `model_version` of the newest scored row as a caption;
+  - alerts per **day from the dataset start** (`TransactionDT // 86400`). IEEE-CIS TransactionDT
+    is seconds from an unspecified start date, so days are relative. Creation dates would put
+    every replayed alert on two days.
+- **All pages:** tables use plain column labels (`ui.COLUMN_LABELS`), and statuses are shown
+  as "Confirmed fraud" etc.
 - **Alert queue:** filter by status, score range and transaction-day range, highest score first,
   50 per page (`LIMIT/OFFSET` plus a count query). A selected row (or an alert id) opens the case.
 - **Case detail:**
@@ -111,7 +119,9 @@ The dashboard never runs DDL; if the schema is missing, every page shows a clear
   - TRUNCATE does not fire row triggers; only the benchmark clone uses it
     (`scripts/bench_throughput.py`, guarded to `fraud_bench`).
 
-**Optimistic locking:** the form carries the version it was rendered from. `change_status`
+**Optimistic locking:** the form carries the version it was rendered from. The save runs in
+the submit callback, with the version and status the form was rendered with (see
+docs/evidence/2026-10-26-lock-bug: re-reading on submit defeated the lock). `change_status`
 locks the row (`FOR UPDATE`), compares the version, validates the transition, then writes
 `status`, `version + 1` and `updated_at` and the review **in one transaction**. If the version
 differs, it raises `StaleAlertError`: "alert N was changed by <analyst> at <time>: it is now
@@ -143,11 +153,12 @@ differs, it raises `StaleAlertError`: "alert N was changed by <analyst> at <time
 - **No scoring latency and no per-case feature explanations:** neither is stored by the scoring
   path.
 - **Rings** come from training-period batch data, so few live alerts link to them.
-- **Model version:** "production model" is the `model_version` of the newest scored row, not a
-  read of the MLflow registry (the registry is a host-only SQLite file).
-- **Caching:** reads are cached for 15 s per server process; a write clears that process's
-  cache, but another dashboard replica would not see it until its TTL expires. The lock check
-  is always made against the database.
-- **Connections:** one per call, no pool: simple and thread-safe, about 1-3 ms of local connect
-  cost per query. A pool (`psycopg_pool`) is the upgrade if traffic grows.
+- **Model version:** "production model" is the model id from the newest scored row's
+  `model_version`, not the MLflow registry version. The bundle stores no MLflow run id, and the
+  registry is a host-only SQLite file.
+- **Single instance, 15 s cache:** reads are cached for 15 s per server process, and a write
+  clears that process's cache. A second dashboard replica would show stale reads until its TTL
+  expires; the optimistic-lock check is always made against the database, so no write is lost.
+- **No connection pool:** one connection per call (18 ms connect inside the container). Fine
+  for a few analysts; add psycopg-pool before scaling.
 - **Not in Kubernetes yet** (planned for 2026-10-27).

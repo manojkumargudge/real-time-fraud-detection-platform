@@ -27,25 +27,23 @@ if not reports:
     st.caption("No drift reports yet (python -m src.monitoring.run_drift).")
     st.stop()
 
-st.dataframe(
-    pd.DataFrame(
-        [
-            {
-                "id": r["id"],
-                "run_at": r["run_at"],
-                "window_days": f"{r['window_start_day']}-{r['window_end_day']}",
-                "drifted_share": r["drifted_feature_share"],
-                "top_drifted": feature_names(r["top_drifted_features"])[:80],
-                "prediction_psi": r["prediction_drift_score"],
-                "triggered": r["triggered"],
-                "retraining": r["promotion_decision"] or "",
-                "synthetic": r["synthetic"],
-            }
-            for r in reports
-        ]
-    ),
-    hide_index=True,
+table = pd.DataFrame(
+    [
+        {
+            "id": r["id"],
+            "run_at": r["run_at"],
+            "window_days": f"{r['window_start_day']}-{r['window_end_day']}",
+            "drifted_share": r["drifted_feature_share"],
+            "top_drifted": feature_names(r["top_drifted_features"])[:80],
+            "prediction_psi": r["prediction_drift_score"],
+            "triggered": r["triggered"],
+            "retraining": r["promotion_decision"] or "",
+            "synthetic": r["synthetic"],
+        }
+        for r in reports
+    ]
 )
+st.dataframe(ui.labelled(table), hide_index=True)
 
 rid = st.selectbox("Report", [r["id"] for r in reports], index=len(reports) - 1)
 report = next(r for r in reports if r["id"] == rid)

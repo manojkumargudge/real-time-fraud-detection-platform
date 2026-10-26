@@ -28,7 +28,9 @@ ui.require_schema()
 st.title("Alert queue")
 
 f1, f2, f3, f4 = st.columns([2, 2, 1, 1])
-statuses = f1.multiselect("Status", ALERT_STATUSES, default=["open", "investigating"])
+statuses = f1.multiselect(
+    "Status", ALERT_STATUSES, default=["open", "investigating"], format_func=ui.status_label
+)
 low, high = f2.slider("Score", 0.0, 1.0, (0.0, 1.0), step=0.01)
 day_from = f3.number_input("From day", min_value=0, value=None, step=1)
 day_to = f4.number_input("To day", min_value=0, value=None, step=1)
@@ -50,11 +52,11 @@ st.caption(f"{page.total:,} alerts match; page {page.page} of {pages}, highest s
 
 table = pd.DataFrame(page.rows, columns=COLUMNS)
 event = st.dataframe(
-    table,
+    ui.labelled(table),
     hide_index=True,
     on_select="rerun",
     selection_mode="single-row",
-    column_config={"score": st.column_config.NumberColumn(format="%.4f")},
+    column_config={"Score": st.column_config.NumberColumn(format="%.4f")},
     key="queue_table",
 )
 selected = event.selection.rows if event is not None else []

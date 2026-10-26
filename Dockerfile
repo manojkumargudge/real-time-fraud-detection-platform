@@ -24,6 +24,8 @@ RUN pip install --upgrade "setuptools==84.0.0" "wheel==0.48.0" \
 
 COPY src/ src/
 COPY configs/drift.toml configs/drift.toml
+# Dashboard settings (toolbar in viewer mode); unused by the API and consumers.
+COPY .streamlit/config.toml .streamlit/config.toml
 RUN useradd --create-home --uid 10001 app
 USER app
 

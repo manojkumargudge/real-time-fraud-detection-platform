@@ -1,4 +1,4 @@
-"""Overview: alert counts by status, alerts per transaction day, review precision, model."""
+"""Overview: alerts per status, review precision, production model, alerts per day."""
 
 from __future__ import annotations
 
@@ -12,33 +12,50 @@ ui.require_schema()
 ov = ui.load("overview")
 st.title("Overview")
 
-cols = st.columns(4)
-cols[0].metric("Alerts", f"{ov['total']:,}")
-cols[1].metric("Reviewed (labelled)", f"{ov['reviewed']:,}")
-precision = ov["precision"]
-cols[2].metric(
-    "Precision of reviewed alerts",
-    "n/a" if precision is None else f"{precision:.1%}",
-    help="Confirmed fraud / reviewed alerts, using each transaction's latest labelled review.",
-)
-cols[3].metric("Production model (newest scored row)", ov["model_version"] or "n/a")
+st.subheader(f"Alerts by status ({ov['total']:,} in total)")
+for col, status in zip(st.columns(len(ALERT_STATUSES)), ALERT_STATUSES, strict=True):
+    col.metric(ui.status_label(status), f"{ov['by_status'].get(status, 0):,}")
 
 left, right = st.columns(2)
-with left:
-    st.subheader("Alerts by status")
-    by_status = pd.DataFrame(
-        {
-            "status": list(ALERT_STATUSES),
-            "alerts": [ov["by_status"].get(s, 0) for s in ALERT_STATUSES],
-        }
+reviewed, fraud = ov["reviewed"], ov["confirmed_fraud"]
+if reviewed < ui.MIN_REVIEWS_FOR_PRECISION:
+    left.metric(
+        "Precision of reviewed alerts",
+        f"Too few reviews (n={reviewed})",
+        help=(
+            f"Shown from {ui.MIN_REVIEWS_FOR_PRECISION} reviewed alerts on: with fewer, one "
+            "review moves the percentage by several points, so it would mostly be noise. "
+            "Precision = confirmed fraud / reviewed alerts, using each transaction's latest "
+            "labelled review."
+        ),
     )
-    st.bar_chart(by_status, x="status", y="alerts", horizontal=True)
-    st.dataframe(by_status, hide_index=True)
-with right:
-    st.subheader("Alerts per transaction day")
-    per_day = pd.DataFrame(ov["per_day"], columns=["transaction_day", "alerts"])
-    st.bar_chart(per_day, x="transaction_day", y="alerts")
-    st.caption(
-        "Transaction day = TransactionDT // 86400 (event time). Alerts were created when the "
-        "validation period was replayed, so creation dates would put them all on two days."
+else:
+    left.metric(
+        "Precision of reviewed alerts",
+        f"{fraud / reviewed:.1%} ({fraud:,} of {reviewed:,})",
+        help="Confirmed fraud / reviewed alerts, using each transaction's latest labelled review.",
     )
+model = ov["model_version"]
+right.metric(
+    "Production model",
+    model.rsplit("-", 1)[-1] if model else "n/a",
+    help=(
+        "Model id = the first 12 hex digits of the model file's SHA-256. The MLflow registry "
+        "version is not visible to the dashboard (the registry is a host-only file)."
+    ),
+)
+if model:
+    right.caption(f"model_version {model} (newest scored transaction)")
+
+st.subheader("Alerts per day")
+per_day = pd.DataFrame(ov["per_day"], columns=["transaction_day", "alerts"])
+st.bar_chart(
+    per_day,
+    x="transaction_day",
+    y="alerts",
+    x_label="Day (from dataset start)",
+    y_label="Alerts",
+)
+st.caption(
+    "IEEE-CIS TransactionDT is seconds from an unspecified start date, so days are relative."
+)

@@ -1,0 +1,4 @@
+# Streamlit settings for the analyst dashboard (read from the working directory, /app in the image).
+[client]
+# Viewer mode: hide the developer toolbar (Deploy button, developer menu) from analysts.
+toolbarMode = "viewer"

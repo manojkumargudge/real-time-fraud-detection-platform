@@ -129,6 +129,7 @@ class FakeRepository:
         self.cache_key = f"fake-{uuid.uuid4().hex}"  # never share the page cache between tests
         self.reports_dir = reports_dir
         self.missing: list[str] = []
+        self.reviewed: tuple[int, int] = (0, 0)  # (reviewed, confirmed fraud) for the overview
         ring_uid = "1111|321|150|visa|226|debit|315"
         self.cases = {
             1: make_case(1, 0.97, ring_uid),
@@ -162,8 +163,8 @@ class FakeRepository:
             "by_status": by_status,
             "total": len(self.cases),
             "per_day": [(141, len(self.cases))],
-            "reviewed": 0,
-            "confirmed_fraud": 0,
+            "reviewed": self.reviewed[0],
+            "confirmed_fraud": self.reviewed[1],
             "precision": None,
             "model_version": "baseline-9fdad27ea3b0",
             "model_last_scored_at": NOW,
@@ -298,17 +299,61 @@ def test_every_page_renders_without_exceptions(
     assert at.title[0].value == title
 
 
-def test_overview_shows_counts_and_model(fake: FakeRepository) -> None:
+def test_overview_shows_a_tile_per_status_and_the_model(fake: FakeRepository) -> None:
     at = app(fake)
     metrics = {m.label: m.value for m in at.metric}
-    assert metrics["Alerts"] == "2" and metrics["Precision of reviewed alerts"] == "n/a"
-    assert metrics["Production model (newest scored row)"] == "baseline-9fdad27ea3b0"
+    assert [m.label for m in at.metric][:5] == [
+        "Open",
+        "Investigating",
+        "Confirmed fraud",
+        "False positive",
+        "Closed",
+    ]
+    assert (metrics["Open"], metrics["Closed"]) == ("2", "0")
+    assert metrics["Precision of reviewed alerts"] == "Too few reviews (n=0)"
+    assert metrics["Production model"] == "9fdad27ea3b0"
+    assert "model_version baseline-9fdad27ea3b0" in texts(at)
+    assert "days are relative" in texts(at)
+    assert at.dataframe == [] or all("Status" not in d.value.columns for d in at.dataframe)
+
+
+@pytest.mark.parametrize(
+    ("reviewed", "fraud", "shown"),
+    [
+        (29, 10, "Too few reviews (n=29)"),
+        (30, 12, "40.0% (12 of 30)"),
+        (1_250, 400, "32.0% (400 of 1,250)"),
+    ],
+)
+def test_precision_needs_enough_reviews(
+    fake: FakeRepository, reviewed: int, fraud: int, shown: str
+) -> None:
+    from src.dashboard.ui import MIN_REVIEWS_FOR_PRECISION
+
+    assert MIN_REVIEWS_FOR_PRECISION == 30
+    fake.reviewed = (reviewed, fraud)
+    at = app(fake)
+    assert {m.label: m.value for m in at.metric}["Precision of reviewed alerts"] == shown
+
+
+def test_tables_use_plain_column_labels(fake: FakeRepository) -> None:
+    queue = app(fake, "views/alerts.py")
+    assert list(queue.dataframe[0].value.columns)[:4] == ["Alert", "Score", "Status", "Day"]
+    case = app(fake, "views/case.py", alert_id=1)
+    assert list(case.dataframe[0].value.columns) == ["Field", "Value"]
+    rings = app(fake, "views/rings.py")
+    assert "Fraud rate" in rings.dataframe[0].value.columns
+    drift = app(fake, "views/drift.py")
+    assert "Prediction PSI" in drift.dataframe[0].value.columns
+    for at in (queue, case, rings, drift):
+        for frame in at.dataframe:
+            assert not any("_" in str(c) for c in frame.value.columns), list(frame.value.columns)
 
 
 def test_case_detail_shows_model_and_linked_ring(fake: FakeRepository) -> None:
     at = app(fake, "views/case.py", alert_id=1)
     metrics = {m.label: m.value for m in at.metric}
-    assert metrics["Model version"] == "baseline-9fdad27ea3b0" and metrics["Status"] == "open"
+    assert metrics["Model version"] == "baseline-9fdad27ea3b0" and metrics["Status"] == "Open"
     assert "Ring #1" in texts(at)
     other = app(fake, "views/case.py", alert_id=2)  # uid not a ring member: no ring section
     assert "Linked fraud ring" not in [s.value for s in other.subheader]
@@ -377,7 +422,7 @@ def test_conflict_between_two_ui_sessions_saves_nothing(fake: FakeRepository) ->
     assert any("was changed by bob" in e and "you had version 1" in e for e in errors), errors
     assert fake.cases[1]["status"] == "investigating" and fake.cases[1]["version"] == 2
     assert [r["analyst"] for r in fake.reviews[1]] == ["bob"]
-    assert {m.label: m.value for m in alice.metric}["Status"] == "investigating"  # reloaded
+    assert {m.label: m.value for m in alice.metric}["Status"] == "Investigating"  # reloaded
 
 
 def test_missing_schema_stops_every_page_with_a_clear_error(fake: FakeRepository) -> None:

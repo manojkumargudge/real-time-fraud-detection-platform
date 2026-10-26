@@ -18,6 +18,67 @@ from src.dashboard.db import Database
 
 READ_TTL_S = 15  # reads may be this stale; a write clears the cache
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# Below this many reviewed alerts the precision is not shown: with n < 30 a single review moves
+# it by more than 3 points, so the number would mostly be noise.
+MIN_REVIEWS_FOR_PRECISION = 30
+
+STATUS_LABELS = {
+    "open": "Open",
+    "investigating": "Investigating",
+    "confirmed_fraud": "Confirmed fraud",
+    "false_positive": "False positive",
+    "closed": "Closed",
+}
+# Plain column labels for every table and chart (data keys stay as they are).
+COLUMN_LABELS = {
+    "alert_id": "Alert",
+    "transaction_id": "Transaction",
+    "score": "Score",
+    "status": "Status",
+    "transaction_day": "Day",
+    "amount": "Amount",
+    "product": "Product",
+    "card_id": "Card",
+    "card": "Card",
+    "uid": "User (uid)",
+    "version": "Version",
+    "field": "Field",
+    "value": "Value",
+    "created_at": "Time",
+    "analyst": "Analyst",
+    "from_status": "From",
+    "to_status": "To",
+    "label": "Label",
+    "notes": "Notes",
+    "alert_version": "Version after",
+    "rank": "Rank",
+    "uid_count": "Users",
+    "card_count": "Cards",
+    "tx_count": "Transactions",
+    "fraud_rate": "Fraud rate",
+    "mean_risk": "Mean risk",
+    "scored_tx": "Scored transactions",
+    "shared_devices": "Shared devices",
+    "id": "Report",
+    "run_at": "Run at",
+    "window_days": "Window (days)",
+    "drifted_share": "Drifted share",
+    "top_drifted": "Top drifted features",
+    "prediction_psi": "Prediction PSI",
+    "triggered": "Triggered",
+    "retraining": "Retraining / promotion",
+    "synthetic": "Synthetic",
+    "alerts": "Alerts",
+}
+
+
+def labelled(frame: Any) -> Any:
+    """A copy of ``frame`` with plain column labels for display."""
+    return frame.rename(columns=COLUMN_LABELS)
+
+
+def status_label(status: str) -> str:
+    return STATUS_LABELS.get(status, status)
 
 
 @dataclass

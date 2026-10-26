@@ -72,7 +72,7 @@ if message is not None:
 m = st.columns(5)
 m[0].metric("Fraud score", f"{case['score']:.4f}")
 m[1].metric("Threshold", f"{case['threshold']:.4f}")
-m[2].metric("Status", case["status"])
+m[2].metric("Status", ui.status_label(case["status"]))
 m[3].metric("Version", case["version"])
 m[4].metric("Model version", case["model_version"])
 st.caption(
@@ -87,7 +87,7 @@ with left:
         [(k, "" if v is None else str(v)) for k, v in case["event"].items()],
         columns=["field", "value"],
     )
-    st.dataframe(fields, hide_index=True, height=min(38 * len(fields) + 38, 520))
+    st.dataframe(ui.labelled(fields), hide_index=True, height=min(38 * len(fields) + 38, 520))
     st.caption(f"card_id {case['card_id'] or '-'}; uid {case['uid'] or '-'}")
     ring = ui.load("ring_for_uid", case["uid"])
     if ring is not None:
@@ -102,11 +102,11 @@ with right:
     st.subheader("Change status")
     options = workflow.next_statuses(case["status"])
     if not options:
-        st.info(f"{case['status']} is final: no further changes.")
+        st.info(f"{ui.status_label(case['status'])} is final: no further changes.")
     else:
         analyst = ui.analyst_name()
         with st.form("change_status"):
-            st.selectbox("New status", options, key="case_to_status")
+            st.selectbox("New status", options, key="case_to_status", format_func=ui.status_label)
             st.text_area("Notes", key="case_notes")
             # The save runs in the callback, before the page re-reads the case: it must use the
             # version and status this form was rendered with (FORM_SEEN), not a fresh read.
@@ -128,6 +128,6 @@ with right:
 st.subheader("Review history")
 history = ui.load("review_history", int(alert_id))
 if history:
-    st.dataframe(pd.DataFrame(history)[HISTORY_COLUMNS], hide_index=True)
+    st.dataframe(ui.labelled(pd.DataFrame(history)[HISTORY_COLUMNS]), hide_index=True)
 else:
     st.caption("No reviews yet.")
