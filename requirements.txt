@@ -26,3 +26,7 @@ feast[redis]==0.47.0
 # Dataset / DataDefinition, evidently.presets); adds no change to the pins above; pip-audit clean
 # 2026-10-24. Telemetry off via EVIDENTLY_DISABLE_TELEMETRY=1 / DO_NOT_TRACK=1.
 evidently==0.7.23
+# Analyst dashboard (src/dashboard, image: requirements-dashboard.txt). 1.66.1 is the first
+# streamlit that allows pillow 13 (pillow 12.x: 6 advisories, see requirements-dashboard.txt).
+streamlit==1.66.1
+pillow==13.0.0

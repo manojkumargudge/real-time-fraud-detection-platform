@@ -1,7 +1,7 @@
 # CI: lint, type-check and unit tests, then integration tests against throwaway PostgreSQL,
 # Kafka and Redis service containers, plus security scans. CD (push to main only, after all three
-# pass): build the serving image
-# from the Dockerfile and push it to GitHub Container Registry. Nothing is deployed.
+# pass): build the serving and dashboard images
+# from the Dockerfile and push them to GitHub Container Registry. Nothing is deployed.
 name: CI
 
 on:
@@ -143,7 +143,7 @@ jobs:
       - name: pip-audit (all requirements files)
         run: |
           flags=$(python security/check_ignores.py pip-audit-flags security/pip-audit-ignore.txt)
-          for f in requirements.txt requirements-serving.txt requirements-monitoring.txt requirements-dev.txt requirements-gnn.txt; do
+          for f in requirements.txt requirements-serving.txt requirements-monitoring.txt requirements-dashboard.txt requirements-dev.txt requirements-gnn.txt; do
             echo "::group::pip-audit $f"
             pip-audit -r "$f" $flags --progress-spinner off
             echo "::endgroup::"
@@ -156,8 +156,10 @@ jobs:
       - name: bandit (src/, medium severity and above)
         run: bandit -r src -ll -q
 
-      - name: Build serving image for scanning
-        run: docker build -t fraud-serving:scan .
+      - name: Build serving and dashboard images for scanning
+        run: |
+          docker build -t fraud-serving:scan .
+          docker build -t fraud-dashboard:scan --build-arg REQUIREMENTS=requirements-dashboard.txt .
 
       - name: Trivy (serving image, HIGH/CRITICAL with a fix available)
         run: |
@@ -165,6 +167,13 @@ jobs:
             -v "$PWD/.trivyignore:/.trivyignore:ro" aquasec/trivy:0.75.0 image \
             --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /.trivyignore \
             --exit-code 1 fraud-serving:scan
+
+      - name: Trivy (dashboard image, HIGH/CRITICAL with a fix available)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/.trivyignore:/.trivyignore:ro" aquasec/trivy:0.75.0 image \
+            --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /.trivyignore \
+            --exit-code 1 fraud-dashboard:scan
 
   image:
     name: build and push image (GHCR)
@@ -195,3 +204,15 @@ jobs:
             ghcr.io/manojkumargudge/real-time-fraud-detection-platform:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Analyst dashboard image: the same Dockerfile with the Streamlit requirements.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: REQUIREMENTS=requirements-dashboard.txt
+          tags: |
+            ghcr.io/manojkumargudge/real-time-fraud-detection-platform-dashboard:${{ github.sha }}
+            ghcr.io/manojkumargudge/real-time-fraud-detection-platform-dashboard:latest
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,mode=max,scope=dashboard

@@ -1,0 +1,146 @@
+"""Glue between the Streamlit pages and the data layer: the repository, caching, session state.
+
+Pages call ``repo()`` and the cached loaders below; they contain no SQL. Tests replace the
+repository with a fake through ``st.session_state["repo"]``.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import streamlit as st
+
+from src.dashboard import data
+from src.dashboard.db import Database
+
+READ_TTL_S = 15  # reads may be this stale; a write clears the cache
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+@dataclass
+class Repository:
+    """The dashboard's view of the database; each method borrows one connection."""
+
+    db: Database
+    reports_dir: Path
+
+    @property
+    def cache_key(self) -> str:
+        return self.db.dsn.rsplit("@", 1)[-1]  # host/db only: never key caches on the password
+
+    def missing_schema(self) -> list[str]:
+        with self.db.connection() as c:
+            return data.missing_schema(c)
+
+    def overview(self) -> dict[str, Any]:
+        with self.db.connection() as c:
+            return data.overview(c)
+
+    def list_alerts(self, filt: data.AlertFilter, page: int, page_size: int) -> data.Page:
+        with self.db.connection() as c:
+            return data.list_alerts(c, filt, page, page_size)
+
+    def get_case(self, alert_id: int) -> dict[str, Any] | None:
+        with self.db.connection() as c:
+            return data.get_case(c, alert_id)
+
+    def review_history(self, alert_id: int) -> list[dict[str, Any]]:
+        with self.db.connection() as c:
+            return data.review_history(c, alert_id)
+
+    def ring_for_uid(self, uid: str | None) -> dict[str, Any] | None:
+        with self.db.connection() as c:
+            return data.ring_for_uid(c, uid)
+
+    def change_status(
+        self, alert_id: int, expected_version: int, to_status: str, analyst: str, notes: str
+    ) -> int:
+        with self.db.connection() as c:
+            return data.change_status(c, alert_id, expected_version, to_status, analyst, notes)
+
+    def list_rings(self) -> list[dict[str, Any]]:
+        with self.db.connection() as c:
+            return data.list_rings(c)
+
+    def get_ring(self, rank: int) -> dict[str, Any] | None:
+        with self.db.connection() as c:
+            return data.get_ring(c, rank)
+
+    def ring_alerts(self, uids: list[str]) -> list[dict[str, Any]]:
+        with self.db.connection() as c:
+            return data.ring_alerts(c, uids)
+
+    def list_drift_reports(self) -> list[dict[str, Any]]:
+        with self.db.connection() as c:
+            return data.list_drift_reports(c)
+
+    def report_file(self, report_path: str | None) -> Path | None:
+        return data.report_file(report_path, self.reports_dir)
+
+
+@st.cache_resource
+def _default_repository(dsn: str, reports_dir: str) -> Repository:
+    return Repository(Database(dsn), Path(reports_dir))
+
+
+def repo() -> Any:
+    """The session's repository: a test fake if one was injected, else the database."""
+    if "repo" in st.session_state:
+        return st.session_state["repo"]
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        st.error("DATABASE_URL is not set: the dashboard needs the platform's PostgreSQL.")
+        st.stop()
+    reports = os.environ.get("DASHBOARD_REPORTS_DIR", str(REPO_ROOT / "reports" / "drift"))
+    return _default_repository(dsn, reports)
+
+
+@st.cache_data(ttl=READ_TTL_S, show_spinner=False)
+def cached(_repo: Any, cache_key: str, method: str, *args: Any) -> Any:
+    """``_repo.<method>(*args)``, cached for READ_TTL_S per database and arguments."""
+    return getattr(_repo, method)(*args)
+
+
+def load(method: str, *args: Any) -> Any:
+    r = repo()
+    return cached(r, r.cache_key, method, *args)
+
+
+def invalidate() -> None:
+    cached.clear()
+
+
+def require_schema() -> None:
+    """Stop the page with a clear message when the dashboard schema is missing."""
+    missing = load("missing_schema")
+    if missing:
+        st.error(
+            "The database schema is not initialised for the dashboard. Start the API or a "
+            "consumer once (src/serving/store.py creates it); the dashboard never runs DDL.\n\n"
+            "Missing: " + ", ".join(missing)
+        )
+        st.stop()
+
+
+def analyst_name() -> str:
+    """The analyst name typed once per session (sidebar); no authentication."""
+    return str(st.session_state.get("analyst", "")).strip()
+
+
+def sidebar() -> None:
+    with st.sidebar:
+        st.text_input(
+            "Analyst name",
+            key="analyst",
+            help="Recorded on every review. No authentication: the name is self-declared.",
+        )
+        if not analyst_name():
+            st.caption("Enter your name to change cases.")
+
+
+def open_case(alert_id: int) -> None:
+    st.session_state["alert_id"] = int(alert_id)
+    st.switch_page("views/case.py")
