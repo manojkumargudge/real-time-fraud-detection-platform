@@ -1,0 +1,15 @@
+E       ValueError: substring not found
+        """The incident replays passed the version check (the expected version was current).
+E       TypeError: change_status() got an unexpected keyword argument 'submit_token'
+E       AssertionError: assert [] == ['duplicate',...licate', 'ok']
+E         
+E         Right contains 4 more items, first extra item: 'duplicate'
+E         Use -v to get more diff
+E       TypeError: change_status() got an unexpected keyword argument 'submit_token'
+E       TypeError: change_status() got an unexpected keyword argument 'submit_token'
+FAILED tests/test_integration.py::TestSchemaSetup::test_submit_token_migration_is_additive
+FAILED tests/test_integration.py::TestDashboardData::test_resubmitting_the_same_token_writes_nothing
+FAILED tests/test_integration.py::TestDashboardData::test_same_token_from_concurrent_threads_writes_once
+FAILED tests/test_integration.py::TestDashboardData::test_a_save_with_a_stale_seen_version_writes_nothing
+FAILED tests/test_integration.py::TestDashboardData::test_a_save_with_no_status_is_rejected
+5 failed, 30 deselected, 5 warnings in 66.55s (0:01:06)
