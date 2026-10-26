@@ -261,8 +261,8 @@ matters (files, numbers, running services) before relying on it.
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
   `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **550 passed** with the
-  GNN stack installed (2026-10-26, dashboard; 499 before it); without it, CI's unit job (as in CI: `tests/test_graph.py`
-  skips when torch_geometric is missing; the ring tests need no torch).
+  GNN stack installed (2026-10-26, dashboard; 499 before it). Without it (CI's unit job),
+  `tests/test_graph.py` skips because torch_geometric is missing; the ring tests need no torch.
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
