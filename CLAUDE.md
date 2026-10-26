@@ -38,12 +38,55 @@ Aim for production-style engineering, but document operational, security,
 scalability, and compliance limitations honestly. Do not claim financial-sector
 production readiness without appropriate evidence.
 
-## Current project state (end of 2026-10-25: crash fix, throughput, k8s-smoke, k8s-full merged)
+## Current project state (2026-10-26: analyst dashboard; before that crash fix, throughput, k8s)
 
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
 
-### Where things stand (end of 2026-10-25)
+### Where things stand (2026-10-26)
+- Analyst dashboard (Streamlit, docs/dashboard.md) on branch `dashboard`, merged via PR (see
+  the session summary for the PR, CI run and merge commit). The demo database was migrated
+  (alerts.updated_at/version, case_reviews), after a restore from
+  backups/fraud-demo-2026-10-26-pre-dashboard.dump that removed the Step 3 test reviews
+  (evidence of the lock bug they exposed: docs/evidence/2026-10-26-lock-bug/).
+  `case_reviews` holds only real analyst reviews from then on.
+  - **Layout** (`src/dashboard/`):
+    - `workflow.py`: transitions and labels, pure;
+    - `data.py`: **all** SQL, static and parameterised;
+    - `db.py`: one connection per call;
+    - `ui.py`: repository, 15 s read cache, labels;
+    - `app.py` + `views/`: thin pages Overview, Alert queue, Case detail, Fraud rings, Drift.
+    - Compose service `dashboard` on 127.0.0.1:8501 (`requirements-dashboard.txt`,
+      streamlit 1.66.1 + pillow 13.0.0; never in the API/consumer image), reports/drift
+      mounted read-only, `.streamlit/config.toml` toolbarMode viewer.
+  - **Case workflow:** open -> investigating | confirmed_fraud | false_positive;
+    investigating -> confirmed_fraud | false_positive; confirmed_fraud <-> false_positive
+    (correction) and -> closed; closed is terminal. The label follows the target status
+    (confirmed_fraud = fraud, false_positive = not_fraud, others none).
+  - **Schema** (owned by src/serving/store.py, idempotent, under
+    `pg_advisory_xact_lock(7291406001)`; the dashboard never runs DDL):
+    - alerts gained `updated_at` and `version` (optimistic locking);
+    - the status CHECK has 5 values, re-added only if it differs;
+    - `case_reviews` (id, alert_id, transaction_id, from_status, to_status, label
+      fraud/not_fraud/NULL, analyst, notes, alert_version, created_at) is append-only (a
+      trigger rejects UPDATE/DELETE; TRUNCATE works, used only on the fraud_bench clone).
+  - **Retraining input:** `src.dashboard.data.latest_labels(conn)` returns
+    (transaction_id, label, reviewed_at) from the latest labelled review per transaction, so
+    corrections win. The scoring path cannot overwrite analyst fields (insert-only, ON CONFLICT
+    DO NOTHING; replay test).
+  - **Status changes** are checked against the version the analyst saw (the save runs in
+    the form callback; bf63be0 fixed a re-read on submit that defeated the lock).
+  - **Run:** `docker compose up -d --build dashboard`; on the host:
+    `DATABASE_URL=... PYTHONPATH=. .venv/Scripts/streamlit run src/dashboard/app.py`.
+  - **Known limitations:**
+    - no authentication (the analyst name is self-declared);
+    - no connection pool (fine for a few analysts; add psycopg-pool before scaling);
+    - single instance with a 15 s read cache;
+    - no scoring latency or feature explanations (not stored);
+    - the model tile shows the model id, not the MLflow version;
+    - rings are training-period data.
+
+### Earlier (end of 2026-10-25)
 - `main` = `origin/main` at the merge of `k8s-full` (0207862) or later; CI is green through
   run #14. Merged on 2026-10-25, in order:
   - `consumer-crash-fix` (CI #10): retriable commit errors are retried, then left for
@@ -217,19 +260,20 @@ matters (files, numbers, running services) before relying on it.
 
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
-  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **495 passed** with the
-  GNN stack installed; **485 passed, 1 skipped** without it (2026-10-25, consumer-throughput) (as in CI: `tests/test_graph.py`
+  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **550 passed** with the
+  GNN stack installed (2026-10-26, dashboard; 499 before it); without it, CI's unit job (as in CI: `tests/test_graph.py`
   skips when torch_geometric is missing; the ring tests need no torch).
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
   `TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 python -m pytest
-  tests/test_integration.py` -- 17 passed (2026-10-25, consumer-throughput). Never point them at the demo stack.
+  tests/test_integration.py` -- 30 passed (2026-10-26, dashboard; 17 before it). Never point them at the demo stack.
 - GNN: `python -m src.graph.train`, `python -m src.graph.stack --degree-limit 1000 --epochs 7`,
   `DATABASE_URL=... python -m src.graph.rings` (needs requirements-gnn.txt; 10-45 min on CPU).
 - Lint/types: `ruff check .`, `ruff format --check .`, `python -m mypy` (strict; src, tests, scripts).
 - Chaos test (test stack only): `python -m scripts.chaos_kafka_restart [--mode restart|kill|pause]`.
+- Dashboard: `docker compose up -d --build dashboard` -> http://localhost:8501 (docs/dashboard.md).
 - Throughput benchmark (clone `fraud_bench` of the demo DB, own Redis/topic/group;
   docker-compose.bench.yml): `python -m scripts.bench_throughput setup|run|reset|restart|teardown`.
   Consumer env `STAGE_TIMINGS=1` logs per-stage ms per message.
@@ -263,9 +307,12 @@ matters (files, numbers, running services) before relying on it.
   commit (librdkafka waits for the coordinator), so that path is unit-tested only.
 - Not production-ready: single-node Kafka (RF=1), no auth/TLS, local MLflow, drift job not
   scheduled.
+- Dashboard: no authentication (self-declared analyst name), no connection pool (add
+  psycopg-pool before scaling), single instance with a 15 s read cache (docs/dashboard.md).
 
 ### Next (pick with the user; nothing is in progress)
-- Analyst dashboard (Streamlit), reading `alerts`, `fraud_rings` and `drift_reports`.
+- Retraining from analyst labels (`latest_labels`), planned 2026-10-27.
+- Dashboard on Kubernetes (manifest), planned 2026-10-27.
 - Kubernetes beyond the local Minikube deployment (docs/kubernetes.md "Not production"):
   replication, Ingress/TLS, a secrets manager, an MLflow server for in-cluster retraining.
   Retraining would need an MLflow server with a shared artifact store first (host-only today).
