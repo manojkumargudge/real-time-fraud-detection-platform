@@ -56,7 +56,11 @@ hides Streamlit's Deploy button and developer menu.
   - the transaction fields (the stored event), score, threshold and per-case model version;
   - status and version;
   - the linked ring, only when the alert's uid is a ring member;
-  - the status-change form (allowed next statuses only, notes) and the full review history.
+  - the status-change form and the full review history:
+    - the status dropdown offers the allowed next statuses only, and starts empty ("Choose a
+      status");
+    - Save is disabled, with the reason shown, until an analyst name and a status are set;
+    - there is no `st.form`, so Enter and Ctrl+Enter never submit; Save submits only on a click.
 - **Fraud rings:** the stored rings with size and labelled fraud rate. The detail shows the
   member uids, their cards (the uid minus its last component), the shared devices and the
   members' alerts.
@@ -113,19 +117,42 @@ The dashboard never runs DDL; if the schema is missing, every page shows a clear
 | `notes` | TEXT NULL |
 | `alert_version` | INTEGER NOT NULL (the alert's version after this change) |
 | `created_at` | TIMESTAMPTZ NOT NULL DEFAULT now() |
+| `submit_token` | TEXT NULL, UNIQUE: the one-time token of the form the review was saved from (NULL for rows written before it existed) |
 
-  - Indexes: `(alert_id, id)` and `(transaction_id, id)`.
+  - Indexes: `(alert_id, id)`, `(transaction_id, id)` and the unique
+    `ux_case_reviews_submit_token`. The token column and its index are an additive migration.
   - A trigger rejects row-level UPDATE and DELETE.
   - TRUNCATE does not fire row triggers; only the benchmark clone uses it
     (`scripts/bench_throughput.py`, guarded to `fraud_bench`).
 
-**Optimistic locking:** the form carries the version it was rendered from. The save runs in
-the submit callback, with the version and status the form was rendered with (see
-docs/evidence/2026-10-26-lock-bug: re-reading on submit defeated the lock). `change_status`
-locks the row (`FOR UPDATE`), compares the version, validates the transition, then writes
-`status`, `version + 1` and `updated_at` and the review **in one transaction**. If the version
-differs, it raises `StaleAlertError`: "alert N was changed by <analyst> at <time>: it is now
-<status> (version V, you had version W) ... nothing was saved".
+**One-time form token** (`src/dashboard/case_form.py`;
+docs/incidents/2026-10-26-unintended-reviews.md):
+
+- **Creation.** A token is created when the form is first rendered for an alert. It records the
+  alert id, version and status the analyst saw, and is never updated by later renders.
+- **Use.** The token names the form's widgets and is passed to the Save callback, which saves
+  against the token's seen version. `change_status` stores the token in `case_reviews` and
+  rejects a token that was already used (`DuplicateSubmitError`). The unique index is the backstop
+  for concurrent saves.
+- **Retirement.** After a save (or a rejected one), or when the alert id changes, the token and
+  the form's contents are discarded: the next render has a new token and an empty form, and a
+  submit still carrying the old token is rejected.
+- **Logging.** Every save attempt logs one line (alert, from, to, analyst, token, version,
+  result) to the container log.
+
+**Optimistic locking:** `change_status` locks the row (`FOR UPDATE`) and checks, in order:
+
+1. the token is unused;
+2. the version is still the token's seen version;
+3. the transition is valid.
+
+It then writes `status`, `version + 1` and `updated_at` and the review **in one transaction**.
+If the version differs, it raises `StaleAlertError`: "This case changed since you loaded it:
+alert N was changed by <analyst> at <time>; it is now <status> (version V, you had version W).
+Reload the case ... nothing was saved". The page also warns before the save when the case
+changed under an open form. Re-reading the version at submit time defeated the lock once
+(docs/evidence/2026-10-26-lock-bug), and refreshing it on every render let stray submits through
+(the 2026-10-26 incident).
 
 ## Tests
 
@@ -133,13 +160,20 @@ differs, it raises `StaleAlertError`: "alert N was changed by <analyst> at <time
   - all 25 status pairs;
   - labels, unknown statuses and drift-report lookup;
   - AppTest smoke tests of every page with an in-memory repository, the case form save, the
-    optimistic-lock message and the missing-schema error.
+    optimistic-lock message and the missing-schema error;
+  - unintended saves (the 2026-10-26 incident). Each of these writes 0 rows: a second (stray)
+    submit after a save, a save against a stale seen version, a save with no status, and an
+    alert id change followed by reruns. Save is disabled without a name or status, the page has
+    no form, a used token is rejected, and every save is logged.
 - **`tests/test_integration.py`, "dashboard data access"** (test-stack PostgreSQL):
   - setup from 6 threads at once, then a rerun (constraint not recreated);
   - the upgrade of an old-schema database (rows kept, defaults added);
   - the append-only trigger, and TRUNCATE;
   - status change and review; lock conflict; invalid and anonymous changes; 8 concurrent
     threads on their own connections;
+  - the submit token: its additive migration (old rows keep NULL); a resubmitted token, including
+    one sent from 4 concurrent threads, writes once; a stale seen version and a missing status
+    are rejected with 0 rows written;
   - pagination and filters;
   - `latest_labels` with a correction, and precision against hand-written SQL;
   - ring linking; the missing-schema report;

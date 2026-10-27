@@ -7,7 +7,9 @@ between Streamlit sessions. The dashboard never runs DDL: the schema belongs to
 
 Status changes use optimistic locking on ``alerts.version``: the analyst's form carries the
 version it was rendered from, and a change is applied only if the row still has that version.
-The alert update and its ``case_reviews`` row are written in one transaction.
+Each form also carries a one-time submit token, stored with the review under a UNIQUE index, so
+the same submit can never write twice. The alert update and its ``case_reviews`` row are written
+in one transaction.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ REQUIRED_COLUMNS = {
     "alerts": set("alert_id transaction_id score status created_at updated_at version".split()),
     "case_reviews": set(
         "id alert_id transaction_id from_status to_status label analyst notes alert_version "
-        "created_at".split()
+        "created_at submit_token".split()
     ),
     "scored_transactions": {"transaction_id", "transaction_dt", "uid", "event", "model_version"},
     "fraud_rings": {"rank", "uids", "fraud_rate"},
@@ -62,10 +64,24 @@ class StaleAlertError(RuntimeError):
         who = f" by {changed_by}" if changed_by else ""
         when = f" at {changed_at:%Y-%m-%d %H:%M:%S %Z}" if changed_at else ""
         super().__init__(
-            f"alert {alert_id} was changed{who}{when}: it is now {current_status} "
-            f"(version {current_version}, you had version {expected_version}). "
-            "Reload the case to see the change; nothing was saved."
+            f"This case changed since you loaded it: alert {alert_id} was changed{who}{when}; it "
+            f"is now {current_status} (version {current_version}, you had version "
+            f"{expected_version}). Reload the case to see the change; nothing was saved."
         )
+
+
+class DuplicateSubmitError(RuntimeError):
+    """This form submit (its one-time token) was already saved; nothing is written again."""
+
+    def __init__(self, alert_id: int, submit_token: str) -> None:
+        self.alert_id, self.submit_token = alert_id, submit_token
+        super().__init__(
+            f"This form was already saved (alert {alert_id}); nothing was saved again. "
+            "Reload the case to see its current state."
+        )
+
+
+SUBMIT_TOKEN_INDEX = "ux_case_reviews_submit_token"
 
 
 @dataclass(frozen=True)
@@ -228,17 +244,44 @@ def change_status(
     to_status: str,
     analyst: str,
     notes: str | None = None,
+    *,
+    submit_token: str | None = None,
 ) -> int:
     """Move an alert to ``to_status`` and append its review; returns the new version.
 
-    Raises ``InvalidTransitionError`` (workflow), ``StaleAlertError`` (the alert's version is no
-    longer ``expected_version``), ``AlertNotFoundError`` or ``ValueError`` (no analyst name).
-    Nothing is written unless both the update and the review succeed.
+    ``submit_token`` is the one-time token of the dashboard form (stored, UNIQUE); None only for
+    scripts and tests. Raises ``DuplicateSubmitError`` (token already used), ``StaleAlertError``
+    (the alert's version is no longer ``expected_version``), ``InvalidTransitionError``
+    (workflow), ``AlertNotFoundError`` or ``ValueError`` (no status, no analyst name, blank
+    token). Nothing is written unless both the update and the review succeed.
     """
+    if not (to_status or "").strip():
+        raise ValueError("Choose a new status; nothing was saved.")
     analyst = analyst.strip()
     if not analyst:
         raise ValueError("an analyst name is required to change a case")
+    if submit_token is not None and not submit_token.strip():
+        raise ValueError("a blank submit token is not allowed")
     notes = (notes or "").strip() or None
+    try:
+        return _change_status(
+            conn, alert_id, expected_version, to_status, analyst, notes, submit_token
+        )
+    except psycopg.errors.UniqueViolation as exc:  # a concurrent save with the same token
+        if submit_token is not None and exc.diag.constraint_name == SUBMIT_TOKEN_INDEX:
+            raise DuplicateSubmitError(alert_id, submit_token) from exc
+        raise
+
+
+def _change_status(
+    conn: psycopg.Connection[Any],
+    alert_id: int,
+    expected_version: int,
+    to_status: str,
+    analyst: str,
+    notes: str | None,
+    submit_token: str | None,
+) -> int:
     with conn.transaction():
         row = conn.execute(
             "SELECT status, version, transaction_id FROM alerts WHERE alert_id = %s FOR UPDATE",
@@ -247,6 +290,13 @@ def change_status(
         if row is None:
             raise AlertNotFoundError(f"alert {alert_id} does not exist")
         status, version, transaction_id = row
+        if (
+            submit_token is not None
+            and conn.execute(
+                "SELECT 1 FROM case_reviews WHERE submit_token = %s", (submit_token,)
+            ).fetchone()
+        ):
+            raise DuplicateSubmitError(alert_id, submit_token)
         if version != expected_version:
             last = conn.execute(
                 "SELECT analyst, created_at FROM case_reviews WHERE alert_id = %s "
@@ -266,8 +316,19 @@ def change_status(
             raise RuntimeError(f"alert {alert_id} update matched no row")
         conn.execute(
             "INSERT INTO case_reviews (alert_id, transaction_id, from_status, to_status, label, "
-            "analyst, notes, alert_version) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (alert_id, transaction_id, status, to_status, label, analyst, notes, updated[0]),
+            "analyst, notes, alert_version, submit_token) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                alert_id,
+                transaction_id,
+                status,
+                to_status,
+                label,
+                analyst,
+                notes,
+                updated[0],
+                submit_token,
+            ),
         )
     return int(updated[0])
 

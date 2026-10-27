@@ -11,6 +11,7 @@ import streamlit as st
 from src.dashboard import ui
 
 st.set_page_config(page_title="Fraud analyst dashboard", layout="wide")
+ui.configure_logging()
 ui.sidebar()
 st.navigation(
     [

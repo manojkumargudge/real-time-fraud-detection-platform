@@ -636,6 +636,26 @@ def _alert_ids(conn: psycopg.Connection[Any]) -> dict[int, int]:
     return dict(conn.execute("SELECT transaction_id, alert_id FROM alerts").fetchall())
 
 
+def _reviews(conn: psycopg.Connection[Any]) -> list[tuple[Any, ...]]:
+    return conn.execute(
+        "SELECT id, alert_id, from_status, to_status, analyst, alert_version FROM case_reviews "
+        "ORDER BY id"
+    ).fetchall()
+
+
+def _status(conn: psycopg.Connection[Any], alert_id: int) -> tuple[Any, ...] | None:
+    return conn.execute(
+        "SELECT status, version FROM alerts WHERE alert_id = %s", (alert_id,)
+    ).fetchone()
+
+
+def _assert_same_rows(before: list[Any], after: list[Any]) -> None:
+    print(f"case_reviews: before {len(before)} rows, after {len(after)} rows")
+    assert before, "the 'before' side is empty: nothing to compare"
+    assert after, "the 'after' side is empty: nothing to compare"
+    assert after == before
+
+
 @pytest.fixture
 def dash(pg_dsn: str, pg_store: PostgresStore) -> Iterator[psycopg.Connection[Any]]:
     """30 alerts (scores 0.50..0.79, transaction days 100..129) and 10 non-alerts, plus the
@@ -738,6 +758,53 @@ class TestSchemaSetup:
         dash.execute("TRUNCATE case_reviews")  # row triggers do not fire on TRUNCATE
         assert dash.execute("SELECT count(*) FROM case_reviews").fetchone() == (0,)
 
+    def test_submit_token_migration_is_additive(self, pg_dsn: str) -> None:
+        """A database with reviews from before the token column: the setup adds a nullable
+        column and a unique index, keeps every old row (token NULL) and stays idempotent."""
+        from src.serving import store as st
+
+        start = st.DDL.index("-- One-time token of the dashboard form")
+        end = st.DDL.index("-- end of submit token")
+        old = st.DDL[:start] + st.DDL[end:]
+        column_sql = (
+            "SELECT data_type, is_nullable FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'case_reviews' "
+            "AND column_name = 'submit_token'"
+        )
+        review_cols = "id, alert_id, transaction_id, from_status, to_status, analyst, created_at"
+        with psycopg.connect(pg_dsn, autocommit=True) as conn:
+            conn.execute(old)  # the dashboard schema of f3d2815
+            assert conn.execute(column_sql).fetchone() is None
+            conn.execute(
+                "INSERT INTO scored_transactions VALUES "
+                "(1, 10, 'c', 'u', '{}', 0.9, 0.5, true, 'v', '2026-10-01')"
+            )
+            conn.execute("INSERT INTO alerts (transaction_id, score) VALUES (1, 0.9)")
+            for status in ("investigating", "confirmed_fraud"):
+                conn.execute(
+                    "INSERT INTO case_reviews (alert_id, transaction_id, from_status, to_status, "
+                    "analyst, alert_version) SELECT alert_id, 1, 'open', %s, 'alice', 2 "
+                    "FROM alerts",
+                    (status,),
+                )
+            before = conn.execute(f"SELECT {review_cols} FROM case_reviews ORDER BY id").fetchall()
+            PostgresStore(pg_dsn).close()
+            PostgresStore(pg_dsn).close()  # rerun: idempotent
+            after = conn.execute(f"SELECT {review_cols} FROM case_reviews ORDER BY id").fetchall()
+            tokens = conn.execute("SELECT submit_token FROM case_reviews ORDER BY id").fetchall()
+            column = conn.execute(column_sql).fetchone()
+            index = conn.execute(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() "
+                "AND indexname = 'ux_case_reviews_submit_token'"
+            ).fetchone()
+        print(f"old reviews: before {len(before)} rows, after {len(after)} rows")
+        assert before, "the 'before' side is empty: nothing to compare"
+        assert after, "the 'after' side is empty: nothing to compare"
+        assert after == before
+        assert tokens == [(None,), (None,)]
+        assert column == ("text", "YES")
+        assert index is not None and "UNIQUE" in index[0] and "(submit_token)" in index[0]
+
 
 @needs_db
 class TestDashboardData:
@@ -787,6 +854,92 @@ class TestDashboardData:
         assert dash.execute("SELECT status, version FROM alerts WHERE alert_id = %s",
                             (alert,)).fetchone() == ("open", 1)  # fmt: skip
         assert data.review_history(dash, alert) == []
+
+    def test_resubmitting_the_same_token_writes_nothing(
+        self, dash: psycopg.Connection[Any]
+    ) -> None:
+        """The incident replays passed the version check (the expected version was current).
+        The token makes the same submit write at most once, even at the current version."""
+        from src.dashboard import data
+
+        ids = _alert_ids(dash)
+        alert, other = ids[9_006], ids[9_007]
+        version = data.change_status(dash, alert, 1, "confirmed_fraud", "alice", submit_token="t-1")
+        assert version == 2
+        before = _reviews(dash)
+        with pytest.raises(data.DuplicateSubmitError, match="already saved"):
+            data.change_status(dash, alert, 2, "false_positive", "alice", submit_token="t-1")
+        with pytest.raises(data.DuplicateSubmitError):  # tokens are unique across alerts
+            data.change_status(dash, other, 1, "investigating", "alice", submit_token="t-1")
+        after = _reviews(dash)
+        _assert_same_rows(before, after)
+        assert _status(dash, alert) == ("confirmed_fraud", 2)
+        assert _status(dash, other) == ("open", 1)
+        stored = dash.execute(
+            "SELECT submit_token FROM case_reviews WHERE alert_id = %s", (alert,)
+        ).fetchall()
+        assert stored == [("t-1",)]
+
+    def test_same_token_from_concurrent_threads_writes_once(
+        self, dash: psycopg.Connection[Any], pg_dsn: str
+    ) -> None:
+        """Different alerts are not serialised by the row lock: the unique index decides."""
+        from src.dashboard import data
+        from src.dashboard.db import Database
+
+        db, ids = Database(pg_dsn), _alert_ids(dash)
+        alerts = [ids[9_011 + i] for i in range(4)]
+        barrier, results = threading.Barrier(4), []
+
+        def writer(alert: int) -> None:
+            barrier.wait(timeout=30)
+            with db.connection() as conn:
+                try:
+                    data.change_status(conn, alert, 1, "investigating", "a", submit_token="same")
+                    results.append("ok")
+                except data.DuplicateSubmitError:
+                    results.append("duplicate")
+
+        threads = [threading.Thread(target=writer, args=(a,)) for a in alerts]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+        assert sorted(results) == ["duplicate", "duplicate", "duplicate", "ok"]
+        written = dash.execute(
+            "SELECT alert_id FROM case_reviews WHERE submit_token = 'same'"
+        ).fetchall()
+        assert len(written) == 1
+        assert sum(_status(dash, a) == ("investigating", 2) for a in alerts) == 1
+
+    def test_a_save_with_a_stale_seen_version_writes_nothing(
+        self, dash: psycopg.Connection[Any]
+    ) -> None:
+        from src.dashboard import data
+
+        alert = _alert_ids(dash)[9_008]
+        data.change_status(dash, alert, 1, "investigating", "bob", submit_token="bob-1")
+        before = _reviews(dash)
+        with pytest.raises(data.StaleAlertError, match="This case changed") as err:
+            data.change_status(dash, alert, 1, "false_positive", "alice", submit_token="alice-1")
+        assert "Reload the case" in str(err.value) and "nothing was saved" in str(err.value)
+        after = _reviews(dash)
+        _assert_same_rows(before, after)
+        assert _status(dash, alert) == ("investigating", 2)
+
+    def test_a_save_with_no_status_is_rejected(self, dash: psycopg.Connection[Any]) -> None:
+        from src.dashboard import data
+
+        alert = _alert_ids(dash)[9_009]
+        data.change_status(dash, alert, 1, "investigating", "alice", submit_token="ok-1")
+        before = _reviews(dash)
+        no_status: tuple[Any, ...] = ("", "  ", None)  # None: what an empty dropdown sends
+        for i, missing in enumerate(no_status):
+            with pytest.raises(ValueError, match="Choose a new status"):
+                data.change_status(dash, alert, 2, missing, "alice", submit_token=f"x{i}")
+        after = _reviews(dash)
+        _assert_same_rows(before, after)
+        assert _status(dash, alert) == ("investigating", 2)
 
     def test_concurrent_threads_one_writer_wins_and_reads_are_safe(
         self, dash: psycopg.Connection[Any], pg_dsn: str

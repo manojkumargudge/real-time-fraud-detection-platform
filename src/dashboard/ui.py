@@ -6,6 +6,7 @@ repository with a fake through ``st.session_state["repo"]``.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -117,10 +118,19 @@ class Repository:
             return data.ring_for_uid(c, uid)
 
     def change_status(
-        self, alert_id: int, expected_version: int, to_status: str, analyst: str, notes: str
+        self,
+        alert_id: int,
+        expected_version: int,
+        to_status: str,
+        analyst: str,
+        notes: str,
+        *,
+        submit_token: str,
     ) -> int:
         with self.db.connection() as c:
-            return data.change_status(c, alert_id, expected_version, to_status, analyst, notes)
+            return data.change_status(
+                c, alert_id, expected_version, to_status, analyst, notes, submit_token=submit_token
+            )
 
     def list_rings(self) -> list[dict[str, Any]]:
         with self.db.connection() as c:
@@ -184,6 +194,16 @@ def require_schema() -> None:
             "Missing: " + ", ".join(missing)
         )
         st.stop()
+
+
+def configure_logging() -> None:
+    """Send the dashboard's own log lines (one per save) to stderr, i.e. the container log."""
+    log = logging.getLogger("src.dashboard")
+    if not log.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        log.addHandler(handler)
+        log.setLevel(logging.INFO)
 
 
 def analyst_name() -> str:

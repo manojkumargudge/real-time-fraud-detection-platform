@@ -1,0 +1,29 @@
+case reviews: before 1 rows, after 2 rows
+case reviews: before 1 rows, after 2 rows
+        print(f"case reviews: before {len(before)} rows, after {len(after)} rows")
+E       AssertionError: assert [(1, 1, 'conf...ve', 'alice')] == [(1, 1, 'conf...ud', 'alice')]
+E         
+E         Left contains one more item: (1, 2, 'false_positive', 'alice')
+E         Use -v to get more diff
+        print(f"case reviews: before {len(before)} rows, after {len(after)} rows")
+E       AssertionError: assert [(1, 1, 'inve...ve', 'alice')] == [(1, 1, 'inve...ting', 'bob')]
+E         
+E         Left contains one more item: (1, 2, 'false_positive', 'alice')
+E         Use -v to get more diff
+E       AssertionError: assert 'confirmed_fraud' is None
+E        +  where 'confirmed_fraud' = Selectbox(key='case_to_status', _value=InitialValue(), label='New status', options=['Confirmed fraud', 'False positive'], form_id='change_status').value
+E       AssertionError: assert 'false_positive' is None
+E        +  where 'false_positive' = Selectbox(key='case_to_status', _value=InitialValue(), label='New status', options=['Investigating', 'Confirmed fraud', 'False positive'], form_id='change_status').value
+E       AssertionError: assert 'investigating' is None
+E        +  where 'investigating' = Selectbox(key='case_to_status', _value=InitialValue(), label='New status', options=['Investigating', 'Confirmed fraud', 'False positive'], form_id='change_status').value
+E       AssertionError: assert [Block(\n    t...tus')\n    }\n)] == []
+E         
+E         Left contains one more item: Block(\n    type='form',\n    children={\n        0: Selectbox(key='case_to_status', _value=InitialValue(), label='New st...ange_status'),\n        2: Button(key='FormSubmitter:change_status-Save', label='Save', form_id='change_status')\n    }\n)
+E         Use -v to get more diff
+FAILED tests/test_dashboard.py::test_a_second_submit_after_a_save_writes_nothing
+FAILED tests/test_dashboard.py::test_a_save_with_a_stale_seen_version_is_rejected
+FAILED tests/test_dashboard.py::test_a_save_with_no_status_is_rejected - Asse...
+FAILED tests/test_dashboard.py::test_changing_the_alert_id_after_a_save_writes_nothing
+FAILED tests/test_dashboard.py::test_save_is_disabled_until_a_name_and_a_status_are_set
+FAILED tests/test_dashboard.py::test_case_page_has_no_form_so_enter_cannot_submit
+6 failed, 51 deselected in 11.31s

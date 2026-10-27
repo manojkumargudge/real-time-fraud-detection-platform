@@ -164,6 +164,12 @@ CREATE TABLE IF NOT EXISTS case_reviews (
 );
 CREATE INDEX IF NOT EXISTS ix_case_reviews_alert ON case_reviews (alert_id, id);
 CREATE INDEX IF NOT EXISTS ix_case_reviews_tx ON case_reviews (transaction_id, id);
+-- One-time token of the dashboard form a review was saved from: the same submit can never write
+-- twice (docs/incidents/2026-10-26-unintended-reviews.md). Additive; older rows keep NULL, and a
+-- unique index allows any number of NULLs.
+ALTER TABLE case_reviews ADD COLUMN IF NOT EXISTS submit_token TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_case_reviews_submit_token ON case_reviews (submit_token);
+-- end of submit token
 -- Row-level UPDATE/DELETE are rejected. TRUNCATE (whole table) does not fire row triggers; the
 -- benchmark clone uses it (scripts/bench_throughput.py).
 CREATE OR REPLACE FUNCTION case_reviews_append_only() RETURNS trigger LANGUAGE plpgsql AS $fn$

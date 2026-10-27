@@ -8,6 +8,7 @@ integration tests (tests/test_integration.py, "Dashboard data access").
 from __future__ import annotations
 
 import itertools
+import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -129,6 +130,7 @@ class FakeRepository:
         self.cache_key = f"fake-{uuid.uuid4().hex}"  # never share the page cache between tests
         self.reports_dir = reports_dir
         self.missing: list[str] = []
+        self.calls = 0  # change_status calls, including rejected ones
         self.reviewed: tuple[int, int] = (0, 0)  # (reviewed, confirmed fraud) for the overview
         ring_uid = "1111|321|150|visa|226|debit|315"
         self.cases = {
@@ -136,6 +138,7 @@ class FakeRepository:
             2: make_case(2, 0.80, "2222|<NA>|150|visa|226|debit|204"),
         }
         self.reviews: dict[int, list[dict[str, Any]]] = {1: [], 2: []}
+        self.tokens: set[str] = set()  # case_reviews.submit_token is UNIQUE in the database
         self.ring: dict[str, Any] = {
             "rank": 1,
             "ring_id": 7,
@@ -192,9 +195,19 @@ class FakeRepository:
         return self.ring if uid in self.ring["uids"] else None
 
     def change_status(
-        self, alert_id: int, expected_version: int, to_status: str, analyst: str, notes: str
+        self,
+        alert_id: int,
+        expected_version: int,
+        to_status: str,
+        analyst: str,
+        notes: str,
+        *,
+        submit_token: str | None = None,
     ) -> int:
+        self.calls += 1
         case = self.cases[alert_id]
+        if submit_token is not None and submit_token in self.tokens:
+            raise data.DuplicateSubmitError(alert_id, submit_token)
         if case["version"] != expected_version:
             raise data.StaleAlertError(
                 alert_id, expected_version, case["status"], case["version"], "bob", NOW
@@ -213,6 +226,8 @@ class FakeRepository:
             }
         )
         case["status"], case["version"] = to_status, case["version"] + 1
+        if submit_token is not None:
+            self.tokens.add(submit_token)
         return int(case["version"])
 
     def list_rings(self) -> list[dict[str, Any]]:
@@ -381,6 +396,7 @@ def test_case_status_change_is_saved_and_listed(fake: FakeRepository) -> None:
     at = app(fake, "views/case.py", alert_id=1, analyst="alice")
     at.selectbox[0].set_value("confirmed_fraud")
     at.text_area[0].input("card testing pattern")
+    at.run()  # choosing a status reruns the page and enables Save
     next(b for b in at.button if b.label == "Save").click()
     at.run()
     assert not at.exception, at.exception
@@ -397,7 +413,7 @@ def test_case_status_change_is_saved_and_listed(fake: FakeRepository) -> None:
 def test_optimistic_lock_conflict_is_rejected_with_a_clear_message(fake: FakeRepository) -> None:
     at = app(fake, "views/case.py", alert_id=1, analyst="alice")  # alice sees version 1
     fake.change_status(1, 1, "investigating", "bob", "taking this")  # bob saves first
-    at.selectbox[0].set_value("false_positive")
+    at.selectbox[0].set_value("false_positive").run()
     next(b for b in at.button if b.label == "Save").click()
     at.run()
     errors = [str(e.value) for e in at.error]
@@ -411,11 +427,11 @@ def test_conflict_between_two_ui_sessions_saves_nothing(fake: FakeRepository) ->
     version 1 and must never save a status she did not choose."""
     alice = app(fake, "views/case.py", alert_id=1, analyst="alice")
     bob = app(fake, "views/case.py", alert_id=1, analyst="bob")
-    bob.selectbox[0].set_value("investigating")
+    bob.selectbox[0].set_value("investigating").run()
     next(b for b in bob.button if b.label == "Save").click()
     bob.run()
     assert fake.cases[1]["status"] == "investigating"
-    alice.selectbox[0].set_value("false_positive")
+    alice.selectbox[0].set_value("false_positive").run()
     next(b for b in alice.button if b.label == "Save").click()
     alice.run()
     errors = [str(e.value) for e in alice.error]
@@ -431,3 +447,182 @@ def test_missing_schema_stops_every_page_with_a_clear_error(fake: FakeRepository
         at = app(fake, page, alert_id=1)
         assert not at.exception
         assert any("schema is not initialised" in str(e.value) for e in at.error), page
+
+
+# --------------------------------------------------------------------------- unintended saves
+# docs/incidents/2026-10-26-unintended-reviews.md: reviews the analyst never chose were saved.
+# Review lists are compared as snapshots: both sides must be non-empty, and counts are printed.
+
+
+def all_reviews(fake: FakeRepository) -> list[tuple[int, int, str, str]]:
+    return [
+        (alert, r["id"], r["to_status"], r["analyst"])
+        for alert, rows in sorted(fake.reviews.items())
+        for r in rows
+    ]
+
+
+def assert_same_reviews(before: list[Any], after: list[Any]) -> None:
+    print(f"case reviews: before {len(before)} rows, after {len(after)} rows")
+    assert before, "the 'before' side is empty: nothing to compare"
+    assert after, "the 'after' side is empty: nothing to compare"
+    assert after == before
+
+
+def save_button(at: AppTest) -> Any:
+    return next(b for b in at.button if b.label == "Save")
+
+
+def save(at: AppTest, status: str, notes: str = "") -> None:
+    """A deliberate save: choose a status (the page reruns), type notes, click Save."""
+    at.selectbox[0].set_value(status).run()
+    if notes:
+        at.text_area[0].input(notes).run()
+    save_button(at).click().run()
+    assert not at.exception, at.exception
+
+
+def stray_submit(at: AppTest) -> None:
+    """A Save trigger the analyst did not click (e.g. resent by a stale browser tab). A raw
+    browser message is not bound by the button's disabled flag, so this bypasses it (AppTest
+    refuses clicks on disabled buttons): the server side has to reject the save."""
+    save_button(at)._value = True
+    at.run()
+    assert not at.exception, at.exception
+
+
+def test_a_second_submit_after_a_save_writes_nothing(fake: FakeRepository) -> None:
+    """Incident pattern: after a save, a submit the analyst did not make flipped the label."""
+    at = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    save(at, "confirmed_fraud", "card testing")
+    before = all_reviews(fake)
+    stray_submit(at)
+    after = all_reviews(fake)
+    assert_same_reviews(before, after)
+    assert (fake.cases[1]["status"], fake.cases[1]["version"]) == ("confirmed_fraud", 2)
+
+
+def test_a_save_with_a_stale_seen_version_is_rejected(fake: FakeRepository) -> None:
+    """Alice chose a status while looking at version 1. Bob saves; alice's page reruns (any
+    rerun, e.g. a reconnect) and shows version 2. Her save is checked against version 1."""
+    alice = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    alice.selectbox[0].set_value("false_positive").run()
+    bob = app(fake, "views/case.py", alert_id=1, analyst="bob")
+    save(bob, "investigating")
+    alice.run()  # a rerun without a submit: the page now shows version 2
+    before = all_reviews(fake)
+    save_button(alice).click().run()
+    after = all_reviews(fake)
+    assert_same_reviews(before, after)
+    assert [r[3] for r in after] == ["bob"]
+    errors = [str(e.value) for e in alice.error]
+    assert any("This case changed" in e and "Reload" in e for e in errors), errors
+    assert (fake.cases[1]["status"], fake.cases[1]["version"]) == ("investigating", 2)
+
+
+def test_a_save_with_no_status_is_rejected(fake: FakeRepository) -> None:
+    at = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    save(at, "investigating")  # one deliberate review, so both snapshots are non-empty
+    assert at.selectbox[0].value is None  # the dropdown starts empty again after a save
+    before, calls = all_reviews(fake), fake.calls
+    stray_submit(at)  # Save with no status chosen (Streamlit drops it: the button is disabled)
+    after = all_reviews(fake)
+    assert_same_reviews(before, after)
+    assert fake.calls == calls  # never reached the database
+    # our own server-side check, for a submit that does reach the callback
+    from src.dashboard import case_form
+
+    state: dict[str, Any] = {}
+    token = case_form.form_token(state, 1, 2, "investigating").token
+    assert case_form.save(state, fake, token, "alice") == (
+        "error",
+        "Choose a new status; nothing was saved.",
+    )
+    assert all_reviews(fake) == after and fake.calls == calls
+
+
+def test_changing_the_alert_id_after_a_save_writes_nothing(fake: FakeRepository) -> None:
+    at = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    save(at, "confirmed_fraud", "card testing")
+    at.text_area[0].input("draft for alert 1, not saved").run()
+    before = all_reviews(fake)
+    at.number_input[0].set_value(2).run()
+    at.run()  # plain reruns
+    at.run()
+    assert at.text_area[0].value == ""  # the old form's contents are discarded
+    assert at.selectbox[0].value is None
+    stray_submit(at)  # and a stray Save on the new alert
+    after = all_reviews(fake)
+    assert_same_reviews(before, after)
+    assert (fake.cases[2]["status"], fake.cases[2]["version"]) == ("open", 1)
+
+
+def test_save_is_disabled_until_a_name_and_a_status_are_set(fake: FakeRepository) -> None:
+    nobody = app(fake, "views/case.py", alert_id=1)
+    assert nobody.selectbox[0].value is None
+    assert save_button(nobody).disabled and "Enter your analyst name" in texts(nobody)
+    nobody.selectbox[0].set_value("investigating").run()
+    assert save_button(nobody).disabled and "Enter your analyst name" in texts(nobody)
+    named = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    assert named.selectbox[0].value is None
+    assert save_button(named).disabled and "Choose a new status" in texts(named)
+    named.selectbox[0].set_value("investigating").run()
+    assert not save_button(named).disabled
+    assert "Save is disabled" not in texts(named)
+
+
+def test_a_used_token_is_never_saved_again_and_each_save_is_logged(
+    fake: FakeRepository, caplog: pytest.LogCaptureFixture
+) -> None:
+    from src.dashboard import case_form
+
+    state: dict[str, Any] = {}
+    form = case_form.form_token(state, 1, 1, "open")
+    state[case_form.widget_key("case_to_status", form.token)] = "confirmed_fraud"
+    with caplog.at_level(logging.INFO, logger="src.dashboard"):
+        assert case_form.save(state, fake, form.token, "alice")[0] == "success"
+        before, calls = all_reviews(fake), fake.calls
+        state[case_form.widget_key("case_to_status", form.token)] = "false_positive"  # resent
+        kind, text = case_form.save(state, fake, form.token, "alice")
+    after = all_reviews(fake)
+    assert_same_reviews(before, after)
+    assert kind == "error" and "no longer current" in text and fake.calls == calls
+    lines = [r.getMessage() for r in caplog.records if r.name == "src.dashboard.case_form"]
+    assert lines == [
+        f"case save ok: alert=1 from=open to=confirmed_fraud analyst='alice' "
+        f"token={form.token} version=1->2",
+        f"case save rejected: alert=1 from=open to=false_positive analyst='alice' "
+        f"token={form.token} version=1->None reason={text!r}",
+    ]
+    # the database is the backstop: the same token reaching it again writes nothing
+    with pytest.raises(data.DuplicateSubmitError):
+        fake.change_status(1, 2, "false_positive", "alice", "", submit_token=form.token)
+    assert all_reviews(fake) == before
+
+
+def test_a_new_alert_discards_the_old_token_and_its_form(fake: FakeRepository) -> None:
+    from src.dashboard import case_form
+
+    state: dict[str, Any] = {}
+    first = case_form.form_token(state, 1, 1, "open")
+    assert case_form.form_token(state, 1, 1, "open") == first  # stable across reruns
+    state[case_form.widget_key("case_notes", first.token)] = "draft"
+    second = case_form.form_token(state, 2, 1, "open")
+    assert second.token != first.token
+    assert case_form.widget_key("case_notes", first.token) not in state
+    assert state[case_form.TOKENS][first.token].used
+    assert case_form.save(state, fake, first.token, "alice")[0] == "error"
+    assert fake.calls == 0
+
+
+def test_case_page_has_no_form_so_enter_cannot_submit(fake: FakeRepository) -> None:
+    """Enter in a form field (and Ctrl+Enter in a form's text area) submits an st.form. The case
+    page has no form; committing the notes (Ctrl+Enter) only reruns the page."""
+    at = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    assert at.get("form") == []
+    save(at, "investigating")
+    before = all_reviews(fake)
+    at.selectbox[0].set_value("confirmed_fraud").run()
+    at.text_area[0].input("typed, then Ctrl+Enter").run()
+    after = all_reviews(fake)
+    assert_same_reviews(before, after)
