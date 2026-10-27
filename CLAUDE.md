@@ -313,9 +313,12 @@ matters (files, numbers, running services) before relying on it.
   scheduled.
 - Dashboard: no authentication (self-declared analyst name), no connection pool (add
   psycopg-pool before scaling), single instance with a 15 s read cache (docs/dashboard.md).
-- Served model is not linked to its MLflow registry version (bundle has no run id or version
-  tag). Fix planned: write the registry version into the bundle metadata at promotion, show it
-  on the dashboard.
+- Served model verified byte-identical to MLflow registry v2 (run
+  71c4f1bd820548c984341a06e51e33fc; model.json sha256 9fdad27ea3b0…, metadata.json sha256
+  a65a6dfcb68b…; checked 2026-10-27). Serving does not read the registry at runtime; design for
+  a link file + GET /model is in docs/next-steps/model-registry-link.md.
+- Champion v2 was trained from a dirty working tree (git_commit 7754fd4, git_dirty=true), so it
+  cannot be rebuilt exactly from the repo. Fix: refuse training runs when git is dirty.
 
 ### Next (pick with the user; nothing is in progress)
 - Retraining from analyst labels (`latest_labels`), planned 2026-10-27.
