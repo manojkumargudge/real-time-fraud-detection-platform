@@ -200,21 +200,14 @@ the form, so Enter there cannot submit it.
 
 - **Setup.** f3d2815 ran on the host at 127.0.0.1:8502 against a throwaway restore
   (`fraud_kbtest` on the test Postgres, case_reviews = 6), with a real Chrome browser.
-- **No key-press test ran.** Save never became enabled.
-  - The analyst name was typed by hand and committed with Enter, including after F5.
-  - The name was **shown in the box but not registered**. The sidebar caption
-    "Enter your name to change cases.", which reads the server-side `analyst` key, stayed.
-- **Code path checked headless.**
-  - Streamlit AppTest on the same code and database: setting `analyst` enabled Save on case 218.
-  - So the old code registers the name once the server receives it. Why the browser's value did
-    not arrive is **unknown**.
-- **Server state.** The log showed only startup lines, no errors. `/_stcore/health` returned ok
-  and the browser's connection was established.
+- **No key-press test ran.** Save never became enabled on a case opened from the queue.
+- **Cause (found with per-rerun debug logging on the new code).**
+  - The server did receive the analyst name.
+  - `ui.open_case()` calls `st.switch_page`. Since Streamlit 1.46, that deletes widget keys at the
+    start of the new page's run, so the sidebar key `analyst` was empty on Case detail.
+  - Fixed on branch `analyst-name-fix` with `persist_state="session"` on the Analyst name input.
+  - Regression test: `test_analyst_name_survives_opening_a_case`.
 - **Rows.** `fraud_kbtest` gained 0 rows. It and the worktree were removed afterwards.
-
-**Observation.** The browser showed a value that the server never received. This does not
-explain rows 7–10 (there the browser sent values, including old note text). It is one more case
-where the tab's display and the server's session state differed.
 
 The fix removes both parts of the likely cause:
 - no `st.form` on the case page, so no keyboard submit;

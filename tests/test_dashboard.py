@@ -392,6 +392,25 @@ def test_writes_need_an_analyst_name(fake: FakeRepository) -> None:
     assert submit.disabled
 
 
+def test_analyst_name_survives_opening_a_case(fake: FakeRepository) -> None:
+    """The real path: type the name into the sidebar, then open a case from the queue.
+
+    open_case() uses st.switch_page, which (Streamlit >= 1.46) deletes widget keys at the start
+    of the new page's run; without persist_state the name was gone on every opened case.
+    """
+    at = app(fake)
+    at.sidebar.text_input(key="analyst").input("alice").run()
+    at.switch_page("views/alerts.py")
+    at.run()
+    next(n for n in at.number_input if n.label == "Open alert id").set_value(1)
+    next(b for b in at.button if b.label == "Open case").click().run()
+    assert not at.exception, at.exception
+    assert at.session_state["alert_id"] == 1
+    assert at.session_state["analyst"] == "alice"
+    assert "Enter your analyst name" not in texts(at)
+    assert "Choose a new status" in texts(at)  # Save waits only for the status now
+
+
 def test_case_status_change_is_saved_and_listed(fake: FakeRepository) -> None:
     at = app(fake, "views/case.py", alert_id=1, analyst="alice")
     at.selectbox[0].set_value("confirmed_fraud")
