@@ -1,0 +1,89 @@
+# Analyst dashboard (Streamlit, src/dashboard) on port 8501, reached with kubectl port-forward.
+# Image: the Compose dashboard image (REQUIREMENTS=requirements-dashboard.txt), tagged
+# fraud-dashboard:k8s-local and loaded with `minikube image load` (docs/kubernetes.md). It needs
+# no model bundle. One replica: Streamlit keeps session state in the pod, so more replicas would
+# need sticky sessions. The schema belongs to the API/consumers; the dashboard never runs DDL.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  labels: {app: dashboard}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: dashboard}
+  template:
+    metadata:
+      labels: {app: dashboard}
+    spec:
+      enableServiceLinks: false
+      initContainers:
+        - name: wait-for-postgres
+          image: fraud-dashboard:k8s-local
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+                import socket, sys, time
+                for _ in range(120):
+                    try:
+                        socket.create_connection(("postgres", 5432), timeout=2).close()
+                        print("reachable postgres 5432", flush=True)
+                        break
+                    except OSError:
+                        time.sleep(2)
+                else:
+                    sys.exit("postgres:5432 not reachable")
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+      containers:
+        - name: dashboard
+          image: fraud-dashboard:k8s-local
+          imagePullPolicy: IfNotPresent
+          command:
+            - streamlit
+            - run
+            - src/dashboard/app.py
+            - --server.port=8501
+            - --server.address=0.0.0.0
+            - --server.headless=true
+            - --browser.gatherUsageStats=false
+          ports:
+            - containerPort: 8501
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: fraud-postgres, key: password}
+            - name: DATABASE_URL
+              value: postgresql://fraud:$(POSTGRES_PASSWORD)@postgres:5432/fraud
+            - {name: DASHBOARD_REPORTS_DIR, value: /app/reports/drift}
+            - {name: PYTHONPATH, value: /app}
+          readinessProbe:
+            httpGet: {path: /_stcore/health, port: 8501}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /_stcore/health, port: 8501}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          volumeMounts:
+            # Evidently HTML written by the drift CronJob (k8s/drift-cronjob.yaml).
+            - {name: drift-reports, mountPath: /app/reports/drift, readOnly: true}
+      volumes:
+        - name: drift-reports
+          persistentVolumeClaim: {claimName: drift-reports, readOnly: true}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+spec:
+  selector: {app: dashboard}
+  ports:
+    - {port: 8501, targetPort: 8501}

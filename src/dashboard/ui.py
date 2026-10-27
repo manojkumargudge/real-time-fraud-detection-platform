@@ -78,6 +78,10 @@ CARD_HELP = (
     "Anonymised card key (card1-card6 of the IEEE-CIS data), not a customer: one card key is "
     "shared by many customers."
 )
+RINGS_NOT_RUN = (
+    "Fraud ring detection has not run in this deployment (it is a batch job run on the host)."
+)
+NOT_AVAILABLE = "—"  # a ring or drift value from a batch job that has not run here
 
 
 def labelled(frame: Any) -> Any:
@@ -100,9 +104,9 @@ class Repository:
     def cache_key(self) -> str:
         return self.db.dsn.rsplit("@", 1)[-1]  # host/db only: never key caches on the password
 
-    def missing_schema(self) -> list[str]:
+    def schema_state(self) -> data.SchemaState:
         with self.db.connection() as c:
-            return data.missing_schema(c)
+            return data.schema_state(c)
 
     def overview(self) -> dict[str, Any]:
         with self.db.connection() as c:
@@ -197,9 +201,20 @@ def invalidate() -> None:
     cached.clear()
 
 
-def require_schema() -> None:
-    """Stop the page with a clear message when the dashboard schema is missing."""
-    missing = load("missing_schema")
+def require_schema(*optional: str) -> frozenset[str]:
+    """Stop the page with a clear message when a table it reads is missing or incomplete.
+
+    The core tables (``data.CORE_COLUMNS``) are always required. ``optional`` names the batch-job
+    tables this page also reads (``data.OPTIONAL_COLUMNS``): one that does not exist at all is
+    returned, so the page can say its job has not run; one that exists with missing columns stops
+    the page like a missing core table.
+    """
+    unknown = set(optional) - set(data.OPTIONAL_COLUMNS)
+    if unknown:
+        raise ValueError(f"not optional dashboard tables: {sorted(unknown)}")
+    state: data.SchemaState = load("schema_state")
+    needed = set(data.CORE_COLUMNS) | set(optional)
+    missing = [m for m in state.missing if m.split(".", 1)[0] in needed]
     if missing:
         st.error(
             "The database schema is not initialised for the dashboard. Start the API or a "
@@ -207,6 +222,7 @@ def require_schema() -> None:
             "Missing: " + ", ".join(missing)
         )
         st.stop()
+    return state.absent & frozenset(optional)
 
 
 def configure_logging() -> None:

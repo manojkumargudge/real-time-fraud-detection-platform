@@ -19,8 +19,11 @@ LIST_COLUMNS = [
     "shared_devices",
 ]
 
-ui.require_schema()
+absent = ui.require_schema("fraud_rings")
 st.title("Fraud rings")
+if "fraud_rings" in absent:
+    st.info(ui.RINGS_NOT_RUN)
+    st.stop()
 st.info(
     "Rings come from the batch graph analysis of the training-period data (users linked by "
     "shared devices). Live alerts are on the later validation period, so few of them link to "

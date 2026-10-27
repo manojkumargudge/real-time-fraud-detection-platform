@@ -85,6 +85,10 @@ from the holdout's. Next step: an alert-budget threshold, checked on post-deploy
 - Analyst dashboard
 - Kubernetes (Minikube): local deployment with Feast, liveness heartbeat and a drift CronJob
   ([docs/kubernetes.md](docs/kubernetes.md)); not production (no replication, Ingress or secrets manager)
+  - The cluster also runs the analyst dashboard (`kubectl -n fraud-k8s port-forward
+    svc/dashboard 8502:8501`). It reads the cluster's own small database, a 20-event replay.
+    The full demo database (118,108 scored transactions, 5,093 alerts) lives in the Docker
+    Compose stack (dashboard on port 8501).
 
 Note: the IEEE-CIS fraud rate is about 3.5% (3.499% overall), not under 1%.
 

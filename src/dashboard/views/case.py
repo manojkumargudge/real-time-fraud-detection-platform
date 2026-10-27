@@ -39,7 +39,7 @@ def reload_case(token: str) -> None:
     ui.invalidate()
 
 
-ui.require_schema()
+absent = ui.require_schema("fraud_rings")
 st.title("Case detail")
 
 default_id = st.session_state.get("alert_id")
@@ -86,8 +86,11 @@ with left:
         f"Card key {case['card_id'] or fmt.MISSING}: {ui.CARD_HELP} "
         f"Customer (uid = card key + addr1): {case['uid'] or fmt.MISSING}."
     )
-    ring = ui.load("ring_for_uid", case["uid"])
-    if ring is not None:
+    if "fraud_rings" in absent:
+        st.subheader("Linked fraud ring")
+        st.write(ui.NOT_AVAILABLE)
+        st.caption(ui.RINGS_NOT_RUN)
+    elif (ring := ui.load("ring_for_uid", case["uid"])) is not None:
         st.subheader("Linked fraud ring")
         st.write(
             f"Ring #{ring['rank']} (id {ring['ring_id']}): {ring['uid_count']} users, "
