@@ -1,0 +1,28 @@
++ DATABASE_URL=postgresql://fraud:***@localhost:25432/fraud_evidence MLFLOW_TRACKING_URI=sqlite:///C:/Users/MANOJK~1/AppData/Local/Temp/claude/c--Users-Manojkumar-Gudge-Desktop-fraud-backup-2026-10-22/bd93a6e6-f8c0-4877-8bf9-10380850eacf/scratchpad/evidence/mlflow.db python -m src.monitoring.run_drift --window-start-day 170 --window-end-day 182
+Downloading artifacts:   0%|          | 0/3 [00:00<?, ?it/s]Downloading artifacts:  33%|###3      | 1/3 [00:00<?, ?it/s]Downloading artifacts:  67%|######6   | 2/3 [00:00<00:00, 1064.14it/s]Downloading artifacts: 100%|##########| 3/3 [00:00<00:00, 170.73it/s] Downloading artifacts: 100%|##########| 3/3 [00:00<00:00, 170.73it/s]
+2026-10-27 17:22:34,446 INFO src.serving.model loaded model version=baseline-9fdad27ea3b0 features=28
+2026-10-27 17:22:45,633 INFO src.data.load loaded transactions file=train_transaction.csv rows=590540 cols=17
+2026-10-27 17:22:46,346 INFO src.data.load loaded identity file=train_identity.csv rows=144233 cols=3
+2026-10-27 17:22:46,761 INFO src.data.load merged rows=590540 with_identity=144233 (24.4%)
+2026-10-27 17:22:54,432 INFO src.features.history computed history features rows=590540 uids=43018 cards=14893 features=12
+2026-10-27 17:22:54,855 INFO src.features.split chronological split train_end=7615091 valid_start=7615091 train=306868 valid=76718 gap_dropped=0
+2026-10-27 17:22:55,742 INFO src.features.preprocess fitted categorical encoder rows=306868 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1388}
+2026-10-27 17:23:45,855 INFO src.features.preprocess fitted categorical encoder rows=383586 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1491}
+2026-10-27 17:24:27,300 INFO src.monitoring.run_drift window champion_train: TransactionDT 86400..12192899 (day 1.00 .. 141.12)
+2026-10-27 17:24:27,300 INFO src.monitoring.run_drift window challenger_train: TransactionDT 86400..12614331 (day 1.00 .. 146.00)
+2026-10-27 17:24:27,300 INFO src.monitoring.run_drift window holdout: TransactionDT 12614332..13219131 (day 146.00 .. 153.00)
+2026-10-27 17:24:27,300 INFO src.monitoring.run_drift window current: TransactionDT 14688000..15724799 (day 170.00 .. 182.00)
+2026-10-27 17:24:27,300 INFO src.monitoring.run_drift now=15811131 label_cutoff=13219131 (delay 30 days)
+2026-10-27 17:24:27,510 INFO src.monitoring.retrain window champion_train: TransactionDT 86400..12192899 (day 1.00 .. 141.12)
+2026-10-27 17:24:27,510 INFO src.monitoring.retrain window challenger_train: TransactionDT 86400..12614331 (day 1.00 .. 146.00)
+2026-10-27 17:24:27,510 INFO src.monitoring.retrain window holdout: TransactionDT 12614332..13219131 (day 146.00 .. 153.00)
+2026-10-27 17:24:27,616 INFO src.features.split chronological split train_end=9736657 valid_start=9736657 train=387876 valid=96969 gap_dropped=0
+2026-10-27 17:24:28,786 INFO src.features.preprocess fitted categorical encoder rows=387876 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1494}
+2026-10-27 17:25:04,591 INFO src.features.preprocess fitted categorical encoder rows=484845 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1654}
+2026-10-27 17:25:24,908 INFO src.models.train saved model version=baseline-5dfeb952e74c dir=C:\Users\MANOJK~1\AppData\Local\Temp\tmp0myl50e8\challenger
+2026-10-27 17:25:25,427 INFO src.models.tracking logged MLflow run id=f9bb4e91f6a64e4a84a153bb8b806321 experiment=fraud-xgboost uri=sqlite:///C:/Users/MANOJK~1/AppData/Local/Temp/claude/c--Users-Manojkumar-Gudge-Desktop-fraud-backup-2026-10-22/bd93a6e6-f8c0-4877-8bf9-10380850eacf/scratchpad/evidence/mlflow.db
+2026-10-27 17:25:26,420 INFO src.serving.model loaded model version=baseline-5dfeb952e74c features=28
+2026-10-27 17:25:26,578 INFO src.models.tracking registered fraud-xgboost version=8 alias=challenger
+2026-10-27 17:25:42,360 INFO src.monitoring.retrain promotion NO: challenger 0.3290 champion 0.3238 delta 0.0053 CI95 [-0.0160, 0.0254] (kept champion: challenger better by +0.0052 but CI lower bound -0.0160 <= margin 0.01)
+2026-10-27 17:25:47,517 INFO src.monitoring.run_drift drift report id=11 triggered=True reasons=["top-feature drift: R_emaildomain drifted (among the champion's top 5 features by gain)"] share=0.286 prediction psi=0.0025 delayed_pr_auc=0.3238 report=C:\Users\Manojkumar Gudge\Desktop\Real-Time Financial Fraud Detection Platform\reports\drift\drift_20261027T115542Z.html
+{"drift_report_id": 11}
