@@ -153,8 +153,6 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
         "seconds": time.perf_counter() - started,
         "gnn_seconds": gnn_seconds,
     }
-    from src.models.tracking import _git
-
     log_mlflow(
         replace(cfg),
         {
@@ -164,7 +162,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
             "seed_spread": spread,
             "gnn_alone_valid_pr_auc": gnn_alone,
         },
-        {"git_commit": _git("rev-parse", "HEAD") or "unknown", "stage": "stacking"},
+        {"stage": "stacking"},
     )
     REPORT.write_text(render(summary), encoding="utf-8")
     logger.info("wrote %s keep=%s gain=%.4f spread=%.4f", REPORT, keep, gain, spread)

@@ -245,11 +245,18 @@ def graph_summary(graph: TxGraph) -> dict[str, Any]:
 
 
 def log_mlflow(cfg: GnnConfig, metrics: dict[str, float], tags: dict[str, str]) -> str:
+    """Log one run to ``fraud-gnn``. ``git_commit`` and ``git_dirty`` are always written here
+    (as in src.models.tracking), after the caller's tags, so a caller cannot override them."""
     from mlflow.entities import Metric, Param
     from mlflow.tracking import MlflowClient
 
     from src.models import tracking
 
+    tags = {
+        **tags,
+        "git_commit": tracking._git("rev-parse", "HEAD") or "unknown",
+        "git_dirty": str(bool(tracking._git("status", "--porcelain"))).lower(),
+    }
     uri = tracking.tracking_uri()
     client = MlflowClient(tracking_uri=uri)
     exp = client.get_experiment_by_name(EXPERIMENT)
@@ -321,13 +328,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
             for m in ("precision", "recall")
         },
     }
-    from src.models.tracking import _git
-
-    run_id = log_mlflow(
-        cfg,
-        flat,
-        {"git_commit": _git("rev-parse", "HEAD") or "unknown", "model": "hetero-graphsage"},
-    )
+    run_id = log_mlflow(cfg, flat, {"model": "hetero-graphsage"})
     summary = {
         "config": asdict(cfg),
         "graph_train": graph_summary(train_graph),

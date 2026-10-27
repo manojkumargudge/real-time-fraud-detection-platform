@@ -184,3 +184,25 @@ def test_forward_chaining_scores_each_block_only_from_earlier_blocks(
     assert np.isnan(scores[block == 0]).all() and np.isfinite(scores[block > 0]).all()
     for mask, k in zip(calls, (1, 2), strict=True):
         assert not (mask & (block >= k)).any()
+
+
+def test_log_mlflow_writes_git_tags_that_callers_cannot_override(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mlflow.tracking import MlflowClient
+
+    from src.graph.train import log_mlflow
+    from src.models import tracking
+
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    git = {("rev-parse", "HEAD"): "abc123", ("status", "--porcelain"): " M src/graph/x.py"}
+    monkeypatch.setattr(tracking, "_git", lambda *args: git[args])
+    client = MlflowClient(tracking_uri=uri)
+
+    caller = {"stage": "t", "git_commit": "fake", "git_dirty": "false"}
+    dirty = client.get_run(log_mlflow(TINY, {"m": 1.0}, caller)).data.tags
+    assert (dirty["git_commit"], dirty["git_dirty"], dirty["stage"]) == ("abc123", "true", "t")
+    git[("status", "--porcelain")] = ""
+    clean = client.get_run(log_mlflow(TINY, {"m": 1.0}, {"stage": "t"})).data.tags
+    assert clean["git_dirty"] == "false"
