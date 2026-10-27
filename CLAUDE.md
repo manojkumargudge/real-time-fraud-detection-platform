@@ -23,6 +23,8 @@ and containerized deployment.
 - Prevent target leakage and use appropriate validation for transaction data.
 - Keep training and serving feature definitions consistent.
 - Add meaningful tests for each feature and run them before reporting completion.
+- Dashboard tests must drive the real user path (type into widgets, navigate via
+  open_case/switch_page), not inject session_state.
 - Never claim tests, benchmarks, or deployments succeeded without verification.
 - Ask before destructive operations or changes that may discard data.
 - Avoid unnecessary dependencies, repeated explanations, and large file dumps.

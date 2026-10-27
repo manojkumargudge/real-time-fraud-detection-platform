@@ -213,9 +213,12 @@ def analyst_name() -> str:
 
 def sidebar() -> None:
     with st.sidebar:
+        # persist_state="session": since Streamlit 1.46, st.switch_page (open_case) deletes widget
+        # keys at the start of the new page's run, so the name was lost on every opened case.
         st.text_input(
             "Analyst name",
             key="analyst",
+            persist_state="session",
             help="Recorded on every review. No authentication: the name is self-declared.",
         )
         if not analyst_name():
