@@ -1,6 +1,7 @@
 # Incident 2026-10-26: unintended case reviews written to the demo DB
 
-Status: **trigger not reproduced; design flaws fixed** on branch `review-save-fix` (see "Fix").
+Status: **trigger not reproduced; likely cause a keyboard submit of the form with the dropdown
+default** (see "Follow-up 2026-10-27"); **design flaws fixed** on branch `review-save-fix` (see "Fix").
 The demo DB was restored to the 16:54 IST backup (see "Restore"). The dashboard stays off on the
 demo stack until the fix is merged.
 
@@ -14,9 +15,10 @@ demo stack until the fix is merged.
 - **Trigger: not reproduced.** Refresh, an alert id change, a server restart with the page open,
   F5 while the server was down, and a multi-tab outage of incident length all wrote 0 rows in a
   real browser (see "Reproduction").
-- **Most likely trigger.** A submit from a stale browser tab, or a keyboard submit (Enter, or
-  Ctrl+Enter in Notes, both submit an `st.form`). The note text in rows 7–10 came from the
-  browser, not the server. This is an inference, not a proven cause.
+- **Most likely trigger.** A keyboard submit (Ctrl+Enter in Notes submits the `st.form`) or a
+  submit from a stale browser tab. All 4 rows carry the old dropdown default (follow-up
+  2026-10-27). The note text in rows 7–10 came from the browser, not the server. This is an
+  inference, not a proven cause.
 - **Confirmed design flaws.** (d) The expected version was re-read on every render. (e) The
   status dropdown defaulted to a status other than the current one. Together they let **any**
   stray submit silently change a label: it passed the version check and carried a status nobody
@@ -155,6 +157,70 @@ Differences from the incident that the reproduction did not cover:
 
 How the browser came to send old note text (and, for rows 7–8, a slightly older version of it)
 together with a submit is **unknown**.
+
+## Follow-up 2026-10-27: keyboard submit
+
+**Likely cause** (not confirmed): a keyboard submit of the `change_status` form (Ctrl+Enter in
+Notes) that carried the dropdown's default status.
+
+### Every unintended row carries the old dropdown default
+
+The status before each row is the alert state after rows 1–6. It was checked in a throwaway
+restore of `fraud-demo-2026-10-26-reviewed.dump` (298 false_positive v2, 3131 confirmed_fraud v2,
+4705 confirmed_fraud v3). For row 8, it is the state after row 7. At f3d2815 the dropdown
+defaults to `next_statuses(status)[0]`, in `ALERT_STATUSES` order.
+
+| row | alert | from status | to status | old dropdown default | match |
+|---|---|---|---|---|---|
+| 7 | 4705 | confirmed_fraud | false_positive | false_positive (of false_positive, closed) | yes |
+| 8 | 4705 | false_positive | confirmed_fraud | confirmed_fraud (of confirmed_fraud, closed) | yes |
+| 9 | 298 | false_positive | confirmed_fraud | confirmed_fraud (of confirmed_fraud, closed) | yes |
+| 10 | 3131 | confirmed_fraud | false_positive | false_positive (of false_positive, closed) | yes |
+
+All 4 match. This shows that the submits carried an untouched dropdown. It does not show which
+key or action sent them. The default match shows the dropdown was untouched; it does not rule out
+an accidental Save click.
+
+### Streamlit docs: a keyboard submit is a Save click
+
+Streamlit 1.66.0 docs (installed: 1.66.1):
+
+- Forms concept page, https://docs.streamlit.io/develop/concepts/architecture/forms:
+  - "Within st.text_area a user presses Ctrl+Enter/⌘+Enter to submit the form."
+  - "Within st.number_input and st.text_input a user presses Enter to submit the form."
+- `st.form` reference, https://docs.streamlit.io/develop/api-reference/execution-flow/st.form
+  (`enter_to_submit`, default True): "pressing Enter while interacting with a form widget is
+  equivalent to clicking the first st.form_submit_button in the form."
+
+The old form holds only "New status" (selectbox), "Notes" (text_area) and "Save". Ctrl+Enter in
+Notes is therefore the documented keyboard path to a save. Analyst name and Alert id are outside
+the form, so Enter there cannot submit it.
+
+### Manual keyboard test: blocked
+
+- **Setup.** f3d2815 ran on the host at 127.0.0.1:8502 against a throwaway restore
+  (`fraud_kbtest` on the test Postgres, case_reviews = 6), with a real Chrome browser.
+- **No key-press test ran.** Save never became enabled.
+  - The analyst name was typed by hand and committed with Enter, including after F5.
+  - The name was **shown in the box but not registered**. The sidebar caption
+    "Enter your name to change cases.", which reads the server-side `analyst` key, stayed.
+- **Code path checked headless.**
+  - Streamlit AppTest on the same code and database: setting `analyst` enabled Save on case 218.
+  - So the old code registers the name once the server receives it. Why the browser's value did
+    not arrive is **unknown**.
+- **Server state.** The log showed only startup lines, no errors. `/_stcore/health` returned ok
+  and the browser's connection was established.
+- **Rows.** `fraud_kbtest` gained 0 rows. It and the worktree were removed afterwards.
+
+**Observation.** The browser showed a value that the server never received. This does not
+explain rows 7–10 (there the browser sent values, including old note text). It is one more case
+where the tab's display and the server's session state differed.
+
+The fix removes both parts of the likely cause:
+- no `st.form` on the case page, so no keyboard submit;
+- a dropdown with no default.
+
+The real-browser check on `review-save-fix` (see "Fix") wrote 0 rows for Enter and Ctrl+Enter.
 
 ## Restore
 
