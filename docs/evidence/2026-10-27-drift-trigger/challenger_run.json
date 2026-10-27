@@ -1,0 +1,72 @@
+{
+ "run_id": "f9bb4e91f6a64e4a84a153bb8b806321",
+ "status": "FINISHED",
+ "artifact_uri": "file:///C:/Users/Manojkumar%20Gudge/Desktop/Real-Time%20Financial%20Fraud%20Detection%20Platform/mlruns/f9bb4e91f6a64e4a84a153bb8b806321/artifacts",
+ "tags": {
+  "git_commit": "0d73adbbd22eb6707c6fd88889c6df41a77e42e8",
+  "git_dirty": "false",
+  "imbalance_method": "none",
+  "variant": "baseline",
+  "trigger": "top-feature drift: R_emaildomain drifted (among the champion's top 5 features by gain)",
+  "synthetic": "false",
+  "forced": "false",
+  "role": "challenger",
+  "train_end_dt": "12614331",
+  "train_data_sha256": "d8ada1919f07fc23ca20fd94237d110cc2ce7f069f909d5d54c1f740314ffac3"
+ },
+ "metrics": {
+  "valid_pr_auc": 0.3289606614928677,
+  "valid_roc_auc": 0.8590777960335414,
+  "holdout_pr_auc": 0.2821288060901328,
+  "valid_precision_at_threshold": 0.3093607305936073,
+  "valid_recall_at_threshold": 0.4392220421393841,
+  "valid_alert_rate_at_threshold": 0.04322937228582708,
+  "train_seconds": 56.9,
+  "valid_precision_at_budget_0.5pct": 0.5980392156862745,
+  "valid_recall_at_budget_0.5pct": 0.09886547811993517,
+  "valid_precision_at_budget_1pct": 0.5665024630541872,
+  "valid_recall_at_budget_1pct": 0.18638573743922204,
+  "valid_precision_at_budget_2pct": 0.45566502463054187,
+  "valid_recall_at_budget_2pct": 0.29983792544570503,
+  "valid_precision_at_budget_5pct": 0.29289940828402367,
+  "valid_recall_at_budget_5pct": 0.4813614262560778
+ },
+ "params": {
+  "xgb_objective": "binary:logistic",
+  "xgb_eval_metric": "aucpr",
+  "xgb_max_depth": "8",
+  "xgb_eta": "0.05",
+  "xgb_subsample": "0.8",
+  "xgb_colsample_bytree": "0.8",
+  "xgb_min_child_weight": "1.0",
+  "xgb_tree_method": "hist",
+  "seed": "42",
+  "variant": "baseline",
+  "train_end": "12614332",
+  "valid_start": "12614332",
+  "train_rows": "484845",
+  "valid_rows": "20264",
+  "train_fraud_rate": "0.03517",
+  "imbalance_method": "none",
+  "scale_pos_weight": "1.0",
+  "best_rounds": "402",
+  "threshold": "0.12363966554403305",
+  "feature_count": "28"
+ },
+ "aliases_after": {
+  "champion": 2,
+  "production": 2,
+  "challenger": 8
+ },
+ "versions_after": [
+  1,
+  2,
+  7,
+  8
+ ],
+ "v8": {
+  "version": 8,
+  "run_id": "f9bb4e91f6a64e4a84a153bb8b806321",
+  "source": "file:///C:/Users/Manojkumar%20Gudge/Desktop/Real-Time%20Financial%20Fraud%20Detection%20Platform/mlruns/f9bb4e91f6a64e4a84a153bb8b806321/artifacts/model"
+ }
+}
