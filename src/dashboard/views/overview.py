@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
-from src.dashboard import ui
+from src.dashboard import fmt, ui
 from src.serving.store import ALERT_STATUSES
 
 ui.require_schema()
@@ -45,17 +46,27 @@ right.metric(
     ),
 )
 if model:
-    right.caption(f"model_version {model} (newest scored transaction)")
+    right.caption(
+        f"model_version {model} (newest scored transaction, scored "
+        f"{fmt.ist(ov['model_last_scored_at'])})"
+    )
 
 st.subheader("Alerts per day")
 per_day = pd.DataFrame(ov["per_day"], columns=["transaction_day", "alerts"])
-st.bar_chart(
-    per_day,
-    x="transaction_day",
-    y="alerts",
-    x_label="Day (from dataset start)",
-    y_label="Alerts",
+# Explicit y scale from 0, so a bar's height is always proportional to its count.
+chart = (
+    alt.Chart(per_day)
+    .mark_bar()
+    .encode(
+        x=alt.X("transaction_day:O", title="Day (from dataset start)"),
+        y=alt.Y("alerts:Q", title="Alerts", scale=alt.Scale(zero=True, domainMin=0)),
+        tooltip=[
+            alt.Tooltip("transaction_day:O", title="Day"),
+            alt.Tooltip("alerts:Q", title="Alerts"),
+        ],
+    )
 )
+st.altair_chart(chart, width="stretch")
 st.caption(
     "IEEE-CIS TransactionDT is seconds from an unspecified start date, so days are relative."
 )

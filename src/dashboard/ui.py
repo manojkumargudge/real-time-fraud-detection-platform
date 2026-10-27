@@ -45,7 +45,7 @@ COLUMN_LABELS = {
     "version": "Version",
     "field": "Field",
     "value": "Value",
-    "created_at": "Time",
+    "created_at": "Time (IST)",
     "analyst": "Analyst",
     "from_status": "From",
     "to_status": "To",
@@ -61,7 +61,7 @@ COLUMN_LABELS = {
     "scored_tx": "Scored transactions",
     "shared_devices": "Shared devices",
     "id": "Report",
-    "run_at": "Run at",
+    "run_at": "Run at (IST)",
     "window_days": "Window (days)",
     "drifted_share": "Drifted share",
     "top_drifted": "Top drifted features",
@@ -71,6 +71,13 @@ COLUMN_LABELS = {
     "synthetic": "Synthetic",
     "alerts": "Alerts",
 }
+
+
+PRODUCT_HELP = "ProductCD: product codes are anonymised in the IEEE-CIS data (W, C, R, H, S)."
+CARD_HELP = (
+    "Anonymised card key (card1-card6 of the IEEE-CIS data), not a customer: one card key is "
+    "shared by many customers."
+)
 
 
 def labelled(frame: Any) -> Any:
@@ -112,6 +119,12 @@ class Repository:
     def review_history(self, alert_id: int) -> list[dict[str, Any]]:
         with self.db.connection() as c:
             return data.review_history(c, alert_id)
+
+    def customer_alerts(
+        self, uid: str | None, exclude_alert_id: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        with self.db.connection() as c:
+            return data.customer_alerts(c, uid, exclude_alert_id)
 
     def ring_for_uid(self, uid: str | None) -> dict[str, Any] | None:
         with self.db.connection() as c:

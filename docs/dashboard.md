@@ -34,6 +34,7 @@ hides Streamlit's Deploy button and developer menu.
 | `data.py` | **All SQL** (parameterised only). Every function takes a borrowed connection |
 | `db.py` | Connections: every read or write gets its own connection; none is shared between Streamlit sessions (threads) |
 | `ui.py` | Repository (one connection per call), read cache (`st.cache_data`, 15 s TTL, cleared after a write), analyst name, schema check, display labels |
+| `fmt.py` | Display formatting, pure: times in IST, whole numbers without ".0", "missing" for blank fields, "—" for no label, dollar amounts |
 | `app.py` | Entry point: `st.navigation` over the five pages |
 | `views/*.py` | Thin pages: Overview, Alert queue, Case detail, Fraud rings, Drift. No SQL |
 
@@ -48,10 +49,24 @@ hides Streamlit's Deploy button and developer menu.
   - alerts per **day from the dataset start** (`TransactionDT // 86400`). IEEE-CIS TransactionDT
     is seconds from an unspecified start date, so days are relative. Creation dates would put
     every replayed alert on two days.
-- **All pages:** tables use plain column labels (`ui.COLUMN_LABELS`), and statuses are shown
-  as "Confirmed fraud" etc.
+- **All pages:**
+  - tables use plain column labels (`ui.COLUMN_LABELS`), and statuses are shown as
+    "Confirmed fraud" etc.;
+  - times are shown in IST, with "IST" in the label;
+  - IDs and codes have no trailing ".0";
+  - a review with no label shows "—";
+  - the Overview chart's y-axis starts at 0.
 - **Alert queue:** filter by status, score range and transaction-day range, highest score first,
   50 per page (`LIMIT/OFFSET` plus a count query). A selected row (or an alert id) opens the case.
+  - The amount is in dollars with 2 decimals, and there is no Version column.
+  - Tooltips and a caption explain that product codes are anonymised in IEEE-CIS, and that
+    Card is the anonymised card key, not a customer.
+- **Case detail, other alerts for this customer:** up to 20 other alerts with the same `uid`
+  (card key + addr1), highest score first, with the total.
+  - It is never grouped by card key, which many customers share.
+  - When addr1 is missing (`…|<NA>`), a warning says the group is every customer of that card
+    with no billing region.
+  - Blank transaction fields show "missing".
 - **Case detail:**
   - the transaction fields (the stored event), score, threshold and per-case model version;
   - status and version;

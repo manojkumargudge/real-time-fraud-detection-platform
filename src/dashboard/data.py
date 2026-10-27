@@ -22,10 +22,12 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from src.dashboard import fmt
 from src.dashboard.workflow import Label, validate_transition
 
 SECONDS_PER_DAY = 86_400
 MAX_PAGE_SIZE = 200
+MAX_CUSTOMER_ALERTS = 20  # "Other alerts for this customer" on Case detail
 REQUIRED_COLUMNS = {
     "alerts": set("alert_id transaction_id score status created_at updated_at version".split()),
     "case_reviews": set(
@@ -62,7 +64,7 @@ class StaleAlertError(RuntimeError):
         self.current_status, self.current_version = current_status, current_version
         self.changed_by, self.changed_at = changed_by, changed_at
         who = f" by {changed_by}" if changed_by else ""
-        when = f" at {changed_at:%Y-%m-%d %H:%M:%S %Z}" if changed_at else ""
+        when = f" at {fmt.ist(changed_at, seconds=True)}" if changed_at else ""
         super().__init__(
             f"This case changed since you loaded it: alert {alert_id} was changed{who}{when}; it "
             f"is now {current_status} (version {current_version}, you had version "
@@ -225,6 +227,31 @@ def get_case(conn: psycopg.Connection[Any], alert_id: int) -> dict[str, Any] | N
             (SECONDS_PER_DAY, alert_id),
         ).fetchone()
     return dict(row) if row else None
+
+
+def customer_alerts(
+    conn: psycopg.Connection[Any], uid: str | None, exclude_alert_id: int
+) -> tuple[list[dict[str, Any]], int]:
+    """Other alerts of the same customer (``uid`` = card fields + addr1, src/features/entity.py),
+    highest score first, at most MAX_CUSTOMER_ALERTS rows, and how many there are in total.
+    Grouped by uid, never by card_id: one card key is shared by many customers."""
+    if uid is None:
+        return [], 0
+    params = {"uid": uid, "exclude": exclude_alert_id}
+    total_row = conn.execute(
+        "SELECT count(*) FROM alerts a JOIN scored_transactions s USING (transaction_id) "
+        "WHERE s.uid = %(uid)s AND a.alert_id <> %(exclude)s",
+        params,
+    ).fetchone()
+    with conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(
+            "SELECT a.alert_id, a.score, a.status, s.transaction_dt / %(day)s AS transaction_day "
+            "FROM alerts a JOIN scored_transactions s USING (transaction_id) "
+            "WHERE s.uid = %(uid)s AND a.alert_id <> %(exclude)s "
+            "ORDER BY a.score DESC, a.alert_id LIMIT %(limit)s",
+            params | {"day": SECONDS_PER_DAY, "limit": MAX_CUSTOMER_ALERTS},
+        ).fetchall()
+    return list(rows), int(total_row[0]) if total_row else 0
 
 
 def review_history(conn: psycopg.Connection[Any], alert_id: int) -> list[dict[str, Any]]:

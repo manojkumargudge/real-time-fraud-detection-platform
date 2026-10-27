@@ -21,8 +21,17 @@ COLUMNS = [
     "product",
     "card_id",
     "transaction_id",
-    "version",
 ]
+# Whole numbers without separators or ".0"; amount in dollars; tooltips for anonymised codes.
+COLUMN_CONFIG = {
+    "Alert": st.column_config.NumberColumn(format="%d"),
+    "Score": st.column_config.NumberColumn(format="%.4f"),
+    "Day": st.column_config.NumberColumn(format="%d"),
+    "Amount": st.column_config.NumberColumn(format="$%.2f"),
+    "Product": st.column_config.TextColumn(help=ui.PRODUCT_HELP),
+    "Card": st.column_config.TextColumn(help=ui.CARD_HELP),
+    "Transaction": st.column_config.NumberColumn(format="%d"),
+}
 
 ui.require_schema()
 st.title("Alert queue")
@@ -51,14 +60,16 @@ pages = max(1, math.ceil(page.total / PAGE_SIZE))
 st.caption(f"{page.total:,} alerts match; page {page.page} of {pages}, highest score first.")
 
 table = pd.DataFrame(page.rows, columns=COLUMNS)
+shown = table.assign(status=table["status"].map(ui.status_label))
 event = st.dataframe(
-    ui.labelled(table),
+    ui.labelled(shown),
     hide_index=True,
     on_select="rerun",
     selection_mode="single-row",
-    column_config={"Score": st.column_config.NumberColumn(format="%.4f")},
+    column_config=COLUMN_CONFIG,
     key="queue_table",
 )
+st.caption(f"Card: {ui.CARD_HELP} Product: {ui.PRODUCT_HELP}")
 selected = event.selection.rows if event is not None else []
 if selected:
     ui.open_case(int(table.iloc[selected[0]]["alert_id"]))
