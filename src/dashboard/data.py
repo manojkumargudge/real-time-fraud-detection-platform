@@ -3,7 +3,8 @@
 All queries are parameterised; filters arrive as typed values, never as SQL text. Every function
 takes a connection borrowed by the caller (``src/dashboard/db.py``), so no connection is shared
 between Streamlit sessions. The dashboard never runs DDL: the schema belongs to
-``src/serving/store.py``; ``missing_schema`` reports what is missing.
+``src/serving/store.py`` (core tables) and to the batch jobs (``fraud_rings``,
+``drift_reports``); ``schema_state`` reports what is missing.
 
 Status changes use optimistic locking on ``alerts.version``: the analyst's form carries the
 version it was rendered from, and a change is applied only if the row still has that version.
@@ -28,16 +29,22 @@ from src.dashboard.workflow import Label, validate_transition
 SECONDS_PER_DAY = 86_400
 MAX_PAGE_SIZE = 200
 MAX_CUSTOMER_ALERTS = 20  # "Other alerts for this customer" on Case detail
-REQUIRED_COLUMNS = {
+# Core tables: created by src/serving/store.py (the API or a consumer); every page needs them.
+CORE_COLUMNS = {
     "alerts": set("alert_id transaction_id score status created_at updated_at version".split()),
     "case_reviews": set(
         "id alert_id transaction_id from_status to_status label analyst notes alert_version "
         "created_at submit_token".split()
     ),
     "scored_transactions": {"transaction_id", "transaction_dt", "uid", "event", "model_version"},
-    "fraud_rings": {"rank", "uids", "fraud_rate"},
-    "drift_reports": {"id", "report_path", "triggered"},
 }
+# Optional tables: created by batch jobs that may not have run in a deployment. Only the pages
+# that read one require it, and only a fully absent table is tolerated (missing columns are not).
+OPTIONAL_COLUMNS = {
+    "fraud_rings": {"rank", "uids", "fraud_rate"},  # src/graph/rings.py, host only
+    "drift_reports": {"id", "report_path", "triggered"},  # src/monitoring (drift CronJob)
+}
+REQUIRED_COLUMNS = CORE_COLUMNS | OPTIONAL_COLUMNS
 
 
 class SchemaNotReadyError(RuntimeError):
@@ -103,8 +110,22 @@ class Page:
     page_size: int
 
 
-def missing_schema(conn: psycopg.Connection[Any]) -> list[str]:
-    """``table.column`` names the dashboard needs but the database lacks (empty = ready)."""
+@dataclass(frozen=True)
+class SchemaState:
+    missing: tuple[str, ...]  # ``table.column`` needed but absent (absent optional tables aside)
+    absent: frozenset[str]  # optional tables that do not exist at all
+
+
+def schema_state(conn: psycopg.Connection[Any]) -> SchemaState:
+    """What the dashboard needs but the database lacks. Read-only (information_schema)."""
+    tables = {
+        t
+        for (t,) in conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema() AND table_name = ANY(%s)",
+            (list(REQUIRED_COLUMNS),),
+        ).fetchall()
+    }
     rows = conn.execute(
         "SELECT table_name, column_name FROM information_schema.columns "
         "WHERE table_schema = current_schema() AND table_name = ANY(%s)",
@@ -113,9 +134,20 @@ def missing_schema(conn: psycopg.Connection[Any]) -> list[str]:
     present: dict[str, set[str]] = {}
     for table, column in rows:
         present.setdefault(table, set()).add(column)
-    return sorted(
-        f"{t}.{c}" for t, cols in REQUIRED_COLUMNS.items() for c in cols - present.get(t, set())
+    absent = frozenset(t for t in OPTIONAL_COLUMNS if t not in tables)
+    missing = sorted(
+        f"{t}.{c}"
+        for t, cols in REQUIRED_COLUMNS.items()
+        if t not in absent
+        for c in cols - present.get(t, set())
     )
+    return SchemaState(missing=tuple(missing), absent=absent)
+
+
+def missing_schema(conn: psycopg.Connection[Any]) -> list[str]:
+    """``table.column`` names the dashboard needs but the database lacks (empty = ready); a fully
+    absent optional table is not listed (see ``schema_state``)."""
+    return list(schema_state(conn).missing)
 
 
 def require_schema(conn: psycopg.Connection[Any]) -> None:

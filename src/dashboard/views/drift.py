@@ -19,10 +19,10 @@ def feature_names(items: Any) -> str:
     return ", ".join(r["feature"] if isinstance(r, dict) else str(r) for r in rows)
 
 
-ui.require_schema()
+absent = ui.require_schema("drift_reports")
 st.title("Drift reports")
 
-reports = ui.load("list_drift_reports")
+reports = [] if "drift_reports" in absent else ui.load("list_drift_reports")
 if not reports:
     st.info(
         "No drift reports in this database yet. Docker Compose: python -m "

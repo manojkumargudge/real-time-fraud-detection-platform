@@ -130,6 +130,7 @@ class FakeRepository:
         self.cache_key = f"fake-{uuid.uuid4().hex}"  # never share the page cache between tests
         self.reports_dir = reports_dir
         self.missing: list[str] = []
+        self.absent: set[str] = set()  # optional tables (data.OPTIONAL_COLUMNS) that do not exist
         self.calls = 0  # change_status calls, including rejected ones
         self.reviewed: tuple[int, int] = (0, 0)  # (reviewed, confirmed fraud) for the overview
         ring_uid = "1111|321|150|visa|226|debit|315"
@@ -155,8 +156,8 @@ class FakeRepository:
             "uids": [ring_uid, "9999|<NA>|<NA>|<NA>|<NA>|<NA>|<NA>"],
         }
 
-    def missing_schema(self) -> list[str]:
-        return self.missing
+    def schema_state(self) -> data.SchemaState:
+        return data.SchemaState(missing=tuple(self.missing), absent=frozenset(self.absent))
 
     def overview(self) -> dict[str, Any]:
         by_status: dict[str, int] = {}

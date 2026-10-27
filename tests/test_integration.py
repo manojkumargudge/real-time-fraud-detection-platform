@@ -1099,6 +1099,172 @@ class TestDashboardData:
         assert data.review_history(dash, alert) == reviews
 
 
+# --------------------------------------------------------------------------- dashboard pages
+# All five pages in Streamlit's AppTest on a real repository (ui.Repository on PostgreSQL), incl.
+# a deployment where the batch jobs (fraud rings, drift) have not run (k8s/dashboard.yaml).
+
+DASHBOARD_PAGES = (
+    "views/overview.py",
+    "views/alerts.py",
+    "views/case.py",
+    "views/rings.py",
+    "views/drift.py",
+)
+
+
+def _render(dsn: str, reports_dir: Path, page: str, alert_id: int) -> Any:
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+
+    from src.dashboard.db import Database
+    from src.dashboard.ui import Repository
+
+    app = str(Path(__file__).resolve().parents[1] / "src" / "dashboard" / "app.py")
+    at = AppTest.from_file(app, default_timeout=60)
+    at.session_state["repo"] = Repository(Database(dsn), reports_dir)
+    at.session_state["alert_id"] = alert_id
+    at.run()
+    if page != "views/overview.py":
+        at.switch_page(page)
+        at.run()
+    assert not at.exception, (page, [e.value for e in at.exception])
+    return at
+
+
+def _page_texts(at: Any) -> str:
+    parts = [m.value for m in at.markdown] + [c.value for c in at.caption]
+    parts += [str(i.value) for i in at.info] + [str(e.value) for e in at.error]
+    parts += [t.value for t in at.title] + [h.value for h in at.subheader]
+    return "\n".join(str(p) for p in parts)
+
+
+def _tables(conn: psycopg.Connection[Any]) -> list[str]:
+    rows = conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() "
+        "ORDER BY 1"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def _drift_row(report_path: str) -> Any:
+    from src.monitoring.report_store import DriftReportRow
+
+    return DriftReportRow(
+        synthetic=False, forced=False, top_gain_features=["card3"],
+        drifted_top_gain_features=[], synthetic_note=None, now_dt=130 * 86_400,
+        label_cutoff_dt=100 * 86_400, window_start_dt=123 * 86_400, window_end_dt=130 * 86_400,
+        reference_start_dt=0, reference_end_dt=90 * 86_400, current_rows=30,
+        reference_rows=1000, feature_count=28, drifted_feature_count=1,
+        drifted_feature_share=1 / 28, top_drifted_features=[{"feature": "card3", "score": 0.1}],
+        prediction_drift_method="psi", prediction_drift_score=0.01,
+        prediction_drift_detected=False, performance_start_dt=0, performance_end_dt=0,
+        delayed_rows=0, delayed_positives=0, delayed_pr_auc=None, champion_valid_pr_auc=0.5,
+        triggered=False, trigger_reasons=[], retrain_run_id=None, challenger_version=None,
+        promotion_decision=None, promotion=None, windows={}, report_path=report_path, config={},
+    )  # fmt: skip
+
+
+@needs_db
+class TestDashboardPages:
+    def test_core_tables_only_every_page_renders_and_says_what_has_not_run(
+        self, pg_dsn: str, pg_store: PostgresStore, tmp_path: Path
+    ) -> None:
+        from src.dashboard import data, ui
+
+        for i in range(2):
+            assert pg_store.save(record(8_000 + i, (100 + i) * 86_400, alert=True))
+        with psycopg.connect(pg_dsn, autocommit=True) as conn:
+            before = _tables(conn)
+            assert before == ["alerts", "case_reviews", "scored_transactions"]
+            state = data.schema_state(conn)
+            alert_id = _alert_ids(conn)[8_000]
+        assert state.missing == () and state.absent == {"fraud_rings", "drift_reports"}
+
+        pages = {p: _render(pg_dsn, tmp_path, p, alert_id) for p in DASHBOARD_PAGES}
+        for page, at in pages.items():
+            print(f"{page}: title={[t.value for t in at.title]} info={[i.value for i in at.info]}")
+            assert not at.error, (page, [e.value for e in at.error])
+            assert "schema is not initialised" not in _page_texts(at)
+        assert [i.value for i in pages["views/rings.py"].info] == [ui.RINGS_NOT_RUN]
+        assert pages["views/rings.py"].dataframe == []
+        assert "No drift reports in this database yet" in _page_texts(pages["views/drift.py"])
+        case = _page_texts(pages["views/case.py"])
+        assert "Linked fraud ring" in case and ui.NOT_AVAILABLE in case
+        assert ui.RINGS_NOT_RUN in case
+        queue = pages["views/alerts.py"].dataframe[0].value
+        print(f"queue rows: {len(queue)}")
+        assert len(queue) == 2
+        with psycopg.connect(pg_dsn, autocommit=True) as conn:
+            assert _tables(conn) == before  # the dashboard never runs DDL
+
+    def test_full_schema_pages_behave_as_before(
+        self, dash: psycopg.Connection[Any], pg_dsn: str, tmp_path: Path
+    ) -> None:
+        from src.dashboard import data
+        from src.monitoring.report_store import insert_report
+
+        dash.execute(
+            "INSERT INTO fraud_rings VALUES (1, 7, 2, 2, 5, 100.0, '[\"dev\"]', 0.4, 5, 0.2, "
+            '1, 2, \'["card1|addr", "zzz|1"]\', now())'
+        )
+        (tmp_path / "drift_x.html").write_text("<html>evidently</html>", encoding="utf-8")
+        insert_report(pg_dsn, _drift_row("/app/reports/drift/drift_x.html"))
+        assert data.schema_state(dash) == data.SchemaState(missing=(), absent=frozenset())
+        alert_id = _alert_ids(dash)[9_001]  # card1|addr: a ring member
+
+        pages = {p: _render(pg_dsn, tmp_path, p, alert_id) for p in DASHBOARD_PAGES}
+        for page, at in pages.items():
+            assert not at.error, (page, [e.value for e in at.error])
+        overview = {m.label: m.value for m in pages["views/overview.py"].metric}
+        counts = {
+            "overview open alerts": overview["Open"],
+            "queue rows": len(pages["views/alerts.py"].dataframe[0].value),
+            "rings rows": len(pages["views/rings.py"].dataframe[0].value),
+            "drift rows": len(pages["views/drift.py"].dataframe[0].value),
+        }
+        print(counts)
+        assert counts == {
+            "overview open alerts": "30",
+            "queue rows": 30,
+            "rings rows": 1,
+            "drift rows": 1,
+        }
+        case = _page_texts(pages["views/case.py"])
+        assert "Linked fraud ring" in case and "Ring #1 (id 7)" in case
+        assert "has not run" not in case
+        assert "has not run" not in _page_texts(pages["views/rings.py"])
+
+    @pytest.mark.parametrize(
+        ("table", "column", "page"),
+        [
+            ("fraud_rings", "fraud_rate", "views/rings.py"),
+            ("fraud_rings", "fraud_rate", "views/case.py"),
+            ("drift_reports", "triggered", "views/drift.py"),
+        ],
+    )
+    def test_optional_table_with_a_missing_column_fails_loudly(
+        self,
+        dash: psycopg.Connection[Any],
+        pg_dsn: str,
+        tmp_path: Path,
+        table: str,
+        column: str,
+        page: str,
+    ) -> None:
+        from src.dashboard import data
+
+        dash.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        state = data.schema_state(dash)
+        assert state.missing == (f"{table}.{column}",) and state.absent == frozenset()
+
+        at = _render(pg_dsn, tmp_path, page, _alert_ids(dash)[9_001])
+        errors = [str(e.value) for e in at.error]
+        print(f"{page}: {errors}")
+        assert len(errors) == 1
+        assert "schema is not initialised" in errors[0] and f"{table}.{column}" in errors[0]
+        assert at.dataframe == [] and "has not run" not in _page_texts(at)
+
+
 @needs_db
 def test_benchmark_cleanup_works_on_a_clone_with_reviews() -> None:
     """scripts/bench_throughput.py on a fraud_bench that holds reviews (cloned from a demo
