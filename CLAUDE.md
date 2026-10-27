@@ -25,6 +25,8 @@ and containerized deployment.
 - Add meaningful tests for each feature and run them before reporting completion.
 - Dashboard tests must drive the real user path (type into widgets, navigate via
   open_case/switch_page), not inject session_state.
+- Every comparison check (backup vs live, before vs after, A vs B) must assert both sides are
+  non-empty and print row counts.
 - Never claim tests, benchmarks, or deployments succeeded without verification.
 - Ask before destructive operations or changes that may discard data.
 - Avoid unnecessary dependencies, repeated explanations, and large file dumps.
