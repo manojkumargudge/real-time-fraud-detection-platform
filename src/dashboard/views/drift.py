@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from src.dashboard import ui
+from src.dashboard import fmt, ui
 
 
 def feature_names(items: Any) -> str:
@@ -31,7 +31,7 @@ table = pd.DataFrame(
     [
         {
             "id": r["id"],
-            "run_at": r["run_at"],
+            "run_at": fmt.ist(r["run_at"]),
             "window_days": f"{r['window_start_day']}-{r['window_end_day']}",
             "drifted_share": r["drifted_feature_share"],
             "top_drifted": feature_names(r["top_drifted_features"])[:80],

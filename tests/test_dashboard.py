@@ -191,6 +191,19 @@ class FakeRepository:
     def review_history(self, alert_id: int) -> list[dict[str, Any]]:
         return list(self.reviews.get(alert_id, []))
 
+    def customer_alerts(
+        self, uid: str | None, exclude_alert_id: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        rows = sorted(
+            (
+                {k: c[k] for k in ("alert_id", "score", "status", "transaction_day")}
+                for c in self.cases.values()
+                if uid is not None and c["uid"] == uid and c["alert_id"] != exclude_alert_id
+            ),
+            key=lambda r: (-r["score"], r["alert_id"]),
+        )
+        return rows[: data.MAX_CUSTOMER_ALERTS], len(rows)
+
     def ring_for_uid(self, uid: str | None) -> dict[str, Any] | None:
         return self.ring if uid in self.ring["uids"] else None
 
@@ -645,3 +658,188 @@ def test_case_page_has_no_form_so_enter_cannot_submit(fake: FakeRepository) -> N
     at.text_area[0].input("typed, then Ctrl+Enter").run()
     after = all_reviews(fake)
     assert_same_reviews(before, after)
+
+
+# --------------------------------------------------------------------------- display (2026-10-27)
+# These drive the real user path: sidebar navigation, "Open alert id" + "Open case" (open_case /
+# st.switch_page) and typing into widgets; only the in-memory repository is injected.
+
+
+def start(fake: FakeRepository) -> AppTest:
+    return app(fake)  # Overview, no session state besides the fake repository
+
+
+def go_to(at: AppTest, page: str) -> AppTest:
+    at.switch_page(page)  # what a sidebar navigation click does
+    at.run()
+    assert not at.exception, at.exception
+    return at
+
+
+def open_case_from_queue(at: AppTest, alert_id: int) -> AppTest:
+    go_to(at, "views/alerts.py")
+    next(n for n in at.number_input if n.label == "Open alert id").set_value(alert_id)
+    next(b for b in at.button if b.label == "Open case").click().run()
+    assert not at.exception, at.exception
+    assert at.title[0].value == "Case detail"
+    # The browser's URL now points at Case detail; AppTest would rerun the page last chosen with
+    # at.switch_page (the queue), so point it at Case detail too. alert_id comes from open_case.
+    at.switch_page("views/case.py")
+    return at
+
+
+def frame(at: AppTest, first_column: str) -> Any:
+    return next(d.value for d in at.dataframe if list(d.value.columns)[0] == first_column)
+
+
+def column_config(at: AppTest, first_column: str) -> dict[str, Any]:
+    import json
+
+    element = next(d for d in at.dataframe if list(d.value.columns)[0] == first_column)
+    return dict(json.loads(element.proto.columns))
+
+
+def test_fmt_helpers() -> None:
+    from src.dashboard import fmt
+
+    assert fmt.ist(datetime(2026, 10, 26, 9, 0, tzinfo=UTC)) == "2026-10-26 14:30 IST"
+    assert fmt.ist(datetime(2026, 10, 26, 20, 0)) == "2026-10-27 01:30 IST"  # naive = UTC
+    assert fmt.ist(NOW, seconds=True) == "2026-10-26 14:30:00 IST"
+    assert fmt.ist(None) == ""
+    assert [fmt.value(v) for v in (177.0, 529.0, 3_461_885, 1.5, "W", True)] == [
+        "177",
+        "529",
+        "3461885",
+        "1.5",
+        "W",
+        "True",
+    ]
+    assert [fmt.value(v) for v in (None, "", "  ", float("nan"))] == ["missing"] * 4
+    assert [fmt.amount(v) for v in (994.0, 117, 1234.5, None)] == [
+        "$994.00",
+        "$117.00",
+        "$1,234.50",
+        "missing",
+    ]
+    assert [fmt.label(v) for v in ("fraud", "not_fraud", None, float("nan"), "")] == [
+        "fraud",
+        "not_fraud",
+        "—",
+        "—",
+        "—",
+    ]
+
+
+def test_stale_alert_message_shows_ist() -> None:
+    err = data.StaleAlertError(1, 1, "investigating", 2, "bob", NOW)
+    assert "at 2026-10-26 14:30:00 IST" in str(err)
+
+
+def test_queue_shows_human_statuses_dollar_amounts_and_no_version(fake: FakeRepository) -> None:
+    fake.cases[2]["status"] = "false_positive"
+    at = go_to(start(fake), "views/alerts.py")
+    at.multiselect[0].set_value(["open", "false_positive"]).run()
+    queue = frame(at, "Alert")
+    assert list(queue.columns) == [
+        "Alert",
+        "Score",
+        "Status",
+        "Day",
+        "Amount",
+        "Product",
+        "Card",
+        "Transaction",
+    ]
+    assert list(queue["Status"]) == ["Open", "False positive"]
+    config = column_config(at, "Alert")
+    assert config["Amount"]["type_config"]["format"] == "$%.2f"
+    for name in ("Alert", "Day", "Transaction"):
+        assert config[name]["type_config"]["format"] == "%d", name
+    assert "anonymised" in config["Product"]["help"]
+    assert "anonymised card key" in config["Card"]["help"].lower()
+    assert "Anonymised card key" in texts(at) and "product codes are anonymised" in texts(at)
+
+
+def test_case_fields_show_whole_numbers_dollars_and_missing(fake: FakeRepository) -> None:
+    fake.cases[1]["event"] = {
+        "TransactionID": 3_000_001,
+        "TransactionAmt": 994.0,
+        "ProductCD": "W",
+        "card1": 13526.0,
+        "card2": 529.0,
+        "addr1": 177.0,
+        "dist1": None,
+        "P_emaildomain": "",
+        "C1": 1.5,
+    }
+    at = open_case_from_queue(start(fake), 1)
+    fields = dict(frame(at, "Field").itertuples(index=False))
+    assert fields == {
+        "TransactionID": "3000001",
+        "TransactionAmt": "$994.00",
+        "ProductCD": "W",
+        "card1": "13526",
+        "card2": "529",
+        "addr1": "177",
+        "dist1": "missing",
+        "P_emaildomain": "missing",
+        "C1": "1.5",
+    }
+    shown = texts(at)
+    assert "product codes are anonymised" in shown
+    assert "Anonymised card key" in shown and "Customer (uid = card key + addr1)" in shown
+
+
+def test_case_times_review_labels_and_drift_runs_are_in_ist(fake: FakeRepository) -> None:
+    at = start(fake)
+    at.sidebar.text_input(key="analyst").input("alice").run()
+    open_case_from_queue(at, 1)
+    assert "alert created 2026-10-26 14:30 IST, updated 2026-10-26 14:30 IST" in texts(at)
+    save(at, "investigating")  # in-memory fake only
+    history = frame(at, "Time (IST)")
+    assert list(history.iloc[0][["Time (IST)", "From", "To", "Label"]]) == [
+        "2026-10-26 14:30 IST",
+        "Open",
+        "Investigating",
+        "—",
+    ]
+    drift = frame(go_to(at, "views/drift.py"), "Report")
+    assert list(drift["Run at (IST)"]) == ["2026-10-26 14:30 IST"]
+
+
+def test_other_alerts_for_this_customer_are_grouped_by_uid(fake: FakeRepository) -> None:
+    uid = fake.cases[1]["uid"]
+    same_card_other_region = uid.rsplit("|", 1)[0] + "|999"
+    fake.cases[3] = make_case(3, 0.55, uid) | {"status": "confirmed_fraud", "transaction_day": 150}
+    fake.cases[4] = make_case(4, 0.99, same_card_other_region)  # same card key, other customer
+    at = open_case_from_queue(start(fake), 1)
+    assert "Other alerts for this customer" in [s.value for s in at.subheader]
+    others = frame(at, "Alert")
+    assert list(others.columns) == ["Alert", "Score", "Status", "Day"]
+    assert others.to_dict("records") == [
+        {"Alert": 3, "Score": 0.55, "Status": "Confirmed fraud", "Day": 150}
+    ]
+    assert "Showing all 1." in texts(at)
+
+
+def test_other_alerts_are_capped_at_20_and_warn_without_addr1(fake: FakeRepository) -> None:
+    uid = "5555|111|150|visa|226|debit|<NA>"
+    for i in range(10, 36):  # 26 alerts of one uid
+        fake.cases[i] = make_case(i, 0.5 + i / 100, uid)
+    at = open_case_from_queue(start(fake), 10)
+    others = frame(at, "Alert")
+    assert len(others) == 20
+    assert list(others["Alert"])[:2] == [35, 34]  # highest score first
+    assert "Showing the top 20 by score of 25." in texts(at)
+    assert any("addr1 (billing region) is missing" in w.value for w in at.warning)
+
+
+def test_overview_alerts_per_day_chart_starts_at_zero(fake: FakeRepository) -> None:
+    import json
+
+    at = start(fake)
+    charts = at.get("vega_lite_chart")
+    assert len(charts) == 1
+    spec = json.loads(charts[0].proto.spec)
+    assert spec["encoding"]["y"]["scale"] == {"zero": True, "domainMin": 0}
+    assert "scored 2026-10-26 14:30 IST" in texts(at)

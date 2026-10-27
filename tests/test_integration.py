@@ -808,6 +808,30 @@ class TestSchemaSetup:
 
 @needs_db
 class TestDashboardData:
+    def test_customer_alerts_groups_by_uid_excludes_the_case_and_caps(
+        self, dash: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.dashboard import data
+
+        ids = _alert_ids(dash)
+        card0 = {ids[9_000 + i] for i in range(0, 30, 3)}  # uid "card0|addr": 10 alerts
+        rows, total = data.customer_alerts(dash, "card0|addr", ids[9_000])
+        print(f"customer alerts: {len(rows)} rows of {total}")
+        assert total == 9 and len(rows) == 9
+        assert {r["alert_id"] for r in rows} == card0 - {ids[9_000]}
+        assert [r["alert_id"] for r in rows][:2] == [ids[9_027], ids[9_024]]  # score desc
+        assert rows[0] == {
+            "alert_id": ids[9_027],
+            "score": pytest.approx(0.77),
+            "status": "open",
+            "transaction_day": 127,
+        }
+        monkeypatch.setattr(data, "MAX_CUSTOMER_ALERTS", 4)
+        capped, total = data.customer_alerts(dash, "card0|addr", ids[9_000])
+        assert (len(capped), total) == (4, 9)
+        assert data.customer_alerts(dash, None, ids[9_000]) == ([], 0)
+        assert data.customer_alerts(dash, "no-such-uid", ids[9_000]) == ([], 0)
+
     def test_change_status_bumps_version_and_appends_a_review(
         self, dash: psycopg.Connection[Any]
     ) -> None:

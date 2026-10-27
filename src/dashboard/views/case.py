@@ -1,11 +1,12 @@
-"""Case detail: transaction, score, model, linked ring, status change, review history."""
+"""Case detail: transaction, score, model, linked ring, other alerts of the customer, status
+change, review history."""
 
 from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
-from src.dashboard import case_form, ui, workflow
+from src.dashboard import case_form, fmt, ui, workflow
 
 HISTORY_COLUMNS = [
     "created_at",
@@ -16,6 +17,12 @@ HISTORY_COLUMNS = [
     "notes",
     "alert_version",
 ]
+CUSTOMER_COLUMNS = ["alert_id", "score", "status", "transaction_day"]
+CUSTOMER_COLUMN_CONFIG = {
+    "Alert": st.column_config.NumberColumn(format="%d"),
+    "Score": st.column_config.NumberColumn(format="%.4f"),
+    "Day": st.column_config.NumberColumn(format="%d"),
+}
 
 
 def save_status(token: str) -> None:
@@ -60,18 +67,25 @@ m[3].metric("Version", case["version"])
 m[4].metric("Model version", case["model_version"])
 st.caption(
     f"Transaction {case['transaction_id']}, transaction day {case['transaction_day']}; alert "
-    f"created {case['created_at']:%Y-%m-%d %H:%M}, updated {case['updated_at']:%Y-%m-%d %H:%M}."
+    f"created {fmt.ist(case['created_at'])}, updated {fmt.ist(case['updated_at'])}."
 )
 
 left, right = st.columns([3, 2])
 with left:
     st.subheader("Transaction")
     fields = pd.DataFrame(
-        [(k, "" if v is None else str(v)) for k, v in case["event"].items()],
+        [
+            (k, fmt.amount(v) if k == "TransactionAmt" else fmt.value(v))
+            for k, v in case["event"].items()
+        ],
         columns=["field", "value"],
     )
     st.dataframe(ui.labelled(fields), hide_index=True, height=min(38 * len(fields) + 38, 520))
-    st.caption(f"card_id {case['card_id'] or '-'}; uid {case['uid'] or '-'}")
+    st.caption(f'{ui.PRODUCT_HELP} Blank fields are shown as "{fmt.MISSING}".')
+    st.caption(
+        f"Card key {case['card_id'] or fmt.MISSING}: {ui.CARD_HELP} "
+        f"Customer (uid = card key + addr1): {case['uid'] or fmt.MISSING}."
+    )
     ring = ui.load("ring_for_uid", case["uid"])
     if ring is not None:
         st.subheader("Linked fraud ring")
@@ -80,6 +94,26 @@ with left:
             f"{ring['card_count']} cards, {ring['tx_count']} transactions, labelled fraud rate "
             f"{ring['fraud_rate']:.1%}; shared devices: " + ", ".join(ring["shared_devices"])
         )
+
+    st.subheader("Other alerts for this customer")
+    others, others_total = ui.load("customer_alerts", case["uid"], int(alert_id))
+    if case["uid"] and case["uid"].endswith("|<NA>"):
+        st.warning(
+            "addr1 (billing region) is missing for this transaction, so this groups every "
+            "customer of this card key without a billing region, not one customer."
+        )
+    if others:
+        table = pd.DataFrame(others, columns=CUSTOMER_COLUMNS)
+        table["status"] = table["status"].map(ui.status_label)
+        st.dataframe(ui.labelled(table), hide_index=True, column_config=CUSTOMER_COLUMN_CONFIG)
+        shown = (
+            f"the top {len(others)} by score of {others_total}"
+            if others_total > len(others)
+            else f"all {others_total}"
+        )
+        st.caption(f"Grouped by uid (card key + addr1), not by card key. Showing {shown}.")
+    else:
+        st.caption("No other alerts for this customer.")
 
 with right:
     st.subheader("Change status")
@@ -132,6 +166,11 @@ with right:
 st.subheader("Review history")
 history = ui.load("review_history", int(alert_id))
 if history:
-    st.dataframe(ui.labelled(pd.DataFrame(history)[HISTORY_COLUMNS]), hide_index=True)
+    reviews = pd.DataFrame(history)[HISTORY_COLUMNS]
+    reviews["created_at"] = reviews["created_at"].map(fmt.ist)
+    reviews["from_status"] = reviews["from_status"].map(ui.status_label)
+    reviews["to_status"] = reviews["to_status"].map(ui.status_label)
+    reviews["label"] = reviews["label"].map(fmt.label)
+    st.dataframe(ui.labelled(reviews), hide_index=True)
 else:
     st.caption("No reviews yet.")

@@ -49,8 +49,23 @@ if ring is not None:
     c3.metric("Labelled fraud rate", f"{ring['fraud_rate']:.1%}")
     st.write("Shared devices: " + ", ".join(ring["shared_devices"]))
     members = pd.DataFrame({"uid": uids, "card": [card_of_uid(u) for u in uids]})
-    st.dataframe(ui.labelled(members), hide_index=True)
+    st.dataframe(
+        ui.labelled(members),
+        hide_index=True,
+        column_config={"Card": st.column_config.TextColumn(help=ui.CARD_HELP)},
+    )
     alerts = ui.load("ring_alerts", uids)
     st.subheader(f"Alerts on ring members ({len(alerts)})")
     if alerts:
-        st.dataframe(ui.labelled(pd.DataFrame(alerts)), hide_index=True)
+        ring_table = pd.DataFrame(alerts)
+        ring_table["status"] = ring_table["status"].map(ui.status_label)
+        st.dataframe(
+            ui.labelled(ring_table),
+            hide_index=True,
+            column_config={
+                "Alert": st.column_config.NumberColumn(format="%d"),
+                "Transaction": st.column_config.NumberColumn(format="%d"),
+                "Score": st.column_config.NumberColumn(format="%.4f"),
+                "Day": st.column_config.NumberColumn(format="%d"),
+            },
+        )
