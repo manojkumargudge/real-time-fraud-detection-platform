@@ -11,3 +11,4 @@ resources:
   - api.yaml
   - consumer.yaml
   - drift-cronjob.yaml
+  - dashboard.yaml

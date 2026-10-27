@@ -24,7 +24,11 @@ st.title("Drift reports")
 
 reports = ui.load("list_drift_reports")
 if not reports:
-    st.caption("No drift reports yet (python -m src.monitoring.run_drift).")
+    st.info(
+        "No drift reports in this database yet. Docker Compose: python -m "
+        "src.monitoring.run_drift. Kubernetes: the drift CronJob runs every 6 hours, or once "
+        "now with kubectl -n fraud-k8s create job drift-manual --from=cronjob/drift."
+    )
     st.stop()
 
 table = pd.DataFrame(
@@ -55,7 +59,10 @@ st.write(
 st.write(f"**Retraining / promotion:** {report['promotion_decision'] or 'not run'}")
 path = ui.repo().report_file(report["report_path"])
 if path is None:
-    st.caption("The Evidently HTML report for this row is not in the mounted reports folder.")
+    st.caption(
+        "The Evidently HTML report for this row is not in this deployment's reports folder "
+        "(it was written by another environment, or removed); the row above is the result."
+    )
 else:
     with st.expander(f"Evidently report ({path.name})"):
         components.html(path.read_text(encoding="utf-8"), height=900, scrolling=True)

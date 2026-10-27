@@ -843,3 +843,12 @@ def test_overview_alerts_per_day_chart_starts_at_zero(fake: FakeRepository) -> N
     spec = json.loads(charts[0].proto.spec)
     assert spec["encoding"]["y"]["scale"] == {"zero": True, "domainMin": 0}
     assert "scored 2026-10-26 14:30 IST" in texts(at)
+
+
+def test_drift_page_explains_an_empty_drift_reports_table(fake: FakeRepository) -> None:
+    fake.list_drift_reports = lambda: []  # type: ignore[method-assign]
+    at = go_to(start(fake), "views/drift.py")
+    info = " ".join(str(i.value) for i in at.info)
+    assert "No drift reports in this database yet" in info
+    assert "create job drift-manual --from=cronjob/drift" in info
+    assert at.dataframe == []
