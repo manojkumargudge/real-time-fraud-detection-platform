@@ -405,6 +405,34 @@ def test_drift_page_finds_the_report_by_file_name(fake: FakeRepository) -> None:
     assert any("drift_test.html" in e.label for e in at.expander)
 
 
+def test_drift_table_shows_retrain_reason_and_inclusive_windows(fake: FakeRepository) -> None:
+    at = app(fake, "views/drift.py")
+    table = at.dataframe[0].value
+    assert "Triggered" not in table.columns
+    row = table.iloc[0]
+    assert row["Retrain"] == "forced"
+    assert row["Window (days, last day included)"] == "134-141"
+    assert any("Oct 24 development runs" in c.value for c in at.caption)
+
+
+@pytest.mark.parametrize(
+    ("triggered", "forced", "label"),
+    [(False, False, "no"), (True, False, "rule fired"), (True, True, "forced")],
+)
+def test_retrain_label(triggered: bool, forced: bool, label: str) -> None:
+    from src.dashboard import ui
+
+    assert ui.retrain_label({"triggered": triggered, "forced": forced}) == label
+
+
+def test_window_label_floors_the_stored_day_values() -> None:
+    from src.dashboard import ui
+
+    # stored [170.0 d, 183 d - 1 s] -> days 170 to 182 included
+    assert ui.window_label(170, (183 * 86_400 - 1) / 86_400) == "170-182"
+    assert ui.window_label(141, 144) == "141-144"
+
+
 def test_writes_need_an_analyst_name(fake: FakeRepository) -> None:
     at = app(fake, "views/case.py", alert_id=1)
     assert "Enter your analyst name" in texts(at)

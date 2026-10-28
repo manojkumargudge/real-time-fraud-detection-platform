@@ -41,7 +41,7 @@ threshold is unchanged. Each row also stores the top-5 list and the ones that dr
 **The matured-label window is the same in every run, by design.** The delayed-label PR-AUC
 uses labels in (cutoff - 7 days, cutoff], with cutoff = now - 30 days. "Now" is the latest
 scored transaction, not the run's current window, so with the full validation stream this is
-always days 146 to 153 (20,264 rows, 617 frauds), whatever window is checked for drift. It
+always days 146 to 152, last day included (20,264 rows, 617 frauds), whatever window is checked for drift. It
 answers "how is the model doing on the newest labels we are allowed to see", which does not
 depend on the drift window.
 
@@ -130,18 +130,18 @@ set DATABASE_URL=postgresql://fraud:<password>@localhost:15432/fraud
 ```
 
 **First demo (2026-10-24, real data, before the top-feature rule).** All runs used the full validation stream in
-`scored_transactions` (118,108 events, so now = day 183.0 and the label cutoff = day 153.0). The
+`scored_transactions` (118,108 events, so now = day 182.999 and the label cutoff = day 152.999). The
 config was unchanged between runs.
 
-- Windows: champion training = days 1.00 to 141.12; challenger training (planned) = days 1.00
-  to 146.00; holdout = (146.00, 153.00]; reference = days 111.1 to 141.1.
-- The delayed-label check is the same in every run: (146.0, 153.0], 20,264 rows, 617 frauds.
+- Windows (last day included): champion training = days 1-141 (to day 141.12); challenger
+  training (planned) = days 1-145; holdout = days 146-152; reference = days 111-141.
+- The delayed-label check is the same in every run: days 146-152, 20,264 rows, 617 frauds.
 
 | Run | Current window | Drifted features | Top drifted | PSI (score) | Delayed PR-AUC | Fired |
 |---|---|---|---|---|---|---|
-| 1 | days 141-145 (9,747 rows) | 5 / 28 = 0.179 | DeviceInfo, uid_txn_count_24h, uid_txn_count_7d | 0.0034 | 0.3238 | no |
-| 2 | days 170-183 (34,502 rows) | 8 / 28 = 0.286 | uid_txn_count_1h, uid_txn_count_24h, DeviceInfo | 0.0027 | 0.3238 | no |
-| 3, **synthetic** (TransactionAmt x2 on a copy of run 2's window) | days 170-183 | 11 / 28 = 0.393 | uid_txn_count_1h, uid_txn_count_24h, TransactionAmt, uid_amt_to_prior_mean | 0.0097 | 0.3238 | no |
+| 1 | days 141-144 (9,747 rows) | 5 / 28 = 0.179 | DeviceInfo, uid_txn_count_24h, uid_txn_count_7d | 0.0034 | 0.3238 | no |
+| 2 | days 170-182 (34,502 rows) | 8 / 28 = 0.286 | uid_txn_count_1h, uid_txn_count_24h, DeviceInfo | 0.0027 | 0.3238 | no |
+| 3, **synthetic** (TransactionAmt x2 on a copy of run 2's window) | days 170-182 | 11 / 28 = 0.393 | uid_txn_count_1h, uid_txn_count_24h, TransactionAmt, uid_amt_to_prior_mean | 0.0097 | 0.3238 | no |
 
 Thresholds: share > 0.5; PSI >= 0.2; PR-AUC < 0.2992 - 0.05 = 0.2492.
 
@@ -162,10 +162,10 @@ champion's top 5 features by gain are `card3`, `card6`, `R_emaildomain`, `addr2`
 
 | Run (drift_reports id) | Window | Share | PSI | Drifted top-5 features | Fired | Retrain / promotion |
 |---|---|---|---|---|---|---|
-| 1 (5) | days 141-145 | 0.179 | 0.0034 | card3 | **yes** (top-feature) | challenger v3, kept champion |
-| 2 (6) | days 170-183 | 0.286 | 0.0027 | R_emaildomain | **yes** (top-feature) | challenger v4, kept champion |
-| 3 (7), **synthetic** x2 | days 170-183 | 0.393 | 0.0097 | R_emaildomain | **yes** (top-feature) | challenger v5, kept champion |
-| 4 (9), `--force-retrain` | days 170-183 | 0.286 | 0.0027 | R_emaildomain | yes, `forced = true` | challenger v7, kept champion |
+| 1 (5) | days 141-144 | 0.179 | 0.0034 | card3 | **yes** (top-feature) | challenger v3, kept champion |
+| 2 (6) | days 170-182 | 0.286 | 0.0027 | R_emaildomain | **yes** (top-feature) | challenger v4, kept champion |
+| 3 (7), **synthetic** x2 | days 170-182 | 0.393 | 0.0097 | R_emaildomain | **yes** (top-feature) | challenger v5, kept champion |
+| 4 (9), `--force-retrain` | days 170-182 | 0.286 | 0.0027 | R_emaildomain | yes, `forced = true` | challenger v7, kept champion |
 
 What the second demo shows:
 
@@ -173,10 +173,11 @@ What the second demo shows:
   training.** In run 1 it fires on `card3` (Wasserstein 0.1041 vs threshold 0.1, just over the
   line), so it is noisier than the share rule. It does not fire on every window: in the
   2026-10-27 evidence run (on copies; docs/evidence/2026-10-27-drift-trigger/) the default
-  window, days 176-183, did not fire, and days 170-182, chosen after that, fired on
+  window, days 176-182, did not fire, and days 170-181, chosen after that, fired on
   `R_emaildomain` without `--force-retrain`. The rule is not calibrated on drift-free periods.
-- Windows in these tables are `[start day, end day)`: the end day is excluded, so days 170-183
-  covers 170.0 up to 183.0 (the end of the data), and 170-182 is one day shorter.
+- Windows in these tables give the first and the **last day included**: days 170-182 covers
+  170.0 up to the end of the data (182.999), and 170-181 is one day shorter. The CLI's
+  `--window-end-day` is exclusive (`--window-start-day 141 --window-end-day 145` = days 141-144).
 - **In the synthetic run it fired on real drift in `R_emaildomain`, not on the 2x
   TransactionAmt shift**, because TransactionAmt is not a top-5 feature. The rule does not
   catch the shift it was added for.
@@ -184,7 +185,7 @@ What the second demo shows:
   an open decision.
 
 **Promotion (identical in every run: same training data, same seed).** On the holdout
-(146.00, 153.00], 20,264 rows:
+days 146-152 (last day included), 20,264 rows:
 
 - challenger PR-AUC 0.3290 vs champion 0.3238;
 - paired day-block bootstrap of the difference (1,000 resamples): mean +0.0053, 95% CI
@@ -196,7 +197,7 @@ Each fired run registered a new challenger version (v3 to v7; `challenger` = v7)
 earlier `--force-retrain` run, stored as `forced = false` because the trigger also fired. The
 flag now means "the flag was given"; row 9 is the corrected run.
 
-**Velocity features (days 141-145): checked, no feature bug.**
+**Velocity features (days 141-144): checked, no feature bug.**
 
 - An independent naive recount of `uid_txn_count_1h` / `_24h` from the raw file matches the
   drift job on 1,000 of 1,000 sampled rows.

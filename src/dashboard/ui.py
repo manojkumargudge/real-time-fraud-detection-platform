@@ -62,11 +62,11 @@ COLUMN_LABELS = {
     "shared_devices": "Shared devices",
     "id": "Report",
     "run_at": "Run at (IST)",
-    "window_days": "Window (days)",
+    "window_days": "Window (days, last day included)",
     "drifted_share": "Drifted share",
     "top_drifted": "Top drifted features",
     "prediction_psi": "Prediction PSI",
-    "triggered": "Triggered",
+    "retrain": "Retrain",
     "retraining": "Retraining / promotion",
     "synthetic": "Synthetic",
     "alerts": "Alerts",
@@ -82,6 +82,24 @@ RINGS_NOT_RUN = (
     "Fraud ring detection has not run in this deployment (it is a batch job run on the host)."
 )
 NOT_AVAILABLE = "—"  # a ring or drift value from a batch job that has not run here
+DRIFT_RUNS_NOTE = (
+    "These are the Oct 24 development runs. The clean trigger evidence (default window did not "
+    "fire; days 170-181, last day included, fired without --force) is in "
+    "docs/evidence/2026-10-27-drift-trigger/."
+)
+
+
+def window_label(start_day: float, end_day: float) -> str:
+    """Drift windows are stored as closed intervals; ``*_day`` is the stored second / 86,400, so
+    the floor of each end is the first and the last day included."""
+    return f"{int(start_day // 1)}-{int(end_day // 1)}"
+
+
+def retrain_label(report: dict[str, Any]) -> str:
+    """Why retraining ran for a drift report, from the stored flags."""
+    if report["forced"]:
+        return "forced"
+    return "rule fired" if report["triggered"] else "no"
 
 
 def labelled(frame: Any) -> Any:

@@ -12,18 +12,19 @@ copies only:
 - **Untouched:** the demo database and the real `mlflow.db` (local only, not in repo); counts
   and hash were checked after the runs.
 
-Windows are `[start day, end day)` in transaction time: the end day is excluded
-(`src/monitoring/windows.py`, `day_window`). "Days 170–182" is 170.0 up to, not including,
-182.0.
+Day windows below give the first and the **last day included** (the stored windows are closed
+intervals in seconds, `src/monitoring/windows.py`). The CLI's `--window-end-day` is exclusive:
+`--window-start-day 170 --window-end-day 182` is days 170–181. Windows that start a few seconds
+before a day boundary (the default window, the holdout) are named by their whole days.
 
 ## In short
 
-- **The default window did NOT fire.** Days 176–183 (drift_reports row 10, 17,756 rows): no
+- **The default window did NOT fire.** Days 176–182 (drift_reports row 10, 17,756 rows): no
   feature among the champion's top 5 by gain drifted, and no other check fired.
-- **Days 170–182 were chosen AFTER that** and fired on R_emaildomain without
+- **Days 170–181 were chosen AFTER that** and fired on R_emaildomain without
   `--force-retrain` (row 11, 31,748 rows, `forced = false`). This is not an independent test
   of the trigger: the window was picked knowing that the overlapping window of row 6
-  (2026-10-24, days 170–183, 34,502 rows) had fired. It is **not the same window** as row 6:
+  (2026-10-24, days 170–182, 34,502 rows) had fired. It is **not the same window** as row 6:
   row 11 ends one day earlier.
 - **Challenger v8 lives only in the copy DB** (the copy of `mlflow.db`; MLflow run
   `f9bb4e91f6a64e4a84a153bb8b806321`, tags `git_commit 0d73adb`, `git_dirty=false`). The
@@ -36,7 +37,7 @@ Windows are `[start day, end day)` in transaction time: the end day is excluded
 
 `python -m src.monitoring.run_drift` → drift_reports **id 10** (in the copy):
 
-- Current window: days 176–183, the last 7 days up to now (`TransactionDT` 15,206,332..15,811,131,
+- Current window: days 176–182, the last 7 days up to now (`TransactionDT` 15,206,332..15,811,131,
   day 182.999), 17,756 rows.
 - 5 of 28 features drifted (share 0.179 ≤ 0.5). Prediction PSI 0.0027 (< 0.2).
 - Delayed-label PR-AUC 0.3238 (≥ 0.2992 − 0.05).
@@ -44,22 +45,22 @@ Windows are `[start day, end day)` in transaction time: the end day is excluded
   The drift is in DeviceInfo and the uid velocity features.
 - **`triggered = false`**, so no retraining.
 
-## Run 2: days 170–182, chosen after Run 1 did not fire, which fired
+## Run 2: days 170–181, chosen after Run 1 did not fire, which fired
 
 `python -m src.monitoring.run_drift --window-start-day 170 --window-end-day 182` (chosen after
-Run 1; one day shorter than row 6's days 170–183 from 2026-10-24) → **id 11**, `forced =
+Run 1; one day shorter than row 6's days 170–182 from 2026-10-24) → **id 11**, `forced =
 false`, `synthetic = false`. Stored window `TransactionDT` 14,688,000..15,724,799. The file
 names below call it the "fallback" window:
 
 - **Trigger:** "top-feature drift: R_emaildomain drifted (among the champion's top 5 features
   by gain)". Share 0.286; PSI 0.0025; delayed PR-AUC 0.3238.
 - **Challenger:**
-  - Trained on days 1–146 and registered as **v8** (alias `challenger`).
+  - Trained on days 1–145 and registered as **v8** (alias `challenger`).
   - MLflow run `f9bb4e91f6a64e4a84a153bb8b806321`, tags `git_commit 0d73adb…`,
     **`git_dirty false`**.
   - The reuse guard did not apply (v7 has no data tags), so a new challenger was trained.
 - **Promotion (paired day-block bootstrap, 1,000 resamples, unit = day, 8 days):**
-  - Holdout days 146–153: 20,264 rows, 617 frauds.
+  - Holdout days 146–152: 20,264 rows, 617 frauds.
   - Challenger PR-AUC 0.3290 vs champion 0.3238: delta +0.0053, 95% CI [−0.0160, +0.0254].
   - The lower bound −0.0160 is below the 0.01 margin, so **the champion was kept**.
 - **Aliases afterwards (copy):** champion = **v2**, production = **v2**, challenger = v8.
@@ -67,7 +68,7 @@ names below call it the "fallback" window:
 
 ## Caveats
 
-- The automatic default window did **not** fire. The fire came from the explicit 170–182
+- The automatic default window did **not** fire. The fire came from the explicit 170–181
   window, chosen after the default window did not fire.
 - The firing rule (top-5 gain features) was added on 2026-10-24 after the first runs did not
   fire. It has not been calibrated on drift-free periods, and there is no minimum sample size

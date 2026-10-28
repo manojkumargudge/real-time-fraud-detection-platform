@@ -36,11 +36,11 @@ table = pd.DataFrame(
         {
             "id": r["id"],
             "run_at": fmt.ist(r["run_at"]),
-            "window_days": f"{r['window_start_day']}-{r['window_end_day']}",
+            "window_days": ui.window_label(r["window_start_day"], r["window_end_day"]),
             "drifted_share": r["drifted_feature_share"],
             "top_drifted": feature_names(r["top_drifted_features"])[:80],
             "prediction_psi": r["prediction_drift_score"],
-            "triggered": r["triggered"],
+            "retrain": ui.retrain_label(r),
             "retraining": r["promotion_decision"] or "",
             "synthetic": r["synthetic"],
         }
@@ -48,6 +48,7 @@ table = pd.DataFrame(
     ]
 )
 st.dataframe(ui.labelled(table), hide_index=True)
+st.caption(ui.DRIFT_RUNS_NOTE)
 
 rid = st.selectbox("Report", [r["id"] for r in reports], index=len(reports) - 1)
 report = next(r for r in reports if r["id"] == rid)
