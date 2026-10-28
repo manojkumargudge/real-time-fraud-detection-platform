@@ -61,6 +61,21 @@ transaction, so it had no pre-stream history at all (0 of 710 cards).
 
 Redis uses an append-only file (volume `redisdata`), so the state survives restarts.
 
+## Training from the Feast offline store
+
+Champion v2 was trained on the pandas matrix (`build_model_frame(df, "baseline")`, split at
+`TransactionDT` 12,192,900). The Feast offline matrix (`src/features/feast_training.py`:
+`get_historical_features` on the state views per transaction and timestamp, then the on-demand
+view's function) is **proven identical** on the full file (2026-10-28,
+`python -m scripts.compare_feature_sources`): 472,432 / 472,432 training rows, same columns,
+order, dtypes and values (no difference), sha256 `66db4b971d3e…` both sides (validation
+118,108 rows `6ace174d268c…`; encoded float32 matrix `ecd953034817…`). v2's booster scores
+both validation matrices bit-identically (PR-AUC 0.299238, as in its metadata).
+**Training now defaults to Feast** (`python -m src.models.train --feature-source feast|pandas`).
+Cost: ~40 min for the Feast matrix vs ~2 s for pandas. Retrieval runs in time-ordered chunks of
+4,000 rows, because Feast's dask file store re-pickles the frames and slows down superlinearly.
+`tests/test_feast_training.py` checks small slices across chunk boundaries.
+
 ## Train/serve skew of the history (store) path
 
 The store path only knows events this service has ingested. When the stream starts after the
