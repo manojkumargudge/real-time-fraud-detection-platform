@@ -332,8 +332,11 @@ matters (files, numbers, running services) before relying on it.
   71c4f1bd820548c984341a06e51e33fc; model.json sha256 9fdad27ea3b0…, metadata.json sha256
   a65a6dfcb68b…; checked 2026-10-27). Serving does not read the registry at runtime; design for
   a link file + GET /model is in docs/next-steps/model-registry-link.md.
-- Champion v2 was trained from a dirty working tree (git_commit 7754fd4, git_dirty=true), so it
-  cannot be rebuilt exactly from the repo. Fix: refuse training runs when git is dirty.
+- Resolved 2026-10-28: champion v2 is tagged git_dirty=true (git_commit 7754fd4) but was rebuilt
+  byte for byte from a fresh clone of main (`python -m src.models.train --feature-source pandas
+  --imbalance none`): same model.json sha256 9fdad27ea3b0…, validation PR-AUC
+  0.29923830601075374, threshold 0.12806208431720734. The CLI default `--imbalance
+  scale_pos_weight` reproduces v1 exactly. Still open: a guard against dirty-tree training runs.
 
 ### Next (pick with the user; nothing is in progress)
 - Feedback-label retraining: retrain from analyst labels (`src.dashboard.data.latest_labels`,

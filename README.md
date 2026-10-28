@@ -186,8 +186,8 @@ Every requirement of the project brief, with its status, evidence and gap:
 - Retraining and promotion run on the host only; the Minikube CronJob runs drift checks only,
   and `production` is never moved automatically ([docs/monitoring.md](docs/monitoring.md)).
 - The drift trigger is not calibrated on drift-free periods and has no minimum sample size.
-- The served v2 was trained from an uncommitted working tree (`git_dirty=true`); a fresh clone of
-  main reproduced it byte for byte on 2026-10-28 (see Setup).
+- The served v2's MLflow run is tagged `git_dirty=true`, but it rebuilds identically: a fresh
+  clone of main reproduced it byte for byte on 2026-10-28 (same model.json sha256, see Setup).
 - The threshold is chosen on a training holdout and applied to the refit model, so the alert
   rate can drift.
 - IEEE-CIS has no account ID: "user" is a proxy (card + address), and the graph has no account
