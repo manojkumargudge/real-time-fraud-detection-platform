@@ -24,7 +24,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 | Device / location change | Yes | `card_{deviceinfo,devicetype,addr1,addr2}_changed` (`DEFAULT_CHANGE_COLUMNS`) | "User" is the proxy `uid` = card_id + addr1; IEEE-CIS has no account ID. |
 | Point-in-time / leakage | Yes | docs/audit_milestone2.md (18 checks); `tests/test_features.py` | |
 | Feast used at **serving** | Yes | The consumer and `POST /score` both call `Scorer.score_event` (`src/serving/scorer.py`), which with `FEATURE_SOURCE=feast` (the default, `src/serving/config.py`) calls `FeastFeatures.read` (`src/features/feast_store.py`) against the Redis online store at scoring time, then `push` after the save. | Feast stores per-entity **state**; the features are computed from it in Python (`entity_state.history_features`), and serving reads Redis through a private Feast API (`FeatureStore._get_provider()`). |
-| Feast used at **training** | Partial | Training does **not** read Feast: `src/models/compare.py` calls `compute_history_features` (pandas batch). Feast offline retrieval is tested equal to those batch features. | The brief asks for Feast in both training and serving; training uses the batch code path, with equality proven by tests instead. |
+| Feast used at **training** | Yes | `src/features/feast_training.py` builds the training matrix with `get_historical_features` from the Feast offline store (PR #12); the training CLI defaults to it (`python -m src.models.train --feature-source feast`). docs/feature_store.md "Training from the Feast offline store": proven identical to the pandas matrix v2 was trained on (472,432 training / 118,108 validation rows, three sha256 hashes equal on both sides). | Automatic retraining by the drift job uses the pandas path (`build_model_frame` in `src/monitoring/run_drift.py`), which is proven identical; Feast takes about 38 min vs 2 s. |
 | Train/serve parity tests | Yes | `tests/test_feast_store.py`: `test_point_in_time_retrieval_equals_batch_features`, `test_point_in_time_retrieval_equals_batch_on_real_cards`, `test_stream_replay_with_batch_cold_start` (Feast features == batch training features); `tests/test_integration.py::test_feast_redis_replay_matches_the_store_path` (real Redis); `tests/test_entity_state.py::test_in_order_replay_equals_batch`. The demo showed the old store path skews 96% of rows (PR-AUC 0.2992 -> 0.2533, README "Why Feast is the default"). | |
 
 ## Step 3: XGBoost, imbalance, PR-AUC, MLflow
@@ -63,7 +63,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 | Evidently drift reports | Yes | `src/monitoring/drift.py`, `run_drift.py`, `configs/drift.toml` (Evidently 0.7.23); rows in `drift_reports`, HTML in reports/drift/ (gitignored) | |
 | Retraining trigger + promotion gate | Yes | `src/monitoring/rules.py`, `retrain.py`; paired day-block bootstrap gate; `tests/test_monitoring.py` | |
 | Fired without `--force` | Yes | docs/evidence/2026-10-27-drift-trigger/ (PR #9, #10): row 10, default window days 176-183, **did not fire**; row 11, days 170-182 (chosen after that), fired on R_emaildomain, `forced = false`; challenger v8 (copy DB only), champion kept: delta +0.0053, CI [-0.0160, +0.0254] | The firing window was chosen after the default window did not fire. |
-| Automatic | Partial | The k8s CronJob runs every 6 h but with `--no-retrain` (docs/kubernetes.md "Drift CronJob") | Nothing schedules the full drift -> retrain -> promote loop; retraining runs only by hand on the host. |
+| Automatic | Partial | The trigger is automatic: when a rule fires, the job trains a challenger and runs the promotion gate with no manual step (row 11 fired and trained v8 without `--force-retrain`, `forced = false`, on a copy of mlflow.db; docs/evidence/2026-10-27-drift-trigger/). | What is manual is running the job (`python -m src.monitoring.run_drift`) on the host. The k8s CronJob (every 6 h) runs checks only (`--no-retrain`) because MLflow is a local SQLite file on the host (docs/kubernetes.md "Drift CronJob"). |
 | Known limitations | Yes | CLAUDE.md Known limitations: top-5-by-gain rule added after the first runs did not fire, not calibrated on drift-free periods, no minimum sample size (the k8s run fired on 30 rows) | |
 
 ## Step 7: dashboard and Kubernetes
@@ -103,19 +103,19 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 2. **README is stale and has no system architecture diagram**: "Planned" lists finished work,
    "Documentation will be added", Progress stops at Milestone 3, and the fresh-clone setup
    (incl. the Kaggle download) was never verified.
-3. **Feast is not used by training**: training uses batch pandas features (proven equal by
-   tests), while the brief asks for Feast in both training and serving.
-4. **Retraining is not automatic end to end**: the CronJob runs `--no-retrain`, retraining is
+3. **Retraining is not automatic end to end**: the CronJob runs `--no-retrain`, retraining is
    manual on the host, the trigger is uncalibrated (it fired only on a window chosen after the
    default did not), and analyst feedback labels are not used for retraining.
-5. **Not every run is in MLflow**: five evaluation modules (compare, robustness,
+4. **Not every run is in MLflow**: five evaluation modules (compare, robustness,
    evaluation_study, robust_eval, leakage_audit) write reports only; the champion v2 came from
    a dirty tree.
-6. **The graph is weaker than the brief implies**: no account node, `DeviceInfo` is a model
+5. **The graph is weaker than the brief implies**: no account node, `DeviceInfo` is a model
    string, the GNN loses to XGBoost (0.2021 vs 0.2992), and ring quality is measured per
    transaction only on tiny rings.
-7. **Stale supporting docs**: test-result files (2026-10-25), docs/serving.md diagram,
-   docs/dashboard.md "Not in Kubernetes yet".
-8. **No recorded demo**.
-9. **Imbalance method**: no SMOTE, and the served model uses no class weight (measured and
+6. **Stale supporting docs (fixed)**: the docs/serving.md diagram, docs/dashboard.md "Not in
+   Kubernetes yet" and other stale doc claims were fixed in PR #13; test results were
+   regenerated at 915ffdb (580 unit, 41 integration passed). README.md stale items remain
+   (gap 2).
+7. **No recorded demo**.
+8. **Imbalance method**: no SMOTE, and the served model uses no class weight (measured and
    documented, so minor).
