@@ -216,7 +216,8 @@ matters (files, numbers, running services) before relying on it.
     - Run 3, synthetic TransactionAmt x2: share 0.393, PSI 0.0097.
     - Delayed PR-AUC 0.3238 in all runs (days 146-153, 617 frauds).
     - Retraining and promotion never ran on the real registry.
-  - Second demo (ids 5-9, top-feature rule): every run fired.
+  - Second demo (ids 5-9, top-feature rule, 2026-10-24, the first demo's windows 141-145 and
+    170-183 again): all of these runs fired.
     - Run 1 fired on card3 (Wasserstein 0.1041); runs 2-4 fired on R_emaildomain. The synthetic
       2x TransactionAmt shift is still not what fires (TransactionAmt is not a top-5 feature).
     - Challenger vs champion on the holdout: 0.3290 vs 0.3238, CI [-0.0160, +0.0254], kept
@@ -224,6 +225,11 @@ matters (files, numbers, running services) before relying on it.
     - Registry then: challenger v3-v7, all identical. v3-v6 have since been deleted (see
       "Where things stand").
     - Row 8 = forced run stored before the `forced` fix; row 9 is the corrected one.
+  - Evidence run 2026-10-27 (copies only, docs/evidence/2026-10-27-drift-trigger/): the
+    default window (days 176-183, id 10) did NOT fire. Days 170-182, chosen after that, fired
+    on R_emaildomain without `--force-retrain` (id 11). Challenger v8 exists only in the
+    mlflow.db copy; champion kept (delta +0.0053, CI [-0.0160, +0.0254]). Real registry
+    unchanged.
   - Velocity features verified (naive recount and served scores match). The late-window drift
     is a heavy tail of bursty uids.
   - The two stray runs `challenger-4750731` were soft-deleted on 2026-10-24 (`delete_run`,
@@ -311,6 +317,10 @@ matters (files, numbers, running services) before relying on it.
   commit (librdkafka waits for the coordinator), so that path is unit-tested only.
 - Not production-ready: single-node Kafka (RF=1), no auth/TLS, local MLflow, drift job not
   scheduled.
+- Drift trigger: the top-5-by-gain rule was added on 2026-10-24 after the first runs did not
+  fire. It is not calibrated on drift-free periods, and there is no minimum sample size (the
+  2026-10-25 Kubernetes run fired on 30 rows). The default window did not fire on 2026-10-27
+  (docs/evidence/2026-10-27-drift-trigger/).
 - Dashboard: no authentication (self-declared analyst name), no connection pool (add
   psycopg-pool before scaling), single instance with a 15 s read cache (docs/dashboard.md).
 - Served model verified byte-identical to MLflow registry v2 (run
@@ -321,9 +331,10 @@ matters (files, numbers, running services) before relying on it.
   cannot be rebuilt exactly from the repo. Fix: refuse training runs when git is dirty.
 
 ### Next (pick with the user; nothing is in progress)
-- Retraining from analyst labels (`latest_labels`), planned 2026-10-27.
-- Link the served model to its MLflow registry version: write the version into the bundle
-  metadata at promotion and show it on the dashboard (see Known limitations).
+- Feedback-label retraining: retrain from analyst labels (`src.dashboard.data.latest_labels`,
+  latest labelled review per transaction). Not started.
+- Model registry link: proposal only, cut as code on 2026-10-27; see
+  docs/next-steps/model-registry-link.md (link file + GET /model; estimate 60-90 min).
 - Dashboard on Kubernetes (manifest), planned 2026-10-27.
 - Kubernetes beyond the local Minikube deployment (docs/kubernetes.md "Not production"):
   replication, Ingress/TLS, a secrets manager, an MLflow server for in-cluster retraining.
