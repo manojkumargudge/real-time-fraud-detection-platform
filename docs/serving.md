@@ -8,11 +8,22 @@ There is also a synchronous `POST /score` API. This is a working local demo, **n
 production deployment. See §6 for its limits.
 
 ```
-producer (replays IEEE-CIS) --> Kafka topic "transactions" --> consumer --+
-                                                                         +--> Scorer --> PostgreSQL
-client --> FastAPI POST /score ------------------------------------------+     |
-                                     (history read from PostgreSQL) <----------+
+producer (replays IEEE-CIS) --> Kafka "transactions" --> consumer --+
+                                                                    +--> Scorer.score_event
+client --> FastAPI POST /score -------------------------------------+         |
+                                                                              |
+  1. dedupe:   store.get(TransactionID)            PostgreSQL (duplicate -> stored result)
+  2. features: FeastFeatures.read(event)           Redis via Feast: uid_state + card_state
+               -> entity_state.history_features    (same function as training)
+  3. score:    XGBoost bundle (artifacts/baseline/, = MLflow v2)
+  4. save:     store.save(score + alert)           PostgreSQL
+  5. update:   FeastFeatures.push(event)           Redis via Feast (new entity state)
 ```
+
+`FEATURE_SOURCE=feast` is the default (`src/serving/config.py`). With `FEATURE_SOURCE=store`,
+step 2 instead reads the card's earlier events from PostgreSQL (`store.card_history`); that path
+is kept for comparison only (docs/feature_store.md, "Train/serve skew of the history (store)
+path").
 
 ## 1. Model (`src/models/train.py`)
 
@@ -32,9 +43,12 @@ keys only** (`card_id`/`uid`); D1 keys stay experimental. It writes these files 
 - the variant isn't `baseline`;
 - the feature list differs from what the current code produces.
 
-Measured on this machine: training took 35.8 s. The validation results match the Milestone 2
-seed-42 baseline: PR-AUC 0.2504, threshold 0.672, precision 0.264, recall 0.419, and 5.47% of
-validation transactions flagged.
+The served bundle is MLflow v2 (`baseline-9fdad27ea3b0`, `--imbalance none`, seed 42):
+validation PR-AUC 0.2992, threshold 0.1281, precision 0.3136, recall 0.3930, 4.31% of
+validation transactions flagged. (The first bundle, v1 with `scale_pos_weight`, had PR-AUC
+0.2504 and threshold 0.672; it is no longer served.) The CLI builds the history features from
+the Feast offline store by default (`--feature-source feast|pandas`, proven identical:
+docs/feature_store.md).
 
 ## 2. Event schema v1 (`src/serving/schema.py`)
 
@@ -75,15 +89,20 @@ consumer that meant a crash loop on one uncommitted message.
 Keying by card keeps each card's events in order within one partition. The key is derived only
 from card fields; no customer ID is invented.
 
-## 3. Online feature path (`src/serving/online_features.py`)
+## 3. Online feature path (`src/serving/scorer.py`, `src/features/feast_store.py`)
 
-For an event at time `t` on card `c`, the store returns `c`'s stored events with
-`TransactionDT < t`. The event and that history then go through
-**`compare.build_model_frame` — the same function used in training**.
+**Default (`FEATURE_SOURCE=feast`):** `Scorer.score_event` calls `FeastFeatures.read`, which
+reads the event's `uid_state` and `card_state` from Redis through Feast and computes the 12
+history features with `entity_state.history_features`, the same function training uses on the
+Feast offline state (docs/feature_store.md). The model row is the event's raw columns
+(`raw_model_columns`) plus those 12 values. After the save, `FeastFeatures.push` writes the
+updated states back.
 
-One query is enough: every `uid` is `card_id` plus `addr1`, so it is a sub-group of one card.
-Earlier events and the event's own ID are also filtered out a second time in Python, as a
-safeguard.
+**Comparison path (`FEATURE_SOURCE=store`, `src/serving/online_features.py`):** for an event
+at time `t` on card `c`, the store returns `c`'s stored events in PostgreSQL with
+`TransactionDT < t`, and the event plus that history go through `compare.build_model_frame`.
+One query is enough because every `uid` is `card_id` plus `addr1`. This path only knows
+ingested events, so it is skewed for cards with earlier history.
 
 What can be computed from what:
 
@@ -505,11 +524,12 @@ code).
 
 ## 7. Limitations
 
-- **Cold start:** history contains only events this system has ingested. Until earlier history
-  is replayed, online features differ from training, where the history spans the whole file.
-- **Late events:** an event that arrives after later events is missing from their history. The
-  store never returns future events (tested), but it cannot add an event to history that has
-  already been scored.
+- **Cold start:** the Feast state must be materialized from the batch history before the stream
+  starts (`feast_store materialize`, docs/feature_store.md "Cold start"); then online features
+  equal training. The `FEATURE_SOURCE=store` path only knows ingested events and stays skewed.
+- **Late events:** an event that arrives after later events is missing from their history.
+  Feast state updates for late events are approximate (docs/feature_store.md); the store path
+  never returns future events (tested) but cannot add an event to history already scored.
 - **Ordering:** ordering is guaranteed only within a card's partition. Events of one `uid` all
   share a card key, so they are ordered too.
 - **Throughput:**
