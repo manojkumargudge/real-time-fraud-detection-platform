@@ -59,15 +59,16 @@ if message is not None:
     kind, text = message
     (st.success if kind == "success" else st.error)(text)
 
-m = st.columns(5)
+# Three wide columns so the status label is never truncated; the record edit counter is not a
+# header metric (it is not the model), and the model version goes in full in the caption.
+m = st.columns(3)
 m[0].metric("Fraud score", f"{case['score']:.4f}")
 m[1].metric("Threshold", f"{case['threshold']:.4f}")
 m[2].metric("Status", ui.status_label(case["status"]))
-m[3].metric("Version", case["version"])
-m[4].metric("Model version", case["model_version"])
 st.caption(
-    f"Transaction {case['transaction_id']}, transaction day {case['transaction_day']}; alert "
-    f"created {fmt.ist(case['created_at'])}, updated {fmt.ist(case['updated_at'])}."
+    f"Case {case['alert_id']} - Transaction {case['transaction_id']}, day "
+    f"{case['transaction_day']}; model version {case['model_version']}; alert created "
+    f"{fmt.ist(case['created_at'])}, updated {fmt.ist(case['updated_at'])}."
 )
 
 left, right = st.columns([3, 2])
@@ -130,8 +131,9 @@ with right:
         )
         if form.version != case["version"]:
             st.warning(
-                f"This case changed since this form was opened (you had version {form.version}, "
-                f"it is now version {case['version']}). A save will be rejected: reload the case."
+                f"This case changed since this form was opened (you had record version "
+                f"{form.version}, it is now record version {case['version']}). A save will be "
+                "rejected: reload the case."
             )
             st.button(
                 "Reload the case",

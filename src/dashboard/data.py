@@ -74,7 +74,7 @@ class StaleAlertError(RuntimeError):
         when = f" at {fmt.ist(changed_at, seconds=True)}" if changed_at else ""
         super().__init__(
             f"This case changed since you loaded it: alert {alert_id} was changed{who}{when}; it "
-            f"is now {current_status} (version {current_version}, you had version "
+            f"is now {current_status} (record version {current_version}, you had record version "
             f"{expected_version}). Reload the case to see the change; nothing was saved."
         )
 

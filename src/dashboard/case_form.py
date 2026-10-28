@@ -126,7 +126,10 @@ def save(state: State, repo: Saver, token: str, analyst: str) -> tuple[str, str]
             result = ("error", str(exc))
         else:
             discard(state, token)
-            result = ("success", f"Saved: {seen.status} -> {to_status} (version {new_version}).")
+            result = (
+                "success",
+                f"Saved: {seen.status} -> {to_status} (record version {new_version}).",
+            )
     logger.log(
         logging.INFO if result[0] == "success" else logging.WARNING,
         "case save %s: alert=%s from=%s to=%s analyst=%r token=%s version=%s->%s%s",
