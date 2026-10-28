@@ -35,7 +35,9 @@ flowchart LR
 ```
 
 Full diagram, with what runs in Docker Compose, in Minikube and on the host only:
-[docs/architecture.md](docs/architecture.md).
+[docs/architecture.md](docs/architecture.md). API reference (`/health`, `/score`, OpenAPI spec):
+[docs/api.md](docs/api.md). Kafka messages, PostgreSQL tables and Feast objects:
+[docs/data.md](docs/data.md).
 
 ## Dashboard
 

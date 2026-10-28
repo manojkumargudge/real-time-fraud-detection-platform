@@ -120,6 +120,21 @@ The Job runs `python -m src.features.feast_store materialize --before validation
   - In-cluster retraining needs an MLflow tracking server with a shared artifact store
     (object storage) first.
 
+## What the cluster's data shows
+
+- **The cluster database is a 20-event replay**, not the demo database: the current deployment
+  (redeployed 2026-10-27 with the dashboard, PR #6) holds 20 `scored_transactions`, 1 alert
+  and 0 `case_reviews` (checked read-only on 2026-10-28).
+- **The drift CronJob checks only** (`--no-retrain`); retraining stays on the host.
+- **Evidence of an in-cluster drift run:** 2026-10-25, "Results" → "Full deployment" below: a
+  run created from the CronJob (`drift-manual`) wrote `drift_reports` row 1 (30 rows, share
+  0.893, `triggered = true`, retraining not run). That deployment's namespace was deleted
+  afterwards. The current deployment has no `drift_reports` table yet (the job creates it on
+  its first run; checked 2026-10-28), so the cluster's Drift page shows "No drift reports in
+  this database yet".
+- **The Drift page with real reports is shown from the Docker Compose demo database**
+  (`drift_reports` ids 1-9; screenshot [08-drift.png](screenshots/08-drift.png)).
+
 ## Prerequisites
 
 - Docker Desktop running (with WSL 2; the Docker VM had 10 GB via `%UserProfile%\.wslconfig`
