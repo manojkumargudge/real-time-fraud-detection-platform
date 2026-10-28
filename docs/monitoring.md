@@ -197,6 +197,10 @@ Each fired run registered a new challenger version (v3 to v7; `challenger` = v7)
 earlier `--force-retrain` run, stored as `forced = false` because the trigger also fired. The
 flag now means "the flag was given"; row 9 is the corrected run.
 
+Row 8 was a `--force-retrain` run recorded before the forced flag was fixed (a forced run whose
+rule also fired was stored as not forced), so its stored flag says not forced. Rows 5-9 ran on
+2026-10-24 before the trigger rule was committed and frozen (08b4b45, 16:50 IST).
+
 **Velocity features (days 141-144): checked, no feature bug.**
 
 - An independent naive recount of `uid_txn_count_1h` / `_24h` from the raw file matches the

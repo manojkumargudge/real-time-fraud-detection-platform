@@ -49,6 +49,7 @@ table = pd.DataFrame(
 )
 st.dataframe(ui.labelled(table), hide_index=True)
 st.caption(ui.DRIFT_RUNS_NOTE)
+st.caption(ui.DRIFT_ROW8_NOTE)
 
 rid = st.selectbox("Report", [r["id"] for r in reports], index=len(reports) - 1)
 report = next(r for r in reports if r["id"] == rid)
