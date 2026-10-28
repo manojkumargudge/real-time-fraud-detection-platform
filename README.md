@@ -412,9 +412,14 @@ champion's top 5 features by gain are `card3`, `card6`, `R_emaildomain`, `addr2`
 
 What the second demo shows:
 
-- **The new rule fires on every window, including run 1, which is close to training.** In run 1
-  it fires on `card3` (Wasserstein 0.1041 vs threshold 0.1, just over the line), so it is noisier than the share
-  rule.
+- **The new rule fired on all four of these runs, including run 1, which is close to
+  training.** In run 1 it fires on `card3` (Wasserstein 0.1041 vs threshold 0.1, just over the
+  line), so it is noisier than the share rule. It does not fire on every window: in the
+  2026-10-27 evidence run (on copies; docs/evidence/2026-10-27-drift-trigger/) the default
+  window, days 176-183, did not fire, and days 170-182, chosen after that, fired on
+  `R_emaildomain` without `--force-retrain`. The rule is not calibrated on drift-free periods.
+- Windows in these tables are `[start day, end day)`: the end day is excluded, so days 170-183
+  covers 170.0 up to 183.0 (the end of the data), and 170-182 is one day shorter.
 - **In the synthetic run it fired on real drift in `R_emaildomain`, not on the 2x
   TransactionAmt shift**, because TransactionAmt is not a top-5 feature. The rule does not
   catch the shift it was added for.

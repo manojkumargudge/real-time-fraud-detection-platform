@@ -171,8 +171,11 @@ matters (files, numbers, running services) before relying on it.
   `pip install -r requirements-gnn.txt`: **torch 2.8.0+cpu**, torch_geometric 2.8.1, pyg-lib
   0.4.0+pt28cpu. torch 2.10.0 was tried first but fails on Windows (WinError 1114 in
   `c10.dll`) whenever pandas is imported first, because pandas ships an older `msvcp140.dll`.
-  - Results (validation PR-AUC, seed 42): hubs dropped 0.1766, hubs kept 0.1730, vs XGBoost v2
-    0.2992. **The GNN loses**; not tuned.
+  - Official GNN-alone validation PR-AUC: **0.2021** (run c233ecd0, seed 42, reproduced from
+    clean main, scores bit-identical), vs XGBoost v2 0.2992. **The GNN loses**; not tuned.
+    0.1766 (hubs dropped) / 0.1730 (hubs kept) are early exploratory, not reproduced.
+  - Score blend with XGBoost (reports/gnn_blend.md): both variants worse on validation; not
+    served.
   - Stacking (GNN score as XGBoost feature, forward-chained over 3 time blocks): mean 0.2827 vs
     0.2935 over 3 seeds (-0.0108, spread 0.0115) -> **no gain**, not kept; served model unchanged.
   - card_id is a coarse proxy: 77 values cover 41.9% of training transactions.
@@ -183,7 +186,8 @@ matters (files, numbers, running services) before relying on it.
 - CI/CD (.github/workflows/ci.yml): lint + mypy strict + unit tests; integration job with
   PostgreSQL 16, Kafka 3.8.1 (KRaft), Redis 7.4.1 service containers; on push to `main`, image
   pushed to `ghcr.io/manojkumargudge/real-time-fraud-detection-platform` (`<sha>`, `latest`).
-  Nothing is deployed. Repo is public; `gh` is not logged in (watch runs via the public API).
+  Nothing is deployed. Repo is public; `gh` is logged in as manojkumargudge (checked
+  2026-10-28), so PRs and runs go through `gh pr` / `gh run`.
 - Security job (README "Security"): pip-audit (all requirements files; fails on any advisory not
   in `security/pip-audit-ignore.txt`, any severity), bandit `-ll` on `src/`, Trivy on the serving
   image (HIGH/CRITICAL with a fix, minus `.trivyignore`). Image push needs test + integration +
@@ -335,6 +339,8 @@ matters (files, numbers, running services) before relying on it.
   latest labelled review per transaction). Not started.
 - Model registry link: proposal only, cut as code on 2026-10-27; see
   docs/next-steps/model-registry-link.md (link file + GET /model; estimate 60-90 min).
+- GNN: an explicit `uid` (account) node type; today accounts appear only as card + addr1
+  nodes (docs/gnn.md). Not built.
 - Dashboard on Kubernetes (manifest), planned 2026-10-27.
 - Kubernetes beyond the local Minikube deployment (docs/kubernetes.md "Not production"):
   replication, Ingress/TLS, a secrets manager, an MLflow server for in-cluster retraining.
