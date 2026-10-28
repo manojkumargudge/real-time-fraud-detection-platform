@@ -377,8 +377,14 @@ def write_offline(
         pq.write_table(table, out_dir / f"{name}.parquet")
 
 
-def historical_features(store: Any, entity_df: pd.DataFrame, config: HistoryConfig) -> pd.DataFrame:
-    """Point-in-time features for every row of ``entity_df`` (needs a ``TransactionID`` column).
+def historical_features(
+    store: Any,
+    entity_df: pd.DataFrame,
+    config: HistoryConfig,
+    features: list[str] | None = None,
+) -> pd.DataFrame:
+    """Point-in-time features for every row of ``entity_df`` (needs a ``TransactionID`` column);
+    ``features`` defaults to ``feature_refs(config)``.
 
     Feast returns one row per (join keys, timestamp), so rows that share keys and timestamp --
     same-timestamp events of one uid -- would collapse into one. They are split into separate
@@ -391,7 +397,9 @@ def historical_features(store: Any, entity_df: pd.DataFrame, config: HistoryConf
     parts = []
     for r in sorted(rank.unique()):
         part = entity_df[rank == r]
-        got = store.get_historical_features(entity_df=part, features=feature_refs(config)).to_df()
+        got = store.get_historical_features(
+            entity_df=part, features=features or feature_refs(config)
+        ).to_df()
         if len(got) != len(part):
             raise AssertionError(f"Feast returned {len(got)} rows for {len(part)} entity rows")
         parts.append(got)

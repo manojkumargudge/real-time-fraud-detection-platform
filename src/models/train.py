@@ -1,6 +1,7 @@
 """Train and save the baseline serving model (card_id / uid keys; D1 keys stay experimental).
 
-Usage: ``python -m src.models.train [--seed N] [--imbalance none] [--register] [--no-track]``
+Usage: ``python -m src.models.train [--seed N] [--imbalance none] [--feature-source pandas|feast]
+[--register] [--no-track]``
 writes to ``artifacts/baseline/`` (gitignored):
 
 * ``model.json``    -- XGBoost booster
@@ -36,6 +37,7 @@ import xgboost as xgb
 
 from src.array_types import FloatArray, IntArray
 from src.data.load import DEFAULT_RAW_DIR, LABEL, load_ieee_cis
+from src.features.feast_training import FEATURE_SOURCES, feast_model_frame
 from src.features.history import TIME, HistoryConfig
 from src.features.split import chronological_split
 from src.models.compare import (
@@ -56,6 +58,10 @@ ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "artifacts" / "baseline"
 MODEL_FILE = "model.json"
 METADATA_FILE = "metadata.json"
 SCHEMA_VERSION = 1
+# CLI default: the Feast offline matrix is proven identical to the pandas one v2 was trained on
+# (scripts/compare_feature_sources.py, docs/feature_store.md). Library calls default to pandas,
+# which builds the same frame in seconds instead of ~40 minutes.
+DEFAULT_FEATURE_SOURCE = "feast"
 
 
 @dataclass(frozen=True)
@@ -77,10 +83,26 @@ def train_baseline(
     return run.trained, run.metadata
 
 
-def fit_baseline(df: pd.DataFrame, cfg: ComparisonConfig | None = None) -> BaselineRun:
+def model_frame(df: pd.DataFrame, feature_source: str = "pandas") -> pd.DataFrame:
+    """Baseline model frame; ``feast`` reads the history features from the Feast offline store
+    (same frame, scripts/compare_feature_sources.py)."""
+    if feature_source == "pandas":
+        return build_model_frame(df, "baseline", HistoryConfig())
+    if feature_source == "feast":
+        return feast_model_frame(df, HistoryConfig())
+    raise ValueError(
+        f"unknown feature source {feature_source!r}; expected one of {FEATURE_SOURCES}"
+    )
+
+
+def fit_baseline(
+    df: pd.DataFrame,
+    cfg: ComparisonConfig | None = None,
+    feature_source: str = "pandas",
+) -> BaselineRun:
     cfg = cfg or ComparisonConfig()
     started = time.perf_counter()
-    frame = build_model_frame(df, "baseline", HistoryConfig())
+    frame = model_frame(df, feature_source)
     train, valid, boundary = chronological_split(frame, valid_fraction=cfg.valid_fraction)
     split = {"train_end": boundary.train_end, "valid_start": boundary.valid_start}
     return fit_on_split(train, valid, cfg, split, started=started)
@@ -157,12 +179,13 @@ def main(
     *,
     track: bool = False,
     register: bool = False,
+    feature_source: str = DEFAULT_FEATURE_SOURCE,
 ) -> dict[str, Any]:
     """Train and save the bundle; with ``track``, also log the run to MLflow (``register``
     additionally registers it and points the ``champion`` alias at it)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     df = load_ieee_cis(raw_dir, usecols=[])
-    run = fit_baseline(df, cfg)
+    run = fit_baseline(df, cfg, feature_source)
     save_bundle(run.trained, run.metadata, out_dir)
     saved: dict[str, Any] = json.loads((out_dir / METADATA_FILE).read_text(encoding="utf-8"))
     if track or register:
@@ -182,6 +205,12 @@ def _cli(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--imbalance", choices=IMBALANCE_METHODS, default=ComparisonConfig.imbalance
     )
+    parser.add_argument(
+        "--feature-source",
+        choices=FEATURE_SOURCES,
+        default=DEFAULT_FEATURE_SOURCE,
+        help="history features from pandas (batch) or the Feast offline store",
+    )
     parser.add_argument("--no-track", action="store_true", help="skip MLflow logging")
     parser.add_argument(
         "--register", action="store_true", help="register the run and move the champion alias"
@@ -192,6 +221,7 @@ def _cli(argv: list[str] | None = None) -> None:
         cfg=ComparisonConfig(seed=args.seed, imbalance=args.imbalance),
         track=not args.no_track,
         register=args.register,
+        feature_source=args.feature_source,
     )
 
 
