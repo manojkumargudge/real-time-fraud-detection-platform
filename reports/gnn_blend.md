@@ -55,3 +55,18 @@
 - One GNN seed (42) and one XGBoost seed (42); the stacking report shows a seed spread of about 0.01 PR-AUC for XGBoost alone.
 
 Runtime 21 min.
+
+## Notes (written by hand on 2026-10-28, after the run; not generated)
+
+- **How w was chosen:** `w` was chosen on the last training block only. Validation was looked
+  at once per variant, at the chosen `w`, and at no other weight.
+- **Rule flaw:** "largest `w` within the margin" does not pick the best `w`. For the entity
+  variant it picked 0.45, while the best selection AP was at w = 0.20 (0.2582), and at 0.45 the
+  selection delta was already negative (-0.0030). For the transaction variant it picked 0.50,
+  while the selection AP peaked at w = 0.30 (0.2679).
+- **No carry-over:** the transaction variant's selection-block gain (+0.0088 at w = 0.50, CI
+  [+0.0003, +0.0169]) came from models trained on two thirds of the training window. It did not
+  carry over to the full-data XGBoost: on validation the blend is 0.0241 worse.
+- **Decision:** the blend is not served; the served model stays XGBoost v2. No other weights
+  will be evaluated on validation, because picking a weight after seeing validation would turn
+  validation into a tuning set.
