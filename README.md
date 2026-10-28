@@ -37,6 +37,22 @@ flowchart LR
 Full diagram, with what runs in Docker Compose, in Minikube and on the host only:
 [docs/architecture.md](docs/architecture.md).
 
+## Dashboard
+
+Streamlit analyst dashboard on the demo database (2026-10-28; details in
+[docs/dashboard.md](docs/dashboard.md)):
+
+| Overview | Alert queue |
+|---|---|
+| ![Overview](docs/screenshots/01-overview.png) | ![Alert queue](docs/screenshots/02-alert-queue.png) |
+| **Case 1502** | **Drift reports** |
+| ![Case 1502](docs/screenshots/03-case-1502-top.png) | ![Drift reports](docs/screenshots/08-drift.png) |
+
+More: [case 1502 customer and review history](docs/screenshots/04-case-1502-customer-history.png),
+[case 4705 review history](docs/screenshots/05-case-4705-history.png),
+[fraud rings](docs/screenshots/06-fraud-rings-table.png),
+[ring #5](docs/screenshots/07-fraud-ring-5.png).
+
 ## Quickstart (Docker Compose)
 
 Needs Docker Desktop, Python 3.11, the dataset (see the next section) and a model bundle in
@@ -125,8 +141,10 @@ Every requirement of the project brief, with its status, evidence and gap:
   rate can drift.
 - IEEE-CIS has no account ID: "user" is a proxy (card + address), and the graph has no account
   node.
-- Fraud rings: a missing addr1 becomes part of the uid (as `<NA>`), so a card's transactions
-  with no address are grouped as one customer (e.g. ring #1, both of whose uids end in `|<NA>`).
+- Fraud rings: a missing addr1 becomes part of the uid (as `<NA>`), so all of a card's
+  transactions without an address count as one customer. This affects most of the stored rings:
+  of the top 20, 16 contain at least one such uid and 9 consist only of them (45 of 73 members,
+  62%), so ring membership partly reflects missing addresses rather than distinct customers.
 - Feast: late events are approximate, concurrent writes to one entity can lose an update, and
   a failed push is only logged ([docs/feature_store.md](docs/feature_store.md)).
 - Dashboard: no authentication, no connection pool, one replica.
@@ -138,6 +156,7 @@ Every requirement of the project brief, with its status, evidence and gap:
 - Model registry link: a link file plus `GET /model` so serving reports its MLflow version
   ([docs/next-steps/model-registry-link.md](docs/next-steps/model-registry-link.md)).
 - An explicit account (`uid`) node in the GNN graph.
+- Exclude uids with missing addr1 from ring linking.
 - An MLflow server with a shared artifact store, so retraining can run in the cluster.
 - Rank drift features by their impact on the score instead of by gain.
 
