@@ -5,19 +5,23 @@
 Scores card transactions for fraud as they stream through Kafka, using an XGBoost model with
 leakage-safe history features served from Feast. Alerts go to PostgreSQL, where analysts review
 them in a Streamlit dashboard. A batch GNN looks for fraud rings, and an Evidently drift job can
-trigger retraining. It runs as a local demo on Docker Compose and Minikube; it is **not** a
-production system.
+trigger retraining. It uses production-style engineering (CI, tests, security scanning, retries
+and a dead-letter queue, Kubernetes) but runs as a local demo on Docker Compose and Minikube; it
+is not deployed to real traffic.
 
 ## Results
 
 | What | Result | Source |
 |---|---|---|
-| Served model | XGBoost v2 (`baseline-9fdad27ea3b0`), validation PR-AUC **0.2992** | [reports/model_v1_vs_v2.md](reports/model_v1_vs_v2.md) |
+| Served model | XGBoost v2 (`baseline-9fdad27ea3b0`), validation PR-AUC **0.2992**, against **0.0344** for a random model (PR-AUC of random scores = the validation fraud rate, 3.44%) | [reports/model_v1_vs_v2.md](reports/model_v1_vs_v2.md) |
 | Alerts at threshold 0.12806208 | precision **0.3136**, recall **0.3930**, 4.31% of transactions alerted | [reports/model_v1_vs_v2.md](reports/model_v1_vs_v2.md) |
 | Fraud rate (IEEE-CIS) | ~3.5% (3.499%) | [reports/eda_summary.md](reports/eda_summary.md) |
 | GNN alone | validation PR-AUC 0.2021 (loses to XGBoost) | [reports/gnn_stacking.md](reports/gnn_stacking.md) |
 | GNN + XGBoost blend | worse than XGBoost for both variants (95% CI [-0.0346, -0.0137] and [-0.0263, -0.0118]); not served | [reports/gnn_blend.md](reports/gnn_blend.md) |
 | Throughput | **46.83 events/s** on 3 consumers, scorer p50 **48 ms** | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
+| Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
+| Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
+| Fraud rings | GNN-ranked top-20 rings: 19.83% labelled fraud per transaction vs 3.50% overall. Small sample; most members are missing-address uids, see Known limitations | [reports/fraud_rings.md](reports/fraud_rings.md) |
 | Tests | 580 unit + 41 integration passed (2026-10-28) | [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) |
 
 More results and experiments (class imbalance, alert budgets, train/serve skew, demo stream,
@@ -81,6 +85,9 @@ dashboard: [docs/dashboard.md](docs/dashboard.md).
 
 > **Not yet verified on a clean machine.**
 
+Commands are Windows `cmd`; on macOS/Linux use `.venv/bin/python` for `.venv\Scripts\python`
+and `export NAME=value` for `set NAME=value`.
+
 ```
 git clone https://github.com/manojkumargudge/real-time-fraud-detection-platform.git
 cd real-time-fraud-detection-platform
@@ -92,11 +99,16 @@ python -m venv .venv
    from https://www.kaggle.com/c/ieee-fraud-detection/data and put `train_transaction.csv` and
    `train_identity.csv` in `data/raw/ieee-cis/` ([data/README.md](data/README.md)). Check with
    `.venv\Scripts\python -m src.data.load`.
-2. Model bundle: `.venv\Scripts\python -m src.models.train` writes `artifacts/baseline/` and logs
-   the run to a local `mlflow.db`. The CLI builds features from the Feast offline store;
-   `--feature-source pandas` builds the identical matrix much faster
-   ([docs/feature_store.md](docs/feature_store.md)). A fresh run is not byte-identical to the
-   served v2, which was trained from an uncommitted working tree.
+2. Model bundle: `.venv\Scripts\python -m src.models.train --feature-source pandas` writes
+   `artifacts/baseline/` and logs the run to a local `mlflow.db`. For a first setup use
+   `--feature-source pandas`: it builds the identical matrix in about 2 s instead of about 38 min
+   ([docs/feature_store.md](docs/feature_store.md)). The default (`feast`) needs nothing more
+   than the dataset and the installed requirements: the command builds the Feast offline store
+   itself, in a temporary folder, from the raw data (no Redis and no `materialize` step; that
+   step is only for serving). A fresh run is not byte-identical to the served v2, which was
+   trained from an uncommitted working tree.
+   - MLflow UI: `.venv\Scripts\mlflow ui --backend-store-uri sqlite:///mlflow.db` (repo root),
+     then http://127.0.0.1:5000. Run artifacts are in `mlruns/`.
 3. Unit tests (no services needed): `.venv\Scripts\python -m pytest --ignore=tests/test_integration.py`.
 4. Integration tests use a separate Compose project that never touches the demo stack:
    ```
@@ -119,7 +131,7 @@ small replay, not the full demo database. Build, deploy and verify steps, and re
 
 ```
 minikube start --driver=docker --cpus=4 --memory=4g
-k8s/build-image.sh
+k8s/build-image.sh                 # a bash script: use Git Bash on Windows
 kubectl apply -k k8s
 ```
 
