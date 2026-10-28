@@ -4,9 +4,8 @@ Read-only audit of `main` 5be7ddf against the project brief. Nothing was run or 
 this file. Status: **Yes** = done and evidenced; **Partial** = done with a material deviation or
 missing piece; **No** = not done. Every gap is stated in one sentence.
 
-CI on `main`: runs #30, #32, #34 green (lint + mypy strict + unit, integration with PostgreSQL /
-Kafka / Redis, security scans, image push). Run #36 (5be7ddf, docs only) was still queued at the
-time of writing.
+CI on `main`: runs #30, #32, #34 and #36 (5be7ddf) green (lint + mypy strict + unit, integration
+with PostgreSQL / Kafka / Redis, security scans, image push).
 
 ## Step 1: dataset, EDA, class imbalance
 
@@ -94,7 +93,7 @@ time of writing.
 | README + setup | Partial | README "Setup (Windows, Python 3.11)"; Kaggle download steps in data/README.md | Fresh-clone setup incl. the Kaggle download is **Not verified** (never tested in a clean folder); README "Planned" still lists the finished GNN, drift and dashboard, "Progress" stops at Milestone 3, and "Documentation" says docs "will be added". |
 | Architecture diagram | Partial | ASCII diagrams in docs/serving.md and docs/kubernetes.md | No system-wide diagram, and the docs/serving.md diagram still shows history read from PostgreSQL (Feast is the default). |
 | API / data docs | Yes | docs/serving.md (`/health`, `/score`), docs/features.md, docs/feature_store.md, data/README.md, docs/dashboard.md (schema) | |
-| Test results + numbers | Partial | docs/test-results-unit.txt (495 passed with the GNN stack), docs/test-results-integration.txt (17 passed), CI #30-#34 green; model, latency and throughput numbers above | The recorded test-result files date from 2026-10-25 and predate the dashboard, k8s dashboard and GNN blend; docs/dashboard.md still says "Not in Kubernetes yet". |
+| Test results + numbers | Partial | docs/test-results-unit.txt (495 passed with the GNN stack), docs/test-results-integration.txt (17 passed), CI #30-#36 green; model, latency and throughput numbers above | The recorded test-result files date from 2026-10-25 and predate the dashboard, k8s dashboard and GNN blend; docs/dashboard.md still says "Not in Kubernetes yet". |
 | Presentation | No | None found in the repo | No slides or presentation exist. |
 | Reflection | No | README "How this project was built" covers ownership and AI assistance only | No reflection on decisions, results and lessons. |
 
