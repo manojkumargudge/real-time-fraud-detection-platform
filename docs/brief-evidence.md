@@ -100,9 +100,10 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 ## Top gaps (ordered by how badly an evaluator would judge them)
 
 1. **No presentation and no reflection**: two named deliverables are missing.
-2. **README is stale and has no system architecture diagram**: "Planned" lists finished work,
-   "Documentation will be added", Progress stops at Milestone 3, and the fresh-clone setup
-   (incl. the Kaggle download) was never verified.
+2. **Fresh-clone setup not yet verified**: the README was rewritten (PR #14) with results, a
+   system architecture diagram (docs/architecture.md) and dashboard screenshots
+   (docs/screenshots/, PR #18). The only open part is the fresh-clone setup incl. the Kaggle
+   download, which has not been tested on a clean machine (scheduled for 2026-10-29).
 3. **Running the retraining job is manual**: the trigger itself is automatic (row 11 fired and
    trained v8 without `--force-retrain`), but the job that can retrain is started by hand on the
    host, and the k8s CronJob runs checks only (`--no-retrain`) because MLflow is a local SQLite
