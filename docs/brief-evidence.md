@@ -25,7 +25,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 | Point-in-time / leakage | Yes | docs/audit_milestone2.md (18 checks); `tests/test_features.py` | |
 | Feast used at **serving** | Yes | The consumer and `POST /score` both call `Scorer.score_event` (`src/serving/scorer.py`), which with `FEATURE_SOURCE=feast` (the default, `src/serving/config.py`) calls `FeastFeatures.read` (`src/features/feast_store.py`) against the Redis online store at scoring time, then `push` after the save. | Feast stores per-entity **state**; the features are computed from it in Python (`entity_state.history_features`), and serving reads Redis through a private Feast API (`FeatureStore._get_provider()`). |
 | Feast used at **training** | Yes | `src/features/feast_training.py` builds the training matrix with `get_historical_features` from the Feast offline store (PR #12); the training CLI defaults to it (`python -m src.models.train --feature-source feast`). docs/feature_store.md "Training from the Feast offline store": proven identical to the pandas matrix v2 was trained on (472,432 training / 118,108 validation rows, three sha256 hashes equal on both sides). | Automatic retraining by the drift job uses the pandas path (`build_model_frame` in `src/monitoring/run_drift.py`), which is proven identical; Feast takes about 38 min vs 2 s. |
-| Train/serve parity tests | Yes | `tests/test_feast_store.py`: `test_point_in_time_retrieval_equals_batch_features`, `test_point_in_time_retrieval_equals_batch_on_real_cards`, `test_stream_replay_with_batch_cold_start` (Feast features == batch training features); `tests/test_integration.py::test_feast_redis_replay_matches_the_store_path` (real Redis); `tests/test_entity_state.py::test_in_order_replay_equals_batch`. The demo showed the old store path skews 96% of rows (PR-AUC 0.2992 -> 0.2533, README "Why Feast is the default"). | |
+| Train/serve parity tests | Yes | `tests/test_feast_store.py`: `test_point_in_time_retrieval_equals_batch_features`, `test_point_in_time_retrieval_equals_batch_on_real_cards`, `test_stream_replay_with_batch_cold_start` (Feast features == batch training features); `tests/test_integration.py::test_feast_redis_replay_matches_the_store_path` (real Redis); `tests/test_entity_state.py::test_in_order_replay_equals_batch`. The demo showed the old store path skews 96% of rows (PR-AUC 0.2992 -> 0.2533, docs/results.md "Why Feast is the default"). | |
 
 ## Step 3: XGBoost, imbalance, PR-AUC, MLflow
 
@@ -43,7 +43,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 |---|---|---|---|
 | Graph of accounts, devices, cards | Partial | `src/graph/build.py` `ENTITY_COLUMNS`. GNN graph nodes: `tx`, `card` (card1-card6), `device` (`DeviceInfo`), `p_email`, `r_email`, `addr1`. **No uid / account node.** docs/gnn.md "Graph design". | Accounts appear only as card + addr1 nodes, and `DeviceInfo` is a device model / OS string (`Windows`, `iOS Device`), not a device ID. |
 | GNN (PyG) | Yes | Hetero GraphSAGE with temporal sampling (`src/graph/model.py`, `data.py`, `train.py`); official validation PR-AUC **0.2021** (MLflow run c233ecd0, reproduced, scores bit-identical) vs XGBoost 0.2992; leakage tests in `tests/test_graph.py` | It loses to XGBoost by about 0.10 PR-AUC; not tuned. |
-| Fraud rings | Yes | `src/graph/rings.py` `ring_components`: union-find connected components of the bipartite **uid - DeviceInfo** graph; devices shared by 2-10 uids only, hub uids (> 3 devices or > 1,000 tx) excluded; card_id never a link. `summarize_rings`, `write_table` -> table `fraud_rings`. **The GNN ranks rings (mean score), it does not build them.** reports/fraud_rings.md: 337 rings, 1,378 users. | Rings rest on a weak link (device model strings) and hand-picked limits. |
+| Fraud rings | Yes | `src/graph/rings.py` `ring_components`: union-find connected components of the bipartite **uid - DeviceInfo** graph; devices shared by 2-10 uids only, hub uids (> 3 devices or > 1,000 tx) excluded; card_id never a link. `summarize_rings`, `write_table` -> table `fraud_rings`. **The GNN ranks rings (mean score), it does not build them.** reports/fraud_rings.md: 337 rings, 1,378 users. | Rings rest on a weak link (device model strings) and hand-picked limits. A missing addr1 becomes part of the uid (`<NA>`), so a card's transactions without an address count as one customer: of the top 20 rings in `fraud_rings`, 16 contain such a uid and 9 consist only of them (45 of 73 members). |
 | Ring quality vs base rate | Partial | Measured: `summarize_rings` `fraud_rate` = labelled fraud rate of the ring's transactions. reports/fraud_rings.md: **top-20 ranked rings 19.83%, all rings 4.06%, overall 3.50%.** | Measured per transaction only, not per ring member (uid); the top rings are 2-3 users, so the evidence is weak. |
 | GNN as XGBoost feature | Yes (measured, not kept) | reports/gnn_stacking.md: mean 0.2827 vs 0.2935 over 3 seeds (-0.0108) | |
 | Blend | Yes (measured, not served) | `src/graph/blend.py`; reports/gnn_blend.md; PR #8. transaction w=0.50: AP 0.2749 vs 0.2992, CI [-0.0346, -0.0137]; entity w=0.45: 0.2797 vs 0.2992, CI [-0.0263, -0.0118]. Both worse; not served. | |
@@ -54,7 +54,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 |---|---|---|---|
 | Kafka producer replay | Yes | `src/streaming/producer.py` (validation-period only, time order enforced, labels and D1 never sent); 118,108 events streamed in the demo | |
 | Consumer fetches features, returns a score | Yes | `src/streaming/consumer.py` -> `processor.process_message` -> `Scorer.score_event` (Feast read, XGBoost, PostgreSQL write, Feast push); DLQ, retry, commit-after-write (`tests/test_streaming_reliability.py`, chaos script `scripts/chaos_kafka_restart.py`) | The consumer is a Kafka consumer, not a FastAPI service; FastAPI serves the same scorer synchronously at `POST /score` (`src/serving/api.py`). |
-| Performance | Yes | 46.8 events/s on 3 consumers, scorer p50 48 ms (README "Consumer throughput"); Feast features+score p50/p95 107.5 / 179.0 ms | Local single-node numbers only. |
+| Performance | Yes | 46.8 events/s on 3 consumers, scorer p50 48 ms (docs/results.md "Consumer throughput"); Feast features+score p50/p95 107.5 / 179.0 ms | Local single-node numbers only. |
 
 ## Step 6: drift and retraining
 
@@ -70,7 +70,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 
 | Item | Status | Evidence | Gap |
 |---|---|---|---|
-| Streamlit dashboard: alerts, case status | Yes | `src/dashboard/` (Overview, Alert queue, Case detail, Fraud rings, Drift); workflow `workflow.py`, optimistic locking; `tests/test_dashboard.py` drives the real user path; docs/dashboard.md | No authentication (self-declared analyst name). |
+| Streamlit dashboard: alerts, case status | Yes | `src/dashboard/` (Overview, Alert queue, Case detail, Fraud rings, Drift); workflow `workflow.py`, optimistic locking; `tests/test_dashboard.py` drives the real user path; docs/dashboard.md; screenshots of every page in [docs/screenshots/](screenshots/) (01-overview to 08-drift, demo database, 2026-10-28) | No authentication (self-declared analyst name). |
 | Feedback labels | Partial | Append-only `case_reviews`; `src.dashboard.data.latest_labels` returns the latest label per transaction | Labels are captured but never used: feedback-label retraining is not built (CLAUDE.md "Next"). |
 | Kubernetes (Minikube) | Yes | `k8s/` (kustomization), docs/kubernetes.md "Results" (2026-10-25: 30 events, scores identical to host batch, liveness restart verified) | Not production: single replicas, no Ingress/TLS, no secrets manager. |
 
@@ -88,12 +88,12 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 
 | Item | Status | Evidence | Gap |
 |---|---|---|---|
-| Demo | Partial | Docker Compose demo stack with recorded counts (README "Demo"; 118,108 / 5,093); k8s run in docs/kubernetes.md | There is no recorded demo or step-by-step demo script. |
+| Demo | Partial | Docker Compose demo stack with recorded counts (docs/results.md "Demo: unseen validation data"; 118,108 / 5,093); k8s run in docs/kubernetes.md | There is no recorded demo or step-by-step demo script. |
 | Clean commits | Yes | `git log --oneline main \| grep -i wip`: 0 hits; PRs #3-#10 with CI | One commit message on main says "notes to follow" (0e7db49; the notes followed in dc7eed6); a local, unpushed branch `security-wip-304ae06` remains. |
-| README + setup | Partial | README "Setup (Windows, Python 3.11)"; Kaggle download steps in data/README.md | Fresh-clone setup incl. the Kaggle download is **Not verified** (never tested in a clean folder); README "Planned" still lists the finished GNN, drift and dashboard, "Progress" stops at Milestone 3, and "Documentation" says docs "will be added". |
-| Architecture diagram | Partial | ASCII diagrams in docs/serving.md and docs/kubernetes.md | No system-wide diagram, and the docs/serving.md diagram still shows history read from PostgreSQL (Feast is the default). |
+| README + setup | Partial | README rewritten (PR #14): results, architecture, quickstart, README "Setup from a fresh clone" incl. the Kaggle download (data/README.md), Minikube, limitations, next steps | Fresh-clone setup incl. the Kaggle download is **Not verified** (never tested in a clean folder; marked so in the README). |
+| Architecture diagram | Yes | System-wide Mermaid diagram with what runs in Compose, Minikube and on the host only: [docs/architecture.md](architecture.md) (PR #14). The docs/serving.md diagram now shows `Scorer.score_event -> FeastFeatures.read` (fixed in PR #13). | |
 | API / data docs | Yes | docs/serving.md (`/health`, `/score`), docs/features.md, docs/feature_store.md, data/README.md, docs/dashboard.md (schema) | |
-| Test results + numbers | Partial | docs/test-results-unit.txt (495 passed with the GNN stack), docs/test-results-integration.txt (17 passed), CI #30-#36 green; model, latency and throughput numbers above | The recorded test-result files date from 2026-10-25 and predate the dashboard, k8s dashboard and GNN blend; docs/dashboard.md still says "Not in Kubernetes yet". |
+| Test results + numbers | Yes | Regenerated at 915ffdb (2026-10-28): docs/test-results-unit.txt (580 passed with the GNN stack), docs/test-results-integration.txt (41 passed); CI green on every PR; model, latency and throughput numbers above | |
 | Presentation | No | None found in the repo | No slides or presentation exist. |
 | Reflection | No | README "How this project was built" covers ownership and AI assistance only | No reflection on decisions, results and lessons. |
 
@@ -103,9 +103,11 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 2. **README is stale and has no system architecture diagram**: "Planned" lists finished work,
    "Documentation will be added", Progress stops at Milestone 3, and the fresh-clone setup
    (incl. the Kaggle download) was never verified.
-3. **Retraining is not automatic end to end**: the CronJob runs `--no-retrain`, retraining is
-   manual on the host, the trigger is uncalibrated (it fired only on a window chosen after the
-   default did not), and analyst feedback labels are not used for retraining.
+3. **Running the retraining job is manual**: the trigger itself is automatic (row 11 fired and
+   trained v8 without `--force-retrain`), but the job that can retrain is started by hand on the
+   host, and the k8s CronJob runs checks only (`--no-retrain`) because MLflow is a local SQLite
+   file. The trigger is uncalibrated (it fired only on a window chosen after the default did
+   not), and analyst feedback labels are not used for retraining.
 4. **Not every run is in MLflow**: five evaluation modules (compare, robustness,
    evaluation_study, robust_eval, leakage_audit) write reports only; the champion v2 came from
    a dirty tree.

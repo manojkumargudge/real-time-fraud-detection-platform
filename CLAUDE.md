@@ -188,14 +188,14 @@ matters (files, numbers, running services) before relying on it.
   pushed to `ghcr.io/manojkumargudge/real-time-fraud-detection-platform` (`<sha>`, `latest`).
   Nothing is deployed. Repo is public; `gh` is logged in as manojkumargudge (checked
   2026-10-28), so PRs and runs go through `gh pr` / `gh run`.
-- Security job (README "Security"): pip-audit (all requirements files; fails on any advisory not
+- Security job (docs/security.md): pip-audit (all requirements files; fails on any advisory not
   in `security/pip-audit-ignore.txt`, any severity), bandit `-ll` on `src/`, Trivy on the serving
   image (HIGH/CRITICAL with a fix, minus `.trivyignore`). Image push needs test + integration +
   security. Accepted risks expire 2027-01-31. New advisories can fail CI with no code change.
 - MLflow 3.17.2: the local `mlflow.db` was migrated (`mlflow db upgrade`, one-way) on
   2026-10-24; pre-migration backup `mlflow.db.bak-2026-10-24` (gitignored). Older mlflow cannot
   read it.
-- Drift monitoring (README "Monitoring", `src/monitoring/`, `configs/drift.toml`, Evidently
+- Drift monitoring (docs/monitoring.md, `src/monitoring/`, `configs/drift.toml`, Evidently
   0.7.23): `python -m src.monitoring.run_drift [--window-start-day D --window-end-day D]
   [--no-retrain] [--synthetic-amount-factor F]`.
   - now = max `transaction_dt` in scored_transactions; label cutoff = now - 30 days (inclusive).
