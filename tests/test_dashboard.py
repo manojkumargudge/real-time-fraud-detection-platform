@@ -382,7 +382,13 @@ def test_tables_use_plain_column_labels(fake: FakeRepository) -> None:
 def test_case_detail_shows_model_and_linked_ring(fake: FakeRepository) -> None:
     at = app(fake, "views/case.py", alert_id=1)
     metrics = {m.label: m.value for m in at.metric}
-    assert metrics["Model version"] == "baseline-9fdad27ea3b0" and metrics["Status"] == "Open"
+    assert list(metrics) == ["Fraud score", "Threshold", "Status"]  # no record counter
+    assert metrics["Status"] == "Open"
+    caption = at.caption[0].value
+    assert (
+        caption.startswith("Case 1 - Transaction ")
+        and "model version baseline-9fdad27ea3b0" in caption
+    )
     assert "Ring #1" in texts(at)
     other = app(fake, "views/case.py", alert_id=2)  # uid not a ring member: no ring section
     assert "Linked fraud ring" not in [s.value for s in other.subheader]
@@ -440,7 +446,7 @@ def test_case_status_change_is_saved_and_listed(fake: FakeRepository) -> None:
         "alice",
         "card testing pattern",
     )
-    assert "Saved: open -> confirmed_fraud (version 2)." in texts(at)
+    assert "Saved: open -> confirmed_fraud (record version 2)." in texts(at)
 
 
 def test_optimistic_lock_conflict_is_rejected_with_a_clear_message(fake: FakeRepository) -> None:
@@ -468,7 +474,9 @@ def test_conflict_between_two_ui_sessions_saves_nothing(fake: FakeRepository) ->
     next(b for b in alice.button if b.label == "Save").click()
     alice.run()
     errors = [str(e.value) for e in alice.error]
-    assert any("was changed by bob" in e and "you had version 1" in e for e in errors), errors
+    assert any("was changed by bob" in e and "you had record version 1" in e for e in errors), (
+        errors
+    )
     assert fake.cases[1]["status"] == "investigating" and fake.cases[1]["version"] == 2
     assert [r["analyst"] for r in fake.reviews[1]] == ["bob"]
     assert {m.label: m.value for m in alice.metric}["Status"] == "Investigating"  # reloaded
