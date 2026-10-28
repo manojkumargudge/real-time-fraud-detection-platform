@@ -205,7 +205,8 @@ matters (files, numbers, running services) before relying on it.
     OR any of the champion's top 5 features by gain drifts (added 2026-10-24 after runs 1-3;
     the top 5 are read from the booster: card3, card6, R_emaildomain, addr2, ProductCD).
   - `--force-retrain` runs retrain + promotion even if nothing fired (`forced = true`).
-  - The delayed-label window is the same in every run, by design: days 146-153.
+  - The delayed-label window is the same in every run, by design: days 146-152 (day windows in
+    docs are written with the last day included; `--window-end-day` is exclusive).
   - When it fires: challenger trained on usable labels before the holdout (last 7 days before
     the cutoff), alias `challenger`. `champion` moves only if the paired day-block bootstrap CI
     lower bound (1,000 resamples, seed 42) is > 0.01. `production` is never moved.
@@ -215,13 +216,13 @@ matters (files, numbers, running services) before relying on it.
     Compose `--profile monitoring` service `drift` = checks only, image built with
     `REQUIREMENTS=requirements-monitoring.txt`.
   - Demo 2026-10-24 (drift_reports ids 1-3): none fired.
-    - Run 1, days 141-145: share 0.179, PSI 0.0034.
-    - Run 2, days 170-183: share 0.286, PSI 0.0027.
+    - Run 1, days 141-144: share 0.179, PSI 0.0034.
+    - Run 2, days 170-182: share 0.286, PSI 0.0027.
     - Run 3, synthetic TransactionAmt x2: share 0.393, PSI 0.0097.
-    - Delayed PR-AUC 0.3238 in all runs (days 146-153, 617 frauds).
+    - Delayed PR-AUC 0.3238 in all runs (days 146-152, 617 frauds).
     - Retraining and promotion never ran on the real registry.
-  - Second demo (ids 5-9, top-feature rule, 2026-10-24, the first demo's windows 141-145 and
-    170-183 again): all of these runs fired.
+  - Second demo (ids 5-9, top-feature rule, 2026-10-24, the first demo's windows 141-144 and
+    170-182 again): all of these runs fired.
     - Run 1 fired on card3 (Wasserstein 0.1041); runs 2-4 fired on R_emaildomain. The synthetic
       2x TransactionAmt shift is still not what fires (TransactionAmt is not a top-5 feature).
     - Challenger vs champion on the holdout: 0.3290 vs 0.3238, CI [-0.0160, +0.0254], kept
@@ -230,7 +231,7 @@ matters (files, numbers, running services) before relying on it.
       "Where things stand").
     - Row 8 = forced run stored before the `forced` fix; row 9 is the corrected one.
   - Evidence run 2026-10-27 (copies only, docs/evidence/2026-10-27-drift-trigger/): the
-    default window (days 176-183, id 10) did NOT fire. Days 170-182, chosen after that, fired
+    default window (days 176-182, id 10) did NOT fire. Days 170-181, chosen after that, fired
     on R_emaildomain without `--force-retrain` (id 11). Challenger v8 exists only in the
     mlflow.db copy; champion kept (delta +0.0053, CI [-0.0160, +0.0254]). Real registry
     unchanged.
@@ -256,7 +257,7 @@ matters (files, numbers, running services) before relying on it.
   producer streams **validation-period transactions only**, in time order
   (`python -m src.streaming.producer --skip N --limit M`, refuses earlier or out-of-order
   events; messages keyed by `card_id`). **The whole validation window is streamed**: 118,108
-  events (days 141.1-183.0), 5,093 alerts. Further `--skip` values have nothing left to send.
+  events (days 141-182, last day included), 5,093 alerts. Further `--skip` values have nothing left to send.
   Rest-of-validation stream (2026-10-24): 8.05 events/s, scorer p50/p95/p99 207/549/843 ms
   (docs/serving.md). Consumers crashed twice on retriable commit errors (`NOT_COORDINATOR`);
   no loss or duplicates. Fixed 2026-10-25 (`consumer-crash-fix`, see Known limitations).
