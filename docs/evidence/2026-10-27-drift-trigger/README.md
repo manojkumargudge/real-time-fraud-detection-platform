@@ -11,6 +11,20 @@ copies only:
 - **Untouched:** the demo database and the real `mlflow.db`; counts and hash were checked
   after the runs.
 
+## In short
+
+- **The default window did NOT fire.** Days 176–183 (row 10): no feature among the champion's
+  top 5 by gain drifted, and no other check fired.
+- **Days 170–182 were chosen AFTER that.** They are the window that had fired on 2026-10-24
+  (row 6). They fired on R_emaildomain without `--force-retrain` (row 11, `forced = false`).
+  This is not an independent test of the trigger: the window was picked knowing it had fired
+  before.
+- **Challenger v8 lives only in the copy DB** (the copy of `mlflow.db`; run tags `git_commit
+  0d73adb`, `git_dirty=false`). The champion was kept: delta +0.0053, 95% CI [−0.0160,
+  +0.0254], lower bound below the 0.01 margin.
+- **The real registry is unchanged:** champion = production = v2, challenger = v7; it has no
+  v8 and no run `f9bb4e91` (re-checked read-only on 2026-10-28).
+
 ## Run 1: no flags (the automatic default window), which did not fire
 
 `python -m src.monitoring.run_drift` → drift_reports **id 10** (in the copy):
@@ -22,10 +36,11 @@ copies only:
   The drift is in DeviceInfo and the uid velocity features.
 - **`triggered = false`**, so no retraining.
 
-## Run 2: the fallback window, which fired
+## Run 2: days 170–182, chosen after Run 1 did not fire, which fired
 
 `python -m src.monitoring.run_drift --window-start-day 170 --window-end-day 182` (the window of
-drift_reports id 6 from 2026-10-24) → **id 11**, `forced = false`, `synthetic = false`:
+drift_reports id 6 from 2026-10-24, chosen after Run 1) → **id 11**, `forced = false`,
+`synthetic = false`. The file names below call it the "fallback" window:
 
 - **Trigger:** "top-feature drift: R_emaildomain drifted (among the champion's top 5 features
   by gain)". Share 0.286; PSI 0.0025; delayed PR-AUC 0.3238.
@@ -44,9 +59,10 @@ drift_reports id 6 from 2026-10-24) → **id 11**, `forced = false`, `synthetic 
 ## Caveats
 
 - The automatic default window did **not** fire. The fire came from the explicit 170–182
-  window.
+  window, chosen after the default window did not fire.
 - The firing rule (top-5 gain features) was added on 2026-10-24 after the first runs did not
-  fire. It is noisy: it fired on every window tried that day.
+  fire. It has not been calibrated on drift-free periods, and there is no minimum sample size
+  (the 2026-10-25 Kubernetes run fired on 30 rows; docs/kubernetes.md).
 - The challenger training is identical to 2026-10-24's (the same labels, seed and holdout), so
   the same metrics and the same decision are expected. They match.
 - **Side effect:** the copied registry points at the real `mlruns/` folder, so the challenger's
