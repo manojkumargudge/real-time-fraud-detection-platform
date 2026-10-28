@@ -413,6 +413,7 @@ def test_drift_table_shows_retrain_reason_and_inclusive_windows(fake: FakeReposi
     assert row["Retrain"] == "forced"
     assert row["Window (days, last day included)"] == "134-141"
     assert any("Oct 24 development runs" in c.value for c in at.caption)
+    assert any("Row 8 was a --force-retrain run" in c.value for c in at.caption)
 
 
 @pytest.mark.parametrize(

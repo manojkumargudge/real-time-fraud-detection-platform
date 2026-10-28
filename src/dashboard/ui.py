@@ -82,6 +82,12 @@ RINGS_NOT_RUN = (
     "Fraud ring detection has not run in this deployment (it is a batch job run on the host)."
 )
 NOT_AVAILABLE = "—"  # a ring or drift value from a batch job that has not run here
+DRIFT_ROW8_NOTE = (
+    "Row 8 was a --force-retrain run recorded before the forced flag was fixed (a forced run "
+    "whose rule also fired was stored as not forced), so its stored flag says not forced. "
+    "Rows 5-9 ran on 2026-10-24 before the trigger rule was committed and frozen (08b4b45, "
+    "16:50 IST)."
+)
 DRIFT_RUNS_NOTE = (
     "These are the Oct 24 development runs. The clean trigger evidence (default window did not "
     "fire; days 170-181, last day included, fired without --force) is in "
