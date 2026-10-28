@@ -35,7 +35,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 | Class weights or SMOTE | Partial | Class weights implemented and compared: v1 was trained with `scale_pos_weight` 27.46 (still the CLI default, `compare.IMBALANCE_METHODS`); over 3 seeds and two later time windows no weight scored higher (mean validation PR-AUC 0.2935 vs 0.2517, +0.0418; W1 +0.0137, W2 +0.0430; reports/imbalance_comparison.md), so v2 is served without weights (`--imbalance none`; automatic retraining uses `none` too, configs/drift.toml). | SMOTE was not used: it creates synthetic transactions with no real history, which breaks the history features. The served model deliberately uses no class weight (a documented, measured deviation). |
 | PR-AUC | Yes | v2 validation PR-AUC **0.2992** (threshold 0.1281: 4.31% alerted, precision 0.3136, recall 0.3930); v1 0.2504; reports/model_v1_vs_v2.md | |
 | All runs in MLflow | Partial | Logged: `src.models.train`, `imbalance_comparison`, `version_comparison`, `src.graph.train` / `stack` / `blend`, drift retraining (`src/monitoring/run_drift.py`). Read-only count in mlflow.db: `fraud-xgboost` 18 runs, `fraud-gnn` 6. | Not logged (reports only): `src.models.compare` (reports/model_comparison.md), `src.models.robustness` (model_comparison_seeds.json), `src.models.evaluation_study`, `src.models.robust_eval` (robust_evaluation*.md), `src.models.leakage_audit`; also challenger v8 exists only in an mlflow.db copy (evidence run). |
-| Reproducibility of the champion | Partial | v2 tags `git_commit 7754fd4`, `git_dirty=true` (CLAUDE.md Known limitations) | The served champion was trained from a dirty tree and cannot be rebuilt exactly from the repo. |
+| Reproducibility of the champion | Yes | v2 (tagged `git_commit 7754fd4`, `git_dirty=true`) was rebuilt byte for byte from a fresh clone of main on 2026-10-28 (`python -m src.models.train --feature-source pandas --imbalance none`): same model.json sha256 `9fdad27ea3b0…`, validation PR-AUC 0.29923830601075374, threshold 0.12806208431720734; the uncommitted changes did not affect training (README "Setup from a fresh clone"). | The run is still tagged `git_dirty=true`; a guard against dirty-tree training runs is not built. |
 
 ## Step 4: graph, GNN, rings, blend
 
@@ -90,7 +90,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 |---|---|---|---|
 | Demo | Partial | Docker Compose demo stack with recorded counts (docs/results.md "Demo: unseen validation data"; 118,108 / 5,093); k8s run in docs/kubernetes.md | There is no recorded demo or step-by-step demo script. |
 | Clean commits | Yes | `git log --oneline main \| grep -i wip`: 0 hits; PRs #3-#10 with CI | One commit message on main says "notes to follow" (0e7db49; the notes followed in dc7eed6); a local, unpushed branch `security-wip-304ae06` remains. |
-| README + setup | Partial | README rewritten (PR #14): results, architecture, quickstart, README "Setup from a fresh clone" incl. the Kaggle download (data/README.md), Minikube, limitations, next steps | Fresh-clone setup incl. the Kaggle download is **Not verified** (never tested in a clean folder; marked so in the README). |
+| README + setup | Yes | README rewritten (PR #14) and corrected from a fresh-clone test on 2026-10-28 (PR #22): clone from GitHub, install, data check, training (reproduced v2 byte for byte), unit tests (573 passed, 2 skipped without GNN extras) and the full Compose quickstart (materialize, 2,000 events, /health, dashboard with alerts) ran without an error on Windows 11 | Not re-run in the clone: the Kaggle download itself (the CSVs were copied), integration tests, lint/types and the GNN extras; macOS/Linux untested. |
 | Architecture diagram | Yes | System-wide Mermaid diagram with what runs in Compose, Minikube and on the host only: [docs/architecture.md](architecture.md) (PR #14). The docs/serving.md diagram now shows `Scorer.score_event -> FeastFeatures.read` (fixed in PR #13). | |
 | API / data docs | Yes | [docs/api.md](api.md) (`/health`, `/score`: fields, real example, errors, measured latency) with [docs/openapi.json](openapi.json) exported from the app; [docs/data.md](data.md) (Kafka topics and messages, the five PostgreSQL tables generated from the schema code, Feast objects); also docs/serving.md, docs/features.md, docs/feature_store.md, data/README.md | |
 | Test results + numbers | Yes | Regenerated at 915ffdb (2026-10-28): docs/test-results-unit.txt (580 passed with the GNN stack), docs/test-results-integration.txt (41 passed); CI green on every PR; model, latency and throughput numbers above | |
@@ -100,18 +100,19 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 ## Top gaps (ordered by how badly an evaluator would judge them)
 
 1. **No presentation and no reflection**: two named deliverables are missing.
-2. **Fresh-clone setup not yet verified**: the README was rewritten (PR #14) with results, a
-   system architecture diagram (docs/architecture.md) and dashboard screenshots
-   (docs/screenshots/, PR #18). The only open part is the fresh-clone setup incl. the Kaggle
-   download, which has not been tested on a clean machine (scheduled for 2026-10-29).
+2. **Fresh-clone setup partly verified**: the README was rewritten (PR #14) with results, a
+   system architecture diagram and dashboard screenshots (PR #18), and the setup was tested from
+   a fresh clone on 2026-10-28 (PR #22: install, data check, training, unit tests and the
+   Compose quickstart worked). Not re-run in the clone: the Kaggle download itself, integration
+   tests, lint/types and the GNN extras; macOS/Linux untested.
 3. **Running the retraining job is manual**: the trigger itself is automatic (row 11 fired and
    trained v8 without `--force-retrain`), but the job that can retrain is started by hand on the
    host, and the k8s CronJob runs checks only (`--no-retrain`) because MLflow is a local SQLite
    file. The trigger is uncalibrated (it fired only on a window chosen after the default did
    not), and analyst feedback labels are not used for retraining.
 4. **Not every run is in MLflow**: five evaluation modules (compare, robustness,
-   evaluation_study, robust_eval, leakage_audit) write reports only; the champion v2 came from
-   a dirty tree.
+   evaluation_study, robust_eval, leakage_audit) write reports only. (The champion v2 is tagged
+   `git_dirty=true` but was rebuilt byte for byte from a fresh clone on 2026-10-28.)
 5. **The graph is weaker than the brief implies**: no account node, `DeviceInfo` is a model
    string, the GNN loses to XGBoost (0.2021 vs 0.2992), and ring quality is measured per
    transaction only on tiny rings.
