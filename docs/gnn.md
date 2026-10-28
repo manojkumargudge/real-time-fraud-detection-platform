@@ -1,8 +1,9 @@
 # GNN for fraud-ring analysis (batch only)
 
 A heterogeneous GraphSAGE model on a transaction-entity graph, plus candidate fraud rings. It
-runs offline only and never goes into `/score`. **Result: it loses to XGBoost v2 and adds
-nothing as an XGBoost feature**, so the served model is unchanged.
+runs offline only and never goes into `/score`. **Result: it loses to XGBoost v2, adds
+nothing as an XGBoost feature, and a score blend is worse too**, so the served model is
+unchanged.
 
 Install (CPU only, separate from serving and CI): `pip install -r requirements-gnn.txt`
 (torch 2.8.0+cpu, torch_geometric 2.8.1, pyg-lib 0.4.0+pt28cpu). torch 2.10.0 was tried first
@@ -17,9 +18,24 @@ because pandas ships an older `msvcp140.dll`; 2.8.0 loads in any order.
 
 ## Graph design (`src/graph/build.py`, `src/graph/data.py`)
 
-- **Nodes:** one `tx` node per transaction, and one node per distinct value of `card_id`,
-  `DeviceInfo`, `P_emaildomain`, `R_emaildomain` and `addr1`. Edges run tx -> entity and
-  back.
+- **Nodes:** one `tx` node per transaction, and one node per distinct value of five entity
+  types (`ENTITY_COLUMNS` in `src/graph/build.py`). Edges run tx -> entity and back; there
+  are no entity -> entity or tx -> tx edges.
+
+  | Node type | Source column | What it really is |
+  |---|---|---|
+  | `tx` | one per `TransactionID` | a transaction |
+  | `card` | `card_id` (card1–card6) | a BIN-like card proxy, not a card (see below) |
+  | `device` | `DeviceInfo` | a device model or OS string (`Windows`, `iOS Device`), not a device ID |
+  | `p_email` | `P_emaildomain` | the purchaser's email provider |
+  | `r_email` | `R_emaildomain` | the recipient's email provider |
+  | `addr1` | `addr1` | a billing region code |
+
+- **No account node.** IEEE-CIS has no account or customer ID. Elsewhere in the project
+  `uid` = `card_id` + `addr1` (`src/features/entity.py`) stands in for "account": the history
+  features, the fraud rings and the blend's entity variant all group by it. The GNN graph has
+  **no `uid` node**. It sees the same information only through the separate `card` and `addr1`
+  nodes and through the uid history features on each `tx` node.
 - **Transaction features:** the 28 XGBoost inputs (`compare.feature_columns`).
   - The 9 raw numeric and 12 history features get a signed log1p, are standardised with
     fit-split statistics, and get a missing indicator.
@@ -74,7 +90,15 @@ ring links would create fake rings, so rings use uid and device links only.
 
 ## Results (validation, 118,108 transactions, 3.44% fraud, same split as XGBoost)
 
-**GNN alone, seed 42** (reports/gnn_checkpoint.md, reports/gnn_checkpoint_hubs_kept.md):
+**GNN alone: official validation PR-AUC = 0.2021** (seed 42, hubs dropped, the final GNN
+trained on all training labels for 7 fixed epochs; reports/gnn_stacking.md). It was reproduced
+on 2026-10-27 from clean `main` 0d73adb in MLflow run `c233ecd0` (`fraud-gnn`): its
+`artifacts/gnn/scores.parquet` (590,540 scores, sha256 `041078eb4343…`) is bit-identical to
+the Oct 23 file.
+
+**Early exploratory runs, not reproduced** (Oct 23, early-stopped checkpoints;
+reports/gnn_checkpoint.md, reports/gnn_checkpoint_hubs_kept.md). They predate the
+`git_dirty` tag and were not rerun, so treat them as indicative only:
 
 | Model | PR-AUC | P / R @1% | P / R @2% | P / R @5% | Training | Peak memory |
 |---|---|---|---|---|---|---|
@@ -86,8 +110,8 @@ ring links would create fake rings, so rings use uid and device links only.
   batch 1,024, early stopping on the training holdout (patience 2).
 - **Hub variants:** keeping hubs cost 2.2× the training time and did not help.
 - **Final GNN:** trained on all training labels for 7 fixed epochs, it scores PR-AUC 0.2021 on
-  validation.
-- **No tuning:** none was done. The gap to XGBoost is about 0.12 PR-AUC.
+  validation (the official number above).
+- **No tuning:** none was done. The gap to XGBoost is about 0.10 PR-AUC (0.2021 vs 0.2992).
 
 **GNN score as an XGBoost feature** (reports/gnn_stacking.md). XGBoost was trained exactly as
 v2 (no class weight), with and without a forward-chained `gnn_score` column:
@@ -99,6 +123,20 @@ v2 (no class weight), with and without a forward-chained `gnn_score` column:
 
 **No gain.** The mean is 0.0108 *lower*, and lower on every seed. The feature is not kept, and
 the served model is unchanged.
+
+**Score blend** `(1 - w) * xgb + w * gnn` (`python -m src.graph.blend`, reports/gnn_blend.md).
+`w` was chosen on the last training block with out-of-fold inputs only, and validation was
+evaluated once per variant at that `w`:
+
+| Variant | GNN input | Chosen w | Validation AP blend vs XGBoost v2 | Delta, 95% CI | MLflow run |
+|---|---|---|---|---|---|
+| transaction | the transaction's own GNN score | 0.50 | 0.2749 vs 0.2992 | -0.0241 [-0.0346, -0.0137] | `c1a15d8b` |
+| entity | mean earlier GNN score of the transaction's uid | 0.45 | 0.2797 vs 0.2992 | -0.0192 [-0.0263, -0.0118] | `602bb83c` |
+
+**Both blends are worse**, so the served model stays XGBoost v2. The weight rule ("largest `w`
+within the margin") did not pick the best selection weight (entity: 0.20), and the selection
+gain did not carry over to the full-data models. No other weights will be evaluated on
+validation.
 
 ## Why the GNN loses on this data
 
@@ -144,7 +182,8 @@ the served model is unchanged.
 
 ## Limitations
 
-- The GNN is worse than XGBoost on this data and is not used for scoring.
+- The GNN is worse than XGBoost on this data and is not used for scoring, alone, as a
+  stacking feature or in a score blend.
 - One seed for the GNN itself; the stacking spread covers XGBoost seeds only.
 - Rings rest on device-model strings, a weak link, and on hand-picked limits (10 / 3 /
   1,000), chosen by looking at ring sizes, not labels. They are candidates for review, not
