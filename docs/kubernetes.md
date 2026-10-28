@@ -113,7 +113,8 @@ The Job runs `python -m src.features.feast_store materialize --before validation
   `concurrencyPolicy: Forbid`.
   - Feature drift, prediction drift and delayed-label PR-AUC over the in-cluster
     `scored_transactions`; one row per run in the in-cluster `drift_reports`.
-  - The Evidently HTML report stays pod-local (`/tmp/drift-reports`); the row is the result.
+  - The Evidently HTML report goes to the shared volume (PVC) `drift-reports`, which the
+    dashboard mounts read-only (PR #6); before that it stayed pod-local.
 - **Retraining stays on the host.** The MLflow registry is a local SQLite file
   (`mlflow.db` + `mlruns/`) whose artifact paths are Windows `file:///C:/...` paths. With
   `--no-retrain` the row records `promotion_decision = "not run: retraining disabled"`.
