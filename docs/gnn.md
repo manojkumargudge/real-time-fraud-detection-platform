@@ -36,6 +36,9 @@ because pandas ships an older `msvcp140.dll`; 2.8.0 loads in any order.
   features, the fraud rings and the blend's entity variant all group by it. The GNN graph has
   **no `uid` node**. It sees the same information only through the separate `card` and `addr1`
   nodes and through the uid history features on each `tx` node.
+- **Accounts in the graph:** an account is represented only by its `card` + `addr1` nodes,
+  with no separate uid node. Adding an explicit `uid` node type is a next step (not built,
+  not evaluated).
 - **Transaction features:** the 28 XGBoost inputs (`compare.feature_columns`).
   - The 9 raw numeric and 12 history features get a signed log1p, are standardised with
     fit-split statistics, and get a missing indicator.
