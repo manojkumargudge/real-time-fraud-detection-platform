@@ -1,9 +1,18 @@
 # Feature store (Feast)
 
-Feast holds **per-entity state**, not finished features. The 12 history features are computed
-from that state plus the event being scored, with the same definitions as the batch code
-(`src/features/history.py`). Feast is the default feature source; the original serving path
-(features recomputed from the card's stored event history) is kept behind
+Feast stores **per-entity history state** (`uid_state`, `card_state`), not finished features.
+Training and serving both read that state from Feast and compute the 12 history features with
+the same function, `src.features.entity_state.history_features`:
+
+- serving: `Scorer.score_event` -> `FeastFeatures.read` reads the state from the online store
+  (Redis) and calls `history_features` on it with the event being scored;
+- training (`--feature-source feast`): `get_historical_features` reads the state from the
+  offline store, point-in-time per transaction, and `odfv_features` (the body of the
+  `history_features` on-demand view) calls `history_features` on each row.
+
+The batch definitions (`src/features/history.py`) give identical values (section "Training from
+the Feast offline store"). Feast is the default serving feature source; the original serving
+path (features recomputed from the card's stored event history) is kept behind
 `FEATURE_SOURCE=store`.
 
 ## Design
@@ -64,16 +73,32 @@ Redis uses an append-only file (volume `redisdata`), so the state survives resta
 ## Training from the Feast offline store
 
 Champion v2 was trained on the pandas matrix (`build_model_frame(df, "baseline")`, split at
-`TransactionDT` 12,192,900). The Feast offline matrix (`src/features/feast_training.py`:
-`get_historical_features` on the state views per transaction and timestamp, then the on-demand
-view's function) is **proven identical** on the full file (2026-10-28,
-`python -m scripts.compare_feature_sources`): 472,432 / 472,432 training rows, same columns,
-order, dtypes and values (no difference), sha256 `66db4b971d3e…` both sides (validation
-118,108 rows `6ace174d268c…`; encoded float32 matrix `ecd953034817…`). v2's booster scores
-both validation matrices bit-identically (PR-AUC 0.299238, as in its metadata).
-**Training now defaults to Feast** (`python -m src.models.train --feature-source feast|pandas`).
-Cost: ~40 min for the Feast matrix vs ~2 s for pandas. Retrieval runs in time-ordered chunks of
-4,000 rows, because Feast's dask file store re-pickles the frames and slows down superlinearly.
+`TransactionDT` 12,192,900). The Feast offline matrix (`src/features/feast_training.py`) is
+**proven identical** to it on the full file (2026-10-28, PR #12,
+`python -m scripts.compare_feature_sources`): same columns, order, dtypes and values, no
+difference in any column.
+
+| Matrix | Rows (pandas / Feast) | sha256 (both sides) |
+|---|---|---|
+| training frame | 472,432 / 472,432 | `66db4b971d3ec84093ab80c1508f8b9027ada08d42499f7f7a453fbc908e628c` |
+| validation frame | 118,108 / 118,108 | `6ace174d268c0d12f9263bb05941ecdd4fd985884430f68eb85daadc39f85274` |
+| encoded float32 training matrix | 472,432 / 472,432 | `ecd95303481717c66595861e7d9e5a76a8723e806ebfc762bbd8d9b038afe345` |
+
+The rows, split and encoder vocabulary match v2's metadata, and v2's booster scores both
+validation matrices bit-identically (PR-AUC 0.299238, as in its metadata).
+
+**Defaults.** Both sources give the same matrix, so the choice is only about cost: the Feast
+matrix takes about 38 min, pandas about 2 s.
+
+| Entry point | Feature source |
+|---|---|
+| `python -m src.models.train` (CLI) | **Feast** by default; `--feature-source pandas` switches |
+| direct calls (`fit_baseline`, `model_frame`, studies, tests) | pandas by default; `feature_source="feast"` switches |
+| automatic retraining by the drift job (`run_job` in `src/monitoring/run_drift.py` -> `build_model_frame` -> `retrain_and_compare` -> `fit_on_split`) | **pandas** (no option) |
+
+Retrieval runs in time-ordered chunks of 4,000 rows. Each chunk's offline source holds only the
+snapshots a point-in-time join can pick for that chunk, because Feast's dask file store
+re-pickles the frames and slows down superlinearly on the full source.
 `tests/test_feast_training.py` checks small slices across chunk boundaries.
 
 ## Train/serve skew of the history (store) path
@@ -94,8 +119,9 @@ history), store-path features vs batch (training) features, production model v2:
 | PR-AUC on the stream | 0.2992 with batch features vs 0.2533 with store-path features |
 
 The Feast path with the batch cold start equals the batch features for these cards (unit test
-`test_stream_replay_with_batch_cold_start`, and the real-data check above). On the live stack
-there is no such skew today only because the stream started at the first transaction.
+`test_stream_replay_with_batch_cold_start`, and the real-data check above). The demo stack
+(reset 2026-10-23) streams only validation-period events after this cold start, so it serves
+the batch features; the store path would show the skew above.
 
 ## Where the two paths can differ
 
@@ -157,8 +183,10 @@ with the store path) about 57 ms; a raw Redis round trip is 2 ms, so most of the
 Python SDK overhead. Earlier end-to-end `/score` samples in the Linux API container (5 events
 per mode, on-demand view, including the PostgreSQL write and the state push): median 157.9 ms
 (store) vs 147.2 ms (Feast). With pushes enabled the consumer took 264-405 ms per event (about
-100-130 ms before); the push itself is not yet optimized.
+100-130 ms before).
 
-At this data size (median 2-4 history rows per card) the store path is faster; its real cost
-is the skew above, not latency. Next steps: read Redis directly (or batch reads) to cut the SDK
-overhead, write both states in one push, and measure under load.
+These are the 2026-10-23 numbers. Since 2026-10-25 (`consumer-throughput`) Feast reads and
+writes go through Feast's provider (`online_read` / `ingest_df`) instead of the SDK calls,
+with the same values: scorer p50 48 ms, 46.8 events/s on 3 consumers (docs/serving.md
+"Throughput benchmark"). At this data size the store path's real cost is the skew above, not
+latency.

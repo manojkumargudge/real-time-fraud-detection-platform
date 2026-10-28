@@ -268,7 +268,8 @@ and address codes.
   are known instantly.
 - **`TransactionDT` is a relative offset.** Windows assume it is in seconds, which is the
   conventional reading but is not confirmed by the data provider.
-- **Batch only.** The online (Kafka/Feast) path must reproduce §2 exactly, including the
-  tied-timestamp rule. Same-second events must not see each other there either.
+- **Online and Feast parity (done).** The online Feast path and the Feast offline training
+  matrix reproduce §2 exactly, including the tied-timestamp rule (same-second events do not see
+  each other): docs/feature_store.md, full-file proof of 2026-10-28 (identical sha256).
 - **Peak memory not measured.** It was not measured for this pipeline: the Windows venv launcher
   hides the child process from the method used.

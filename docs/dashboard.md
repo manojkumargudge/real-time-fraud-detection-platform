@@ -210,4 +210,8 @@ changed under an open form. Re-reading the version at submit time defeated the l
   expires; the optimistic-lock check is always made against the database, so no write is lost.
 - **No connection pool:** one connection per call (18 ms connect inside the container). Fine
   for a few analysts; add psycopg-pool before scaling.
-- **Not in Kubernetes yet** (planned for 2026-10-27).
+- **Kubernetes:** also runs in the local Minikube deployment (`k8s/dashboard.yaml`, PR #6,
+  merged 2026-10-27): one replica (Streamlit session state is per pod), Service `dashboard:8501`,
+  reached with `kubectl -n fraud-k8s port-forward svc/dashboard 8502:8501`. It reads the
+  cluster's own small database (a 20-event replay), not the Compose demo database; fraud rings
+  show as "not run in this deployment" (a host batch job).
