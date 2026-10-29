@@ -47,6 +47,23 @@ production readiness without appropriate evidence.
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
 
+### 2026-10-29: account node + MLflow coverage (freeze reopened for these two only)
+- **GNN account node** (branch `gnn-account`, docs/gnn.md "Account node"): `--graph account` on
+  `src.graph.stack` / `blend` / `rings` adds `account` (uid) nodes, tx-account and account-card
+  edges; no node for `<NA>` uids; no direct account-device edge (needs edge-level time, which
+  PyG cannot mix with node-level time). Default graph unchanged (edge_index sha256 test vs
+  d8241d7). Results: GNN alone 0.2008; stacking 0.2798 vs 0.2935; blends worse than v2
+  (transaction -0.0245 [-0.0354, -0.0140], entity -0.0144 [-0.0205, -0.0081]) -> not served.
+  Outputs in `artifacts/gnn-account/` and reports/*_account.md; `artifacts/gnn/scores.parquet`
+  and table `fraud_rings` untouched (rings.py refuses DB writes from non-default scores).
+- **MLflow coverage** (PR #25, merge 6218477): `tracking.log_report_run` (experiment
+  `fraud-evaluation`) at the end of compare / robustness / evaluation_study / robust_eval /
+  leakage_audit `main()`; `scripts/mlflow_backfill.py` back-filled 19 runs into the real
+  mlflow.db (8 fraud-evaluation, 9 fraud-drift = drift_reports 1-9, 2 fraud-gnn). Registry
+  unchanged (champion 2, production 2, challenger 7). New drift checks still write only to
+  PostgreSQL. Unit tests always use a throwaway MLflow store (conftest).
+- Backup before: `backups/mlflow.db.bak-2026-10-29-pre-step3` (sha256 dc016af4…).
+
 ### Where things stand (2026-10-26)
 - Analyst dashboard (Streamlit, docs/dashboard.md) on branch `dashboard`, merged via PR (see
   the session summary for the PR, CI run and merge commit). The demo database was migrated
