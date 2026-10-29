@@ -401,7 +401,7 @@ path. Only `card_history` grows with a card's history, and it is not on the serv
 | Measure | Run 1 (5 events/s) | Run 2 (unthrottled) |
 |---|---|---|
 | Throughput, first to last `scored_at` | 5.2 events/s (= input rate) | **13.07 events/s** |
-| End-to-end, produce -> `scored_at`, p50 / p95 / p99 | 114 / 669 / 2,668 ms | 38.1 / 71.9 / 76.1 s (backlog) |
+| End-to-end, produce -> `scored_at` (= start of the DB write, before the Feast push and offset commit), p50 / p95 / p99 | 114 / 669 / 2,668 ms | 38.1 / 71.9 / 76.1 s (backlog) |
 | Scorer latency (features + score + save + push), p50 / p95 / p99 | 125 / 396 / 660 ms | 203 / 357 / 427 ms |
 
 Per stage, Run 2 (ms, p50 / p95), with Run 1 p50 in brackets:
@@ -473,8 +473,8 @@ the BEFORE events):
 | Measure | BEFORE | AFTER |
 |---|---|---|
 | Run 2 throughput (unthrottled, first to last `scored_at`) | 13.07 events/s | **46.83 events/s** (3.6x) |
-| Run 1 end-to-end p50 / p95 / p99 (5 events/s) | 114 / 669 / 2,668 ms | **30.6 / 60.8 / 74.0 ms** |
-| Run 2 end-to-end p50 / p95 / p99 (backlog of 1,000) | 38.1 / 71.9 / 76.1 s | 11.0 / 19.1 / 20.7 s |
+| Run 1 end-to-end to `scored_at` (start of the DB write, before the Feast push and offset commit), p50 / p95 / p99 (5 events/s) | 114 / 669 / 2,668 ms | **30.6 / 60.8 / 74.0 ms** |
+| Run 2 end-to-end to `scored_at` (same definition), p50 / p95 / p99 (backlog of 1,000) | 38.1 / 71.9 / 76.1 s | 11.0 / 19.1 / 20.7 s |
 | Scorer latency Run 1, p50 / p95 / p99 | 125 / 396 / 660 ms | 41 / 84 / 109 ms |
 | Scorer latency Run 2, p50 / p95 / p99 | 203 / 357 / 427 ms | 48 / 105 / 147 ms |
 | Run 2 stage p50 / p95: Kafka poll | 0.02 / 0.04 ms | 0.03 / 0.05 ms |
@@ -487,7 +487,7 @@ the BEFORE events):
 | PostgreSQL write | 7.2 / 20.3 ms | 4.2 / 9.4 ms |
 | Feast push | 15.8 / 38.3 ms | 15.6 / 30.9 ms |
 | commit | 2.0 / 13.0 ms | 1.8 / 5.1 ms |
-| whole message | 204.8 / 359.9 ms | 50.0 / 107.6 ms |
+| whole message (`process` stage; excludes poll and commit) | 204.8 / 359.9 ms | 50.0 / 107.6 ms |
 | Run 2 CPU mean / max, consumers | 186/280, 168/265, 199/293% | 49/87, 55/89, 49/88% |
 | Run 2 CPU mean / max, Kafka / PostgreSQL / bench Redis | 38/173, 3.6/8.8, 3.5/34.5% | 56/192, 8.2/15.9, 7.5/15.6% |
 | Run 1 CPU mean, consumers | 69, 56, 78% | 5.8, 7.0, 6.1% |

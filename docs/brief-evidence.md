@@ -54,7 +54,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 |---|---|---|---|
 | Kafka producer replay | Yes | `src/streaming/producer.py` (validation-period only, time order enforced, labels and D1 never sent); 118,108 events streamed in the demo | |
 | Consumer fetches features, returns a score | Yes | `src/streaming/consumer.py` -> `processor.process_message` -> `Scorer.score_event` (Feast read, XGBoost, PostgreSQL write, Feast push); DLQ, retry, commit-after-write (`tests/test_streaming_reliability.py`, chaos script `scripts/chaos_kafka_restart.py`) | The consumer is a Kafka consumer, not a FastAPI service; FastAPI serves the same scorer synchronously at `POST /score` (`src/serving/api.py`). |
-| Performance | Yes | 46.8 events/s on 3 consumers, scorer p50 48 ms (docs/results.md "Consumer throughput"); Feast features+score p50/p95 107.5 / 179.0 ms | Local single-node numbers only. |
+| Performance | Yes | 46.8 events/s on 3 consumers unthrottled (scorer p50 48 ms in that 1,000-event backlog run; 41 ms p50 at a steady 5 events/s) (docs/results.md "Consumer throughput"); Feast features+score p50/p95 107.5 / 179.0 ms | Local single-node numbers only. |
 
 ## Step 6: drift and retraining
 

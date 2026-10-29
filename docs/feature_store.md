@@ -187,6 +187,7 @@ per mode, on-demand view, including the PostgreSQL write and the state push): me
 
 These are the 2026-10-23 numbers. Since 2026-10-25 (`consumer-throughput`) Feast reads and
 writes go through Feast's provider (`online_read` / `ingest_df`) instead of the SDK calls,
-with the same values: scorer p50 48 ms, 46.8 events/s on 3 consumers (docs/serving.md
+with the same values: 46.8 events/s on 3 consumers unthrottled, scorer p50 48 ms in that 1,000-event
+backlog run and 41 ms at a steady 5 events/s (docs/serving.md
 "Throughput benchmark"). At this data size the store path's real cost is the skew above, not
 latency.
