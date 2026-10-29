@@ -42,10 +42,24 @@ Aim for production-style engineering, but document operational, security,
 scalability, and compliance limitations honestly. Do not claim financial-sector
 production readiness without appropriate evidence.
 
-## Current project state (2026-10-26: analyst dashboard; before that crash fix, throughput, k8s)
+## Current project state (2026-10-29: feature freeze final; account node, MLflow coverage, docs)
 
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
+
+### 2026-10-29 end of day (read this first)
+- **Feature freeze is final** (user decision 2026-10-29): docs fixes only from now on.
+- `main` = merge of PR #27 `docs-final` on top of 305a75a (PR #26 gnn-account) and 6218477
+  (PR #25 mlflow-coverage); CI green on all three. Verify with `git log --first-parent`.
+- Demo DB: 118,108 / 5,093 / drift_reports 9 / fraud_rings 20 / case_reviews 6. Registry
+  aliases champion v2, production v2, challenger v7. Demo stack stopped (`docker compose
+  stop`, volumes kept); Minikube stopped. State: backups/state-2026-10-29-eod.txt.
+- Tests: 598 unit passed with the GNN extras (local); CI: 573 passed + 10 skipped without them,
+  41 integration passed (run #70).
+- **Ring ranking is exploratory** (docs/gnn.md "Ring ranking check"): no in-sample GNN
+  scores are used, but the reported top-20 rate (19.83% default, 31.54% account) reuses labels
+  within a ring. Strict temporal check (rank on training blocks 1-2, rate on validation rows):
+  7.96% (9 frauds) default, 8.14% (7 frauds) account, vs 2.89% in the same 203 rings.
 
 ### 2026-10-29: account node + MLflow coverage (freeze reopened for these two only)
 - **GNN account node** (branch `gnn-account`, docs/gnn.md "Account node"): `--graph account` on
@@ -199,7 +213,7 @@ matters (files, numbers, running services) before relying on it.
   - Fraud rings (`python -m src.graph.rings`): uid + device links only (never card_id), device
     values shared by <= 10 uids, uids with <= 3 devices and <= 1,000 transactions; 337 rings,
     largest 38 users (2.8%), 16 unscored (first time block); top-20 labelled fraud rate 19.83%
-    vs 3.50% (weak evidence). reports/fraud_rings.md + table `fraud_rings` in the demo Postgres.
+    vs 3.50% (weak evidence; exploratory, strict temporal check 7.96%, see above). reports/fraud_rings.md + table `fraud_rings` in the demo Postgres.
 - CI/CD (.github/workflows/ci.yml): lint + mypy strict + unit tests; integration job with
   PostgreSQL 16, Kafka 3.8.1 (KRaft), Redis 7.4.1 service containers; on push to `main`, image
   pushed to `ghcr.io/manojkumargudge/real-time-fraud-detection-platform` (`<sha>`, `latest`).
@@ -292,15 +306,15 @@ matters (files, numbers, running services) before relying on it.
 
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
-  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **550 passed** with the
-  GNN stack installed (2026-10-26, dashboard; 499 before it). Without it (CI's unit job),
+  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **598 passed** with the
+  GNN stack installed (2026-10-29; 550 on 2026-10-26). Without it (CI's unit job),
   `tests/test_graph.py` skips because torch_geometric is missing; the ring tests need no torch.
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
   `TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 python -m pytest
-  tests/test_integration.py` -- 30 passed (2026-10-26, dashboard; 17 before it). Never point them at the demo stack.
+  tests/test_integration.py` -- 41 passed (CI run #70, 2026-10-29; 30 on 2026-10-26). Never point them at the demo stack.
 - GNN: `python -m src.graph.train`, `python -m src.graph.stack --degree-limit 1000 --epochs 7`,
   `DATABASE_URL=... python -m src.graph.rings` (needs requirements-gnn.txt; 10-45 min on CPU).
 - Lint/types: `ruff check .`, `ruff format --check .`, `python -m mypy` (strict; src, tests, scripts).
@@ -355,13 +369,11 @@ matters (files, numbers, running services) before relying on it.
   0.29923830601075374, threshold 0.12806208431720734. The CLI default `--imbalance
   scale_pos_weight` reproduces v1 exactly. Still open: a guard against dirty-tree training runs.
 
-### Next (pick with the user; nothing is in progress)
+### Next (after the freeze; pick with the user; nothing is in progress)
 - Feedback-label retraining: retrain from analyst labels (`src.dashboard.data.latest_labels`,
   latest labelled review per transaction). Not started.
 - Model registry link: proposal only, cut as code on 2026-10-27; see
   docs/next-steps/model-registry-link.md (link file + GET /model; estimate 60-90 min).
-- GNN: an explicit `uid` (account) node type; today accounts appear only as card + addr1
-  nodes (docs/gnn.md). Not built.
 - Dashboard on Kubernetes (manifest), planned 2026-10-27.
 - Kubernetes beyond the local Minikube deployment (docs/kubernetes.md "Not production"):
   replication, Ingress/TLS, a secrets manager, an MLflow server for in-cluster retraining.

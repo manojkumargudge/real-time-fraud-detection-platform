@@ -178,7 +178,8 @@ blend is served only if the 95% CI lower bound of AP(blend) - AP(v2) is above 0.
 | XGBoost + GNN score, mean of 3 seeds (v2: 0.2935) | 0.2827 (-0.0108) | **0.2798 (-0.0137)**, spread 0.0115: no gain |
 | Blend, transaction variant | w 0.50: 0.2749, delta -0.0241 [-0.0346, -0.0137] | **w 0.50: 0.2746, delta -0.0245 [-0.0354, -0.0140]** |
 | Blend, entity variant | w 0.45: 0.2797, delta -0.0192 [-0.0263, -0.0118] | **w 0.40: 0.2846, delta -0.0144 [-0.0205, -0.0081]** |
-| Top-20 ranked rings, labelled fraud rate per transaction | 19.83% | **31.54%** (14 of the 20 rings are the same) |
+| Top-20 ranked rings, labelled fraud rate per transaction (exploratory, as reported by `rings.py`) | 19.83% | 31.54% (14 of the 20 rings are the same) |
+| Same, strict temporal check (rank on training blocks 1-2, rate on validation rows only; see "Ring ranking check") | 7.96% (9 of 113) | **8.14% (7 of 86)**; base 2.89% in the same 203 rings |
 
 - **Verdict:** the account node does not help. GNN alone and stacking are slightly worse,
   both blends are still worse than XGBoost v2 with the whole CI below zero, so **nothing is
@@ -186,9 +187,10 @@ blend is served only if the 95% CI lower bound of AP(blend) - AP(v2) is above 0.
 - **The weight rule is flawed** (as in the 2026-10-28 notes) and was kept unchanged for
   comparability: on the selection block the best AP was at w = 0.30 (transaction) and 0.20
   (entity), the rule chose 0.50 and 0.40. No other weight was evaluated on validation.
-- **Rings:** ring building is unchanged (uid-device components, same 337 rings, 16 unscored);
-  only the ranking uses the account-graph scores. The higher top-20 rate is weak evidence:
-  the top rings are 2-6 users with 2-57 transactions. The report is
+- **Rings (exploratory):** ring building is unchanged (uid-device components, same 337 rings,
+  16 unscored); only the ranking uses the account-graph scores. The higher reported top-20 rate
+  (31.54% vs 19.83%) does not survive the strict temporal check (8.14% vs 7.96%, 7 and 9 frauds),
+  so the account scores do not rank rings better. The report is
   reports/fraud_rings_account.md; table `fraud_rings` and the dashboard are unchanged
   (`rings.py` refuses a database write from non-default scores).
 - **Files:** reports/gnn_stacking_account.md, reports/gnn_blend_account.md,
@@ -236,9 +238,47 @@ blend is served only if the 95% CI lower bound of AP(blend) - AP(v2) is above 0.
 - **Ranking:** rings are ranked by the mean GNN score of their *scored* transactions. **16
   rings are unscored**: all their transactions fall in the first training block, which has
   no score by design. They're listed separately, not ranked.
-- **Labelled fraud rate (evaluation only):** 19.83% in the top 20 ranked rings, against 3.50%
-  overall and 4.06% across all rings. The top rings are small (2–3 users, mostly a few
-  transactions), so this is weak evidence.
+- **Labelled fraud rate (evaluation only, exploratory):** 19.83% in the top 20 ranked rings,
+  against 3.50% overall and 4.06% across all rings. The top rings are small (2–3 users, mostly a
+  few transactions), so this is weak evidence, and most of it is label carry-over within an
+  entity, not ranking skill (next section).
+
+### Ring ranking check (2026-10-29, read-only)
+
+**Score provenance.** No in-sample GNN score is used. Training time is cut into 3 blocks
+(`time_blocks`, src/graph/stack.py:69). Block 0 has no score (`out = np.full(..., nan)`,
+stack.py:87). Block k = 1, 2 is scored by a GNN trained on blocks < k only (`forward_folds`,
+stack.py:79; scoring at stack.py:91-92). Validation rows are scored by the final GNN trained on
+all training labels (stack.py:123-125), which never saw a validation label. Same for both score
+tables:
+
+| Rows | Count | Score |
+|---|---|---|
+| block 0 | 157,477 | none |
+| block 1 | 157,477 | out-of-fold (GNN trained on block 0) |
+| block 2 | 157,478 | out-of-fold (GNN trained on blocks 0-1) |
+| validation | 118,108 | out-of-sample (GNN trained on blocks 0-2) |
+
+**But the reported ring rate reuses labels.** `summarize_rings` takes `fraud_rate` over *all*
+of a ring's transactions (src/graph/rings.py:148), including unscored block-0 rows and training
+rows whose labels trained the GNN that scored other rows of the same ring. IEEE-CIS also labels
+a card's later transactions after a chargeback, so a ring that was fraud in one block tends to
+score high and be fraud in the next. Recomputed on the same 337 rings (the script reproduces
+the reported 19.83% / 31.54% first):
+
+| Check | Score table | Rings scored | Top 20: members, transactions | Top-20 fraud rate | Base rate, same rows |
+|---|---|---|---|---|---|
+| Reported (`rings.py`): rank on scored rows, rate on all ring rows | default | 321 | 73, 363 | 19.83% | 3.50% all rows |
+| | account | 321 | 62, 260 | 31.54% | 3.50% all rows |
+| Out-of-fold rows only (blocks 1-2 + validation), rank and rate | default | 269 | 70, 339 | 24.19% | 3.79% all scored rows; 4.03% scored ring rows |
+| | account | 269 | 60, 274 | 27.74% | 3.79%; 4.03% |
+| **Strict temporal:** rank on blocks 1-2, rate on validation rows only | default | 203 | 79, 113 | **7.96%** (9 frauds) | 2.89% in these 203 rings; 3.44% all validation |
+| | account | 203 | 74, 86 | **8.14%** (7 frauds) | 2.89%; 3.44% |
+
+Only the strict check uses labels that no scoring model saw and that are later than the
+ranking. On it, the top-20 rings are about 2.8x the base rate of the same rings, but on 7-9
+frauds, and the account scores are no better than the default ones. **The ring ranking is
+exploratory**; the dashboard table and its numbers are unchanged.
 - **The dashboard table:** `fraud_rings` (created if missing) holds the top 20 ranked rings:
   rank, uid count, card count, transaction count, scored transactions, total amount, shared
   devices, mean risk, fraud rate, time span and uids.
