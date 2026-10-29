@@ -40,6 +40,7 @@ from typing import Any
 
 from mlflow.tracking import MlflowClient
 
+from src.models.robust_eval import RUN_DETAIL
 from src.models.tracking import (
     EVALUATION_EXPERIMENT,
     file_sha256,
@@ -88,10 +89,12 @@ def git_commit_of(path: Path, root: Path = ROOT) -> str:
     return out or "untracked"
 
 
-def _json_item(root: Path, name: str, files: Sequence[str], **tags: str) -> Item:
+def _json_item(
+    root: Path, name: str, files: Sequence[str], exclude: tuple[str, ...] = (), **tags: str
+) -> Item:
     paths = [root / "reports" / f for f in files]
     report = json.loads(paths[0].read_text(encoding="utf-8"))
-    return Item(EVALUATION_EXPERIMENT, name, paths, flatten_metrics(report), dict(tags))
+    return Item(EVALUATION_EXPERIMENT, name, paths, flatten_metrics(report, exclude), dict(tags))
 
 
 def evaluation_items(root: Path, client: MlflowClient) -> list[Item]:
@@ -104,12 +107,14 @@ def evaluation_items(root: Path, client: MlflowClient) -> list[Item]:
             root,
             "robust-evaluation-pilot",
             ["robust_evaluation_pilot.json", "robust_evaluation_pilot.md"],
+            RUN_DETAIL,
             mode="pilot",
         ),
         _json_item(
             root,
             "robust-evaluation-full",
             ["robust_evaluation.json", "robust_evaluation.md"],
+            RUN_DETAIL,
             mode="full",
         ),
         _json_item(root, "leakage-audit", ["leakage_audit.json"]),

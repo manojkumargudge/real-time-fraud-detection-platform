@@ -53,6 +53,7 @@ def test_flatten_metrics_keeps_finite_numbers_only() -> None:
         "list.1.c": 2.0,
         "bad key_": 3.0,
     }
+    assert tracking.flatten_metrics({"runs": [1, 2], "agg": 0.5}, exclude=("runs",)) == {"agg": 0.5}
 
 
 def test_report_run_is_idempotent_and_never_touches_the_registry(

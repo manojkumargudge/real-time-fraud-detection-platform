@@ -214,9 +214,12 @@ def _numeric_leaves(value: Any, key: str) -> Iterator[tuple[str, float]]:
             yield from _numeric_leaves(v, f"{key}.{i}" if key else str(i))
 
 
-def flatten_metrics(report: Any) -> dict[str, float]:
-    """Finite numeric leaves of a JSON report as ``a.b.0.c`` metric keys (booleans skipped).
+def flatten_metrics(report: Any, exclude: tuple[str, ...] = ()) -> dict[str, float]:
+    """Finite numeric leaves of a JSON report as ``a.b.0.c`` metric keys (booleans skipped),
+    without the top-level keys in ``exclude`` (per-run detail stays in the report artifact).
     Keys are made MLflow-safe; on a clash after that, the first value wins (logged)."""
+    if exclude and isinstance(report, dict):
+        report = {k: v for k, v in report.items() if k not in exclude}
     out: dict[str, float] = {}
     clashes = 0
     for key, value in _numeric_leaves(report, ""):
