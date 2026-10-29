@@ -125,6 +125,14 @@ def main(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     logger.info("wrote %s", out)
+    from src.models.tracking import flatten_metrics, log_report_run  # mlflow: CLI only
+
+    log_report_run(
+        "leakage-audit",
+        [out],
+        metrics=flatten_metrics(report),
+        tags={"module": "src.models.leakage_audit"},
+    )
     return report
 
 

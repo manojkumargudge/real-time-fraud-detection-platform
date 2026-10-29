@@ -87,6 +87,14 @@ def main(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {out}")
+    from src.models.tracking import flatten_metrics, log_report_run  # mlflow: CLI only
+
+    log_report_run(
+        "model-comparison-seeds",
+        [out],
+        metrics=flatten_metrics(result),
+        tags={"module": "src.models.robustness"},
+    )
     return result
 
 
