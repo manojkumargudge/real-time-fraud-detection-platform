@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
+import pytest
 
 from src.graph.rings import (
     DEVICE,
@@ -120,3 +123,34 @@ def test_only_linking_devices_are_listed_as_shared() -> None:
     assert links == {"rare"}
     rings = summarize_rings(tx, ring_components(tx, 10), links)
     assert rings["shared_devices"].tolist() == [["rare"]]  # not Windows
+
+
+def test_account_graph_never_uses_the_default_score_table() -> None:
+    from src.graph.build import (
+        GNN_ACCOUNT_SCORES_PATH,
+        GNN_SCORES_PATH,
+        checked_scores_path,
+        report_path,
+    )
+
+    assert checked_scores_path("default", None) == GNN_SCORES_PATH
+    assert checked_scores_path("account", None) == GNN_ACCOUNT_SCORES_PATH
+    assert GNN_ACCOUNT_SCORES_PATH.parent.name == "gnn-account"
+    with pytest.raises(SystemExit, match="must not use"):
+        checked_scores_path("account", GNN_SCORES_PATH)
+    assert report_path(Path("reports/x.md"), "account") == Path("reports/x_account.md")
+    assert report_path(Path("reports/x.md"), "default") == Path("reports/x.md")
+
+
+@pytest.mark.parametrize(
+    "argv", [["--graph", "account"], ["--scores", "artifacts/gnn-account/scores.parquet"]]
+)
+def test_rings_refuse_a_db_write_with_non_default_scores(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.graph import rings
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://blocked:blocked@127.0.0.1:1/blocked")
+    monkeypatch.setattr(rings, "load_ieee_cis", lambda *a, **k: pytest.fail("loaded data"))
+    with pytest.raises(SystemExit, match="refusing to write fraud_rings"):
+        rings.main(argv)

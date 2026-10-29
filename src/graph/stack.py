@@ -1,8 +1,11 @@
 """Does the GNN score help XGBoost? GNN score as an extra feature, cross-fitted.
 
-Usage: ``python -m src.graph.stack --degree-limit N --epochs E`` (needs requirements-gnn.txt).
-Writes reports/gnn_stacking.md and ``artifacts/gnn/scores.parquet`` (GNN score per
-transaction, reused by ``src.graph.rings``), and logs to MLflow (experiment ``fraud-gnn``).
+Usage: ``python -m src.graph.stack --degree-limit N --epochs E [--graph account] [--scores P]``
+(needs requirements-gnn.txt). Writes reports/gnn_stacking.md and ``artifacts/gnn/scores.parquet``
+(GNN score per transaction, reused by ``src.graph.rings``), and logs to MLflow (experiment
+``fraud-gnn``, tag ``graph``, with the score table and report as artifacts). ``--graph account``
+adds the account node (``src.graph.build``) and writes reports/gnn_stacking_account.md and
+``artifacts/gnn-account/scores.parquet``; it never overwrites ``artifacts/gnn/scores.parquet``.
 
 Leakage: the feature must be out-of-sample on every XGBoost training row, or XGBoost would
 trust a score fitted to those same labels. Forward chaining: the training window is cut into
@@ -37,12 +40,14 @@ from src.features.split import chronological_split
 from src.graph.build import (
     DEFAULT_DEGREE_LIMIT,
     GNN_SCORE,
-    GNN_SCORES_PATH,
+    GRAPHS,
     TxGraph,
     build_graph,
+    checked_scores_path,
+    report_path,
 )
 from src.graph.data import to_hetero
-from src.graph.train import GnnConfig, log_mlflow, predict, train_model
+from src.graph.train import GnnConfig, log_artifacts, log_mlflow, predict, train_model
 from src.models.compare import (
     ComparisonConfig,
     build_model_frame,
@@ -56,7 +61,6 @@ logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / "reports" / "gnn_stacking.md"
-SCORES = GNN_SCORES_PATH
 FOLDS = 3
 SEEDS = (42, 7, 2026)
 FEATURE = GNN_SCORE
@@ -97,14 +101,23 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     parser.add_argument("--degree-limit", type=int, default=DEFAULT_DEGREE_LIMIT)
     parser.add_argument("--epochs", type=int, required=True, help="fixed GNN epochs (day-1 best)")
     parser.add_argument("--seed", type=int, default=42, help="GNN seed (XGBoost uses SEEDS)")
+    parser.add_argument("--graph", choices=GRAPHS, default="default")
+    parser.add_argument("--scores", type=Path, default=None, help="score table to write")
     args = parser.parse_args(argv)
+    scores_path = checked_scores_path(args.graph, args.scores)
+    report = report_path(REPORT, args.graph)
+    account = args.graph == "account"
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     torch.set_num_threads(os.cpu_count() or 1)
     started = time.perf_counter()
     cfg = GnnConfig(seed=args.seed, max_epochs=args.epochs, degree_limit=args.degree_limit)
     df = load_ieee_cis(DEFAULT_RAW_DIR, usecols=[])
-    train_graph, _ = build_graph(df, include_validation=False, degree_limit=cfg.degree_limit)
-    full_graph, _ = build_graph(df, include_validation=True, degree_limit=cfg.degree_limit)
+    train_graph, _ = build_graph(
+        df, include_validation=False, degree_limit=cfg.degree_limit, account=account
+    )
+    full_graph, _ = build_graph(
+        df, include_validation=True, degree_limit=cfg.degree_limit, account=account
+    )
 
     oof = crossfit_scores(train_graph, cfg)
     final = train_model(train_graph, cfg, train_mask=np.ones(train_graph.num_tx, dtype=bool))
@@ -118,8 +131,8 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
             ),
         ]
     )
-    SCORES.parent.mkdir(parents=True, exist_ok=True)
-    scores.to_parquet(SCORES, index=False)
+    scores_path.parent.mkdir(parents=True, exist_ok=True)
+    scores.to_parquet(scores_path, index=False)
     gnn_seconds = time.perf_counter() - started
 
     hist = HistoryConfig()
@@ -150,10 +163,11 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
         "keep": keep,
         "gnn_alone_valid_pr_auc": gnn_alone,
         "gnn_cfg": cfg,
+        "graph": args.graph,
         "seconds": time.perf_counter() - started,
         "gnn_seconds": gnn_seconds,
     }
-    log_mlflow(
+    run_id = log_mlflow(
         replace(cfg),
         {
             "stack_mean_pr_auc": mean(results["xgboost_plus_gnn"]),
@@ -162,10 +176,11 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
             "seed_spread": spread,
             "gnn_alone_valid_pr_auc": gnn_alone,
         },
-        {"stage": "stacking"},
+        {"stage": "stacking", "graph": args.graph},
     )
-    REPORT.write_text(render(summary), encoding="utf-8")
-    logger.info("wrote %s keep=%s gain=%.4f spread=%.4f", REPORT, keep, gain, spread)
+    report.write_text(render(summary), encoding="utf-8")
+    log_artifacts(run_id, [scores_path, report])
+    logger.info("wrote %s keep=%s gain=%.4f spread=%.4f", report, keep, gain, spread)
     return summary
 
 
@@ -186,14 +201,15 @@ def render(s: dict[str, Any]) -> str:
         [
             "# GNN score as an XGBoost feature",
             "",
-            f"GNN: hetero GraphSAGE, degree limit {cfg.degree_limit:,}, {cfg.max_epochs} fixed "
+            f"GNN: hetero GraphSAGE ({s.get('graph', 'default')} graph), degree limit "
+            f"{cfg.degree_limit:,}, {cfg.max_epochs} fixed "
             f"epochs, seed {cfg.seed}. Training rows get forward-chained scores ({FOLDS} "
             "contiguous time blocks; block k is scored by a GNN trained on blocks < k only; the "
             "first block has no score and is missing for XGBoost); validation rows are scored "
             "by a GNN trained on all training labels. XGBoost is trained exactly "
             "as the served v2 (no class weight) with and without the extra `gnn_score` column. "
             "Validation labels are used only for these metrics. Generated by "
-            "`python -m src.graph.stack`.",
+            f"`python -m src.graph.stack --graph {s.get('graph', 'default')}`.",
             "",
             "| Model | Seed 42 | Seed 7 | Seed 2026 | Mean PR-AUC | Spread |",
             "|---|---|---|---|---|---|",

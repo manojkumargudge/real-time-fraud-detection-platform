@@ -19,7 +19,7 @@ from torch_geometric.data import HeteroData
 from torch_geometric.loader import NeighborLoader
 
 from src.array_types import IntArray
-from src.graph.build import ENTITY_COLUMNS, TxGraph
+from src.graph.build import TxGraph
 
 TX = "tx"
 DEFAULT_FANOUT = (15, 10)  # per edge type: hop 1 (tx -> entity), hop 2 (entity -> tx)
@@ -32,13 +32,17 @@ def to_hetero(graph: TxGraph) -> HeteroData:
     data[TX].y = torch.from_numpy(graph.labels)
     data[TX].time = torch.from_numpy(graph.tx_time)
     data[TX].num_nodes = graph.num_tx
-    for node_type in ENTITY_COLUMNS:
+    for node_type in graph.entity_names:  # ENTITY_COLUMNS order, then account (if built)
         n = len(graph.entity_names[node_type])
         data[node_type].num_nodes = n
         data[node_type].time = torch.zeros(n, dtype=torch.long)
         e = torch.from_numpy(graph.edges[node_type])
         data[TX, f"has_{node_type}", node_type].edge_index = e
         data[node_type, f"rev_{node_type}", TX].edge_index = e.flip(0)
+    for (src, rel, dst), edge in graph.entity_edges.items():  # account graph only
+        e = torch.from_numpy(edge)
+        data[src, rel, dst].edge_index = e
+        data[dst, f"rev_{rel}", src].edge_index = e.flip(0)
     return data
 
 

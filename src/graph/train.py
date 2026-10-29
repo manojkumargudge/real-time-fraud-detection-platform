@@ -238,8 +238,9 @@ def graph_summary(graph: TxGraph) -> dict[str, Any]:
     return {
         "tx_nodes": graph.num_tx,
         "valid_tx_nodes": int(graph.is_valid.sum()),
-        "entity_nodes": {t: len(graph.entity_names[t]) for t in ENTITY_COLUMNS},
-        "edges": {t: int(graph.edges[t].shape[1]) for t in ENTITY_COLUMNS},
+        "entity_nodes": {t: len(v) for t, v in graph.entity_names.items()},
+        "edges": {t: int(v.shape[1]) for t, v in graph.edges.items()},
+        "entity_edges": {"__".join(k): int(v.shape[1]) for k, v in graph.entity_edges.items()},
         "hubs": {t: len(v) for t, v in graph.hubs.items()},
     }
 
@@ -276,6 +277,17 @@ def log_mlflow(cfg: GnnConfig, metrics: dict[str, float], tags: dict[str, str]) 
     )
     client.set_terminated(run.info.run_id)
     return str(run.info.run_id)
+
+
+def log_artifacts(run_id: str, paths: list[Path], artifact_path: str = "outputs") -> None:
+    """Attach files (score table, report) to an existing ``fraud-gnn`` run, once written."""
+    from mlflow.tracking import MlflowClient
+
+    from src.models import tracking
+
+    client = MlflowClient(tracking_uri=tracking.tracking_uri())
+    for path in paths:
+        client.log_artifact(run_id, str(path), artifact_path)
 
 
 def main(argv: list[str] | None = None) -> dict[str, Any]:
