@@ -22,8 +22,8 @@ is not deployed to real traffic.
 | Throughput | **46.83 events/s** on 3 consumers (unthrottled, 1,000-event backlog; scorer p50 48 ms in that run); scorer p50 **41 ms** at a steady 5 events/s | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
 | Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
 | Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
-| Fraud rings | GNN-ranked top-20 rings: 19.83% labelled fraud per transaction vs 3.50% overall. Small sample; most members are missing-address uids, see Known limitations | [reports/fraud_rings.md](reports/fraud_rings.md) |
-| Tests | 580 unit + 41 integration passed (2026-10-28; 573 passed + 2 skipped without the GNN extras) | [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) |
+| Fraud rings (exploratory) | GNN-ranked top-20 rings: 19.83% labelled fraud per transaction vs 3.50% overall as reported, but that reuses labels within a ring; with a strict temporal check (rank on training blocks, rate on validation rows only) 7.96% vs 2.89% in the same rings, on 9 frauds (account graph: 8.14%, 7 frauds). Most members are missing-address uids, see Known limitations | [docs/gnn.md](docs/gnn.md) "Ring ranking check" |
+| Tests | 598 unit passed with the GNN extras (local, 2026-10-29); 573 passed + 10 skipped without them and 41 integration passed (CI run #70, main 305a75a) | CI run #70; older full logs: [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) (2026-10-28) |
 
 On one laptop with 3 consumer containers, the scoring pipeline processed **46.8 events/s** unthrottled. At a steady 5 events/s, scoring one event (Feast state read, features, XGBoost, PostgreSQL write, Feast state push) took **41 ms p50 / 109 ms p99**, and an event was in the database **31 ms p50 / 74 ms p99** after it was produced (1,000 replayed validation events; docs/serving.md "Throughput benchmark").
 
@@ -111,8 +111,8 @@ streamlit, xgboost); it has not hung.
    - MLflow UI: `.venv\Scripts\mlflow ui --backend-store-uri sqlite:///mlflow.db` (repo root),
      then http://127.0.0.1:5000. Run artifacts are in `mlruns/`.
 3. **Unit tests** (no services needed): `.venv\Scripts\python -m pytest
-   --ignore=tests/test_integration.py`. Expect **573 passed, 2 skipped** without the GNN extras
-   (580 passed with `requirements-gnn.txt` installed), about 8 minutes.
+   --ignore=tests/test_integration.py`. Expect **573 passed, 10 skipped** without the GNN extras
+   (598 passed with `requirements-gnn.txt` installed), about 8-15 minutes.
 4. **Integration tests** use a separate Compose project that never touches the demo stack:
    ```
    docker compose -f docker-compose.test.yml up -d --wait
@@ -184,7 +184,9 @@ Every requirement of the project brief, with its status, evidence and gap:
 
 ## Experiment tracking
 
-Training and evaluation runs are in MLflow (local `mlflow.db` + `mlruns/`, no server):
+All training and evaluation runs are in MLflow (local `mlflow.db` + `mlruns/`, no server). Drift
+checks are the exception: the Minikube CronJob (and the host drift job) write them only to
+PostgreSQL; their history (`drift_reports` 1-9) was back-filled into `fraud-drift`.
 
 | Experiment | Runs | Logged by |
 |---|---|---|
