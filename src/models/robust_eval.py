@@ -1122,6 +1122,9 @@ def output_paths(out_dir: Path, mode: str) -> tuple[Path, Path]:
     return out_dir / f"{stem}.json", out_dir / f"{stem}.md"
 
 
+RUN_DETAIL = ("runs",)  # per-pair results: in the JSON artifact, not ~30,000 MLflow metrics
+
+
 def main(argv: list[str] | None = None) -> dict[str, Any]:
     parser = argparse.ArgumentParser(description="Milestone 2.2 robust evaluation")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -1148,6 +1151,14 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     json_path.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     md_path.write_text(render_markdown(report), encoding="utf-8")
     logger.info("wrote %s", json_path)
+    from src.models.tracking import flatten_metrics, log_report_run  # tracking imports us
+
+    log_report_run(
+        f"robust-evaluation-{mode}",
+        [json_path, md_path],
+        metrics=flatten_metrics(report, exclude=RUN_DETAIL),
+        tags={"module": "src.models.robust_eval", "mode": mode},
+    )
     return report
 
 

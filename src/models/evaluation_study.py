@@ -398,6 +398,14 @@ def main(
     )
     (out_dir / "evaluation_study.md").write_text(render_markdown(report), encoding="utf-8")
     logger.info("wrote %s", out_dir / "evaluation_study.json")
+    from src.models.tracking import flatten_metrics, log_report_run  # mlflow: CLI only
+
+    log_report_run(
+        "evaluation-study",
+        [out_dir / "evaluation_study.json", out_dir / "evaluation_study.md"],
+        metrics=flatten_metrics(report),
+        tags={"module": "src.models.evaluation_study"},
+    )
     return report
 
 

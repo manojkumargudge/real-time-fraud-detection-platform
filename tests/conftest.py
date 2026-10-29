@@ -94,11 +94,16 @@ BLOCKED_KAFKA = "127.0.0.1:1"
 
 
 @pytest.fixture(autouse=True)
-def _block_live_services(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+def _block_live_services(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Point unit tests at unreachable services, so a stray connection fails fast instead of
-    touching the live stack, and score with the store path (no Redis). Tests may still
-    delenv/setenv these; integration tests are exempt."""
+    touching the live stack, and score with the store path (no Redis). MLflow goes to a
+    throwaway SQLite file, never the repo's mlflow.db (evaluation mains log their reports).
+    Tests may still delenv/setenv these; integration tests are exempt."""
     if request.node.get_closest_marker("integration") is None:
+        mlflow_db = (tmp_path / "mlflow.db").as_posix()
+        monkeypatch.setenv("MLFLOW_TRACKING_URI", f"sqlite:///{mlflow_db}")
         monkeypatch.setenv("DATABASE_URL", BLOCKED_DATABASE_URL)
         monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", BLOCKED_KAFKA)
         monkeypatch.setenv("FEATURE_SOURCE", "store")

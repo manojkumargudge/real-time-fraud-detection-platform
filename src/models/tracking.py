@@ -13,14 +13,22 @@ other URIs use the server's artifact store. Each run logs:
 
 Only the training CLI imports this module; serving never needs mlflow. The ``artifacts/``
 bundle that serving loads is written exactly as before.
+
+``log_report_run`` logs an evaluation report (no model, never the registry) to experiment
+``fraud-evaluation``: the numeric leaves of its JSON as metrics, its files as artifacts, and
+tags ``source_report`` / ``report_sha256`` (scripts/mlflow_backfill.py uses it for old reports).
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import math
 import os
+import re
 import subprocess
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENT = "fraud-xgboost"
+EVALUATION_EXPERIMENT = "fraud-evaluation"
 MODEL_NAME = "fraud-xgboost"
 CHAMPION_ALIAS = "champion"
 ARTIFACT_PATH = "model"
@@ -52,11 +61,11 @@ def _artifact_location(uri: str) -> str | None:
     return None
 
 
-def _experiment_id(client: MlflowClient, uri: str) -> str:
-    experiment = client.get_experiment_by_name(EXPERIMENT)
+def _experiment_id(client: MlflowClient, uri: str, name: str = EXPERIMENT) -> str:
+    experiment = client.get_experiment_by_name(name)
     if experiment is not None:
         return str(experiment.experiment_id)
-    return str(client.create_experiment(EXPERIMENT, artifact_location=_artifact_location(uri)))
+    return str(client.create_experiment(name, artifact_location=_artifact_location(uri)))
 
 
 def _git(*args: str) -> str | None:
@@ -182,3 +191,124 @@ def register_version(client: MlflowClient, run_id: str, alias: str) -> str:
     client.set_registered_model_alias(MODEL_NAME, alias, str(version.version))
     logger.info("registered %s version=%s alias=%s", MODEL_NAME, version.version, alias)
     return str(version.version)
+
+
+_METRIC_KEY_INVALID = re.compile(r"[^0-9A-Za-z_\-. /]")
+MAX_KEY_LENGTH = 250
+METRICS_PER_BATCH = 1000  # MLflow log_batch limits
+PARAMS_PER_BATCH = 100
+MAX_PARAM_LENGTH = 500
+
+
+def _numeric_leaves(value: Any, key: str) -> Iterator[tuple[str, float]]:
+    if isinstance(value, bool) or value is None:
+        return
+    if isinstance(value, int | float):
+        if math.isfinite(value):
+            yield key, float(value)
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield from _numeric_leaves(v, f"{key}.{k}" if key else str(k))
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            yield from _numeric_leaves(v, f"{key}.{i}" if key else str(i))
+
+
+def flatten_metrics(report: Any, exclude: tuple[str, ...] = ()) -> dict[str, float]:
+    """Finite numeric leaves of a JSON report as ``a.b.0.c`` metric keys (booleans skipped),
+    without the top-level keys in ``exclude`` (per-run detail stays in the report artifact).
+    Keys are made MLflow-safe; on a clash after that, the first value wins (logged)."""
+    if exclude and isinstance(report, dict):
+        report = {k: v for k, v in report.items() if k not in exclude}
+    out: dict[str, float] = {}
+    clashes = 0
+    for key, value in _numeric_leaves(report, ""):
+        safe = _METRIC_KEY_INVALID.sub("_", key)[:MAX_KEY_LENGTH]
+        if safe in out:
+            clashes += 1
+            continue
+        out[safe] = value
+    if clashes:
+        logger.warning("flatten_metrics: %d keys clashed after sanitising; kept the first", clashes)
+    return out
+
+
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _repo_relative(path: Path) -> str:
+    resolved = path.resolve()
+    return (
+        resolved.relative_to(REPO_ROOT).as_posix()
+        if resolved.is_relative_to(REPO_ROOT)
+        else str(path)
+    )
+
+
+def find_report_run(
+    client: MlflowClient, experiment_id: str, run_name: str, report_sha256: str
+) -> str | None:
+    """The run already logged under this name for this report content, if any (the
+    idempotency key: two different reports may have identical bytes)."""
+    query = f"tags.report_sha256 = '{report_sha256}' and attributes.run_name = '{run_name}'"
+    runs = client.search_runs([experiment_id], filter_string=query, max_results=1)
+    return str(runs[0].info.run_id) if runs else None
+
+
+def log_report_run(
+    run_name: str,
+    report_files: list[Path],
+    *,
+    metrics: dict[str, float] | None = None,
+    params: dict[str, Any] | None = None,
+    tags: dict[str, str] | None = None,
+    experiment: str = EVALUATION_EXPERIMENT,
+    report_sha256: str | None = None,
+    uri: str | None = None,
+) -> str:
+    """Log one evaluation report as a run: metrics, params, the files as ``report/`` artifacts.
+
+    Tracking only: no model is logged and the registry is never called. Idempotent: if a run
+    in ``experiment`` named ``run_name`` already carries this ``report_sha256`` (default:
+    sha256 of the first file), its ID is returned and nothing is written. Returns the run ID."""
+    if not report_files:
+        raise ValueError("log_report_run needs at least one report file")
+    uri = uri or tracking_uri()
+    client = MlflowClient(tracking_uri=uri)
+    sha = report_sha256 or file_sha256(report_files[0])
+    experiment_id = _experiment_id(client, uri, experiment)
+    existing = find_report_run(client, experiment_id, run_name, sha)
+    if existing is not None:
+        logger.info("report already logged: run %s (%s, sha256 %s)", existing, run_name, sha[:12])
+        return existing
+    all_tags = {
+        "git_commit": _git("rev-parse", "HEAD") or "unknown",
+        "git_dirty": str(bool(_git("status", "--porcelain"))).lower(),
+        "source_report": _repo_relative(report_files[0]),
+        **(tags or {}),
+        "report_sha256": sha,
+    }
+    run_id = str(client.create_run(experiment_id, tags=all_tags, run_name=run_name).info.run_id)
+    now = int(time.time() * 1000)
+    try:
+        items = [Metric(k, float(v), now, 0) for k, v in (metrics or {}).items()]
+        for i in range(0, len(items), METRICS_PER_BATCH):
+            client.log_batch(run_id, metrics=items[i : i + METRICS_PER_BATCH])
+        plist = [Param(k, str(v)[:MAX_PARAM_LENGTH]) for k, v in (params or {}).items()]
+        for i in range(0, len(plist), PARAMS_PER_BATCH):
+            client.log_batch(run_id, params=plist[i : i + PARAMS_PER_BATCH])
+        for path in report_files:
+            client.log_artifact(run_id, str(path), "report")
+    except Exception:
+        client.set_terminated(run_id, "FAILED")
+        raise
+    client.set_terminated(run_id)
+    logger.info(
+        "logged report run id=%s name=%s experiment=%s metrics=%d",
+        run_id,
+        run_name,
+        experiment,
+        len(items),
+    )
+    return run_id
