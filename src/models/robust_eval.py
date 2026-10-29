@@ -1148,6 +1148,14 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     json_path.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     md_path.write_text(render_markdown(report), encoding="utf-8")
     logger.info("wrote %s", json_path)
+    from src.models.tracking import flatten_metrics, log_report_run  # tracking imports us
+
+    log_report_run(
+        f"robust-evaluation-{mode}",
+        [json_path, md_path],
+        metrics=flatten_metrics(report),
+        tags={"module": "src.models.robust_eval", "mode": mode},
+    )
     return report
 
 

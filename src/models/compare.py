@@ -416,6 +416,14 @@ def main(
     )
     (out_dir / "model_comparison.md").write_text(render_markdown(report), encoding="utf-8")
     logger.info("wrote %s", out_dir / "model_comparison.json")
+    from src.models.tracking import flatten_metrics, log_report_run  # mlflow: CLI only
+
+    log_report_run(
+        "model-comparison",
+        [out_dir / "model_comparison.json", out_dir / "model_comparison.md"],
+        metrics=flatten_metrics(report),
+        tags={"module": "src.models.compare"},
+    )
     return report
 
 
