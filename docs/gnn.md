@@ -15,6 +15,7 @@ because pandas ships an older `msvcp140.dll`; 2.8.0 loads in any order.
 | Train + evaluate | `python -m src.graph.train [--degree-limit N] [--report PATH]` | reports/gnn_checkpoint.md, MLflow `fraud-gnn` |
 | GNN score as XGBoost feature | `python -m src.graph.stack --degree-limit 1000 --epochs 7` | reports/gnn_stacking.md, `artifacts/gnn/scores.parquet` |
 | Fraud rings | `DATABASE_URL=... python -m src.graph.rings` | reports/fraud_rings.md, table `fraud_rings` |
+| Account graph (all three) | `stack --degree-limit 1000 --epochs 7 --graph account`, then `blend --graph account`, then `rings --graph account` (no `DATABASE_URL`) | reports/*_account.md, `artifacts/gnn-account/scores.parquet` |
 
 ## Graph design (`src/graph/build.py`, `src/graph/data.py`)
 
@@ -31,14 +32,15 @@ because pandas ships an older `msvcp140.dll`; 2.8.0 loads in any order.
   | `r_email` | `R_emaildomain` | the recipient's email provider |
   | `addr1` | `addr1` | a billing region code |
 
-- **No account node.** IEEE-CIS has no account or customer ID. Elsewhere in the project
-  `uid` = `card_id` + `addr1` (`src/features/entity.py`) stands in for "account": the history
-  features, the fraud rings and the blend's entity variant all group by it. The GNN graph has
-  **no `uid` node**. It sees the same information only through the separate `card` and `addr1`
+- **No account node in the default graph.** IEEE-CIS has no account or customer ID. Elsewhere
+  in the project `uid` = `card_id` + `addr1` (`src/features/entity.py`) stands in for
+  "account": the history features, the fraud rings and the blend's entity variant all group by
+  it. The default GNN graph has **no `uid` node** (the account graph adds one, see "Account
+  node"). It sees the same information only through the separate `card` and `addr1`
   nodes and through the uid history features on each `tx` node.
-- **Accounts in the graph:** an account is represented only by its `card` + `addr1` nodes,
-  with no separate uid node. Adding an explicit `uid` node type is a next step (not built,
-  not evaluated).
+- **Accounts in the graph:** in the default graph an account is represented only by its
+  `card` + `addr1` nodes. The optional account graph (`--graph account`) adds a `uid` node; it
+  was built and evaluated on 2026-10-29 and does not help (section "Account node").
 - **Transaction features:** the 28 XGBoost inputs (`compare.feature_columns`).
   - The 9 raw numeric and 12 history features get a signed log1p, are standardised with
     fit-split statistics, and get a missing indicator.
@@ -140,6 +142,64 @@ evaluated once per variant at that `w`:
 within the margin") did not pick the best selection weight (entity: 0.20), and the selection
 gain did not carry over to the full-data models. No other weights will be evaluated on
 validation.
+
+## Account node (`--graph account`, 2026-10-29)
+
+**Graph.** `python -m src.graph.stack --graph account` (and `blend`, `rings` with the same flag)
+adds one node type and two edge types to the default graph; nothing else changes:
+
+| Added | Built from | Rule |
+|---|---|---|
+| `account` nodes | `uid` = `card_id` + `addr1` (`src/features/entity.py`) | no node when `addr1` is missing (`<NA>` uids are a card's bucket of address-less transactions, not an account); hub accounts (> 1,000 training transactions) dropped, as for every entity |
+| `tx -> account` (+ reverse) | the transaction's uid | same temporal mechanism as the other entities: node-level time, only strictly earlier transactions are sampled |
+| `account -> card` (+ reverse) | the uid's own card | non-hub cards only; each account has exactly one card, because the uid contains it |
+
+Sizes (training graph / full graph): 36,757 / 40,392 account nodes, 370,647 / 463,997
+tx-account edges, 34,142 / 37,695 account-card edges, 25 hub accounts dropped. The default graph
+is unchanged: node counts, edge counts and the sha256 of every `edge_index` are identical to
+main d8241d7 on the real data (training and full graph) and on the synthetic test frame
+(`test_default_graph_is_identical_to_the_graph_before_the_account_node`).
+
+**Accounts link to devices through transactions** (account -> tx -> device), not directly.
+A direct account -> device edge was not built: entity nodes have time 0 under node-level
+temporal sampling, so a static account -> device edge would show a transaction the devices its
+account uses *later*. Making it time-correct needs edge-level time, and PyG 2.8.1 cannot mix
+node-level and edge-level time in one graph, so every edge type would have to switch to
+edge-level time. That would change the existing graph's sampling.
+
+**Results** (same config and procedure as run c233ecd0 and the 2026-10-28 blend: seed 42,
+7 fixed epochs, degree limit 1,000; weight chosen on the last training block; validation
+looked at once per variant; 1,000 day-block bootstrap resamples). Rule fixed before the run: the
+blend is served only if the 95% CI lower bound of AP(blend) - AP(v2) is above 0.
+
+| | Default graph | Account graph |
+|---|---|---|
+| GNN alone, validation PR-AUC | 0.2021 | **0.2008** |
+| XGBoost + GNN score, mean of 3 seeds (v2: 0.2935) | 0.2827 (-0.0108) | **0.2798 (-0.0137)**, spread 0.0115: no gain |
+| Blend, transaction variant | w 0.50: 0.2749, delta -0.0241 [-0.0346, -0.0137] | **w 0.50: 0.2746, delta -0.0245 [-0.0354, -0.0140]** |
+| Blend, entity variant | w 0.45: 0.2797, delta -0.0192 [-0.0263, -0.0118] | **w 0.40: 0.2846, delta -0.0144 [-0.0205, -0.0081]** |
+| Top-20 ranked rings, labelled fraud rate per transaction | 19.83% | **31.54%** (14 of the 20 rings are the same) |
+
+- **Verdict:** the account node does not help. GNN alone and stacking are slightly worse,
+  both blends are still worse than XGBoost v2 with the whole CI below zero, so **nothing is
+  served**; the served model stays v2.
+- **The weight rule is flawed** (as in the 2026-10-28 notes) and was kept unchanged for
+  comparability: on the selection block the best AP was at w = 0.30 (transaction) and 0.20
+  (entity), the rule chose 0.50 and 0.40. No other weight was evaluated on validation.
+- **Rings:** ring building is unchanged (uid-device components, same 337 rings, 16 unscored);
+  only the ranking uses the account-graph scores. The higher top-20 rate is weak evidence:
+  the top rings are 2-6 users with 2-57 transactions. The report is
+  reports/fraud_rings_account.md; table `fraud_rings` and the dashboard are unchanged
+  (`rings.py` refuses a database write from non-default scores).
+- **Files:** reports/gnn_stacking_account.md, reports/gnn_blend_account.md,
+  reports/fraud_rings_account.md; scores in `artifacts/gnn-account/scores.parquet` (sha256
+  `9a70d6a6…`; `artifacts/gnn/scores.parquet` untouched, still `041078eb…`).
+- **MLflow** (`fraud-gnn`, tag `graph=account`): stacking run `ea7d2ffa` (scores and report as
+  artifacts, `git_dirty=false` at 247b52b), blend runs `873b8101` (transaction) and `fd2a4cea`
+  (entity). The blend runs are tagged `git_dirty=true` only because the new account reports were
+  still untracked when they ran; the code was 247b52b.
+- **Runtime:** stack 166 min (GNN cross-fitting 142 min), blend 42 min, both slowed by other
+  load on the laptop (the final GNN's epochs took 3.6-42 min instead of about 4).
 
 ## Why the GNN loses on this data
 
