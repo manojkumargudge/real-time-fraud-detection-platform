@@ -34,7 +34,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 | XGBoost | Yes | `src/models/train.py`, `compare.train_variant`; served v2 `baseline-9fdad27ea3b0` | |
 | Class weights or SMOTE | Partial | Class weights implemented and compared: v1 was trained with `scale_pos_weight` 27.46 (still the CLI default, `compare.IMBALANCE_METHODS`); over 3 seeds and two later time windows no weight scored higher (mean validation PR-AUC 0.2935 vs 0.2517, +0.0418; W1 +0.0137, W2 +0.0430; reports/imbalance_comparison.md), so v2 is served without weights (`--imbalance none`; automatic retraining uses `none` too, configs/drift.toml). | SMOTE was not used: it creates synthetic transactions with no real history, which breaks the history features. The served model deliberately uses no class weight (a documented, measured deviation). |
 | PR-AUC | Yes | v2 validation PR-AUC **0.2992** (threshold 0.1281: 4.31% alerted, precision 0.3136, recall 0.3930); v1 0.2504; reports/model_v1_vs_v2.md | |
-| All runs in MLflow | Partial | Logged: `src.models.train`, `imbalance_comparison`, `version_comparison`, `src.graph.train` / `stack` / `blend`, drift retraining (`src/monitoring/run_drift.py`). Read-only count in mlflow.db: `fraud-xgboost` 18 runs, `fraud-gnn` 6. | Not logged (reports only): `src.models.compare` (reports/model_comparison.md), `src.models.robustness` (model_comparison_seeds.json), `src.models.evaluation_study`, `src.models.robust_eval` (robust_evaluation*.md), `src.models.leakage_audit`; also challenger v8 exists only in an mlflow.db copy (evidence run). |
+| All runs in MLflow | Yes (drift: back-filled) | Training: `src.models.train`, `imbalance_comparison`, drift challengers (`fraud-xgboost`). Evaluation: `compare`, `robustness`, `evaluation_study`, `robust_eval`, `leakage_audit` log their report at the end of `main()` (`tracking.log_report_run`, experiment `fraud-evaluation`); GNN: `src.graph.train` / `stack` / `blend` (`fraud-gnn`). Back-filled on 2026-10-29 by `scripts/mlflow_backfill.py`: 8 evaluation reports incl. v1 vs v2 and the imbalance decision, `drift_reports` 1-9 (`fraud-drift`), the GNN stacking (c233ecd0, scores sha256 `041078eb4343…`) and rings reports. Registry before/after: aliases and model versions unchanged (README "Experiment tracking"). | New drift checks (incl. the Minikube CronJob) write only to PostgreSQL, not MLflow; `version_comparison` reads the registry but logs nothing itself (its report is back-filled); challenger v8 exists only in an mlflow.db copy (evidence run). |
 | Reproducibility of the champion | Yes | v2 (tagged `git_commit 7754fd4`, `git_dirty=true`) was rebuilt byte for byte from a fresh clone of main on 2026-10-28 (`python -m src.models.train --feature-source pandas --imbalance none`): same model.json sha256 `9fdad27ea3b0…`, validation PR-AUC 0.29923830601075374, threshold 0.12806208431720734; the uncommitted changes did not affect training (README "Setup from a fresh clone"). | The run is still tagged `git_dirty=true`; a guard against dirty-tree training runs is not built. |
 
 ## Step 4: graph, GNN, rings, blend
@@ -110,8 +110,10 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
    host, and the k8s CronJob runs checks only (`--no-retrain`) because MLflow is a local SQLite
    file. The trigger is uncalibrated (it fired only on a window chosen after the default did
    not), and analyst feedback labels are not used for retraining.
-4. **Not every run is in MLflow**: five evaluation modules (compare, robustness,
-   evaluation_study, robust_eval, leakage_audit) write reports only. (The champion v2 is tagged
+4. **MLflow coverage (mostly fixed 2026-10-29)**: the five evaluation modules (compare,
+   robustness, evaluation_study, robust_eval, leakage_audit) now log their reports to
+   `fraud-evaluation`, and the existing reports and `drift_reports` 1-9 were back-filled. Still
+   open: new drift checks write only to PostgreSQL. (The champion v2 is tagged
    `git_dirty=true` but was rebuilt byte for byte from a fresh clone on 2026-10-28.)
 5. **The graph is weaker than the brief implies**: no account node, `DeviceInfo` is a model
    string, the GNN loses to XGBoost (0.2021 vs 0.2992), and ring quality is measured per

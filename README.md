@@ -181,8 +181,30 @@ docs/kubernetes.md "Deploy".)
 Every requirement of the project brief, with its status, evidence and gap:
 [docs/brief-evidence.md](docs/brief-evidence.md).
 
+## Experiment tracking
+
+Training and evaluation runs are in MLflow (local `mlflow.db` + `mlruns/`, no server):
+
+| Experiment | Runs | Logged by |
+|---|---|---|
+| `fraud-xgboost` | XGBoost training (incl. the imbalance study and drift challengers); the registry (`champion` and `production` v2, `challenger` v7) | the training code |
+| `fraud-evaluation` | entity-key comparison, seed robustness, evaluation study, robust evaluation (pilot, full), leakage audit, v1 vs v2, imbalance decision | `compare`, `robustness`, `evaluation_study`, `robust_eval` and `leakage_audit` at the end of `main()`; the existing reports were back-filled |
+| `fraud-gnn` | GNN training, stacking and blend runs (tag `graph`: `default` or `account`); back-filled stacking and fraud-ring report runs | `src.graph.*` |
+| `fraud-drift` | drift checks `drift_reports` 1-9 | back-filled |
+
+Drift checks are stored in PostgreSQL (`drift_reports`). Ids 1-9 were back-filled into
+`fraud-drift` on 2026-10-29 by `python -m scripts.mlflow_backfill` (SELECT only, tracking calls
+only: the registry is never called; idempotent on `report_sha256` + run name). Back-filled runs
+are tagged `backfilled=true`, `source_report`, `report_sha256` and `report_git_commit`.
+**Known limitation:** new drift checks, including the Minikube CronJob's, write only to
+PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
+
 ## Known limitations
 
+- Analyst feedback labels are saved (`case_reviews`, `src.dashboard.data.latest_labels`) but are
+  not used for retraining yet.
+- New drift checks (host job or Minikube CronJob) write only to PostgreSQL, not to MLflow; only
+  `drift_reports` 1-9 were back-filled (see "Experiment tracking").
 - Local demo: single-node Kafka, no authentication or TLS, no secrets manager, local MLflow
   (SQLite, no server).
 - Retraining and promotion run on the host only; the Minikube CronJob runs drift checks only,
