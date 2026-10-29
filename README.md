@@ -18,11 +18,13 @@ is not deployed to real traffic.
 | Fraud rate (IEEE-CIS) | ~3.5% (3.499%) | [reports/eda_summary.md](reports/eda_summary.md) |
 | GNN alone | validation PR-AUC 0.2021 (loses to XGBoost) | [reports/gnn_stacking.md](reports/gnn_stacking.md) |
 | GNN + XGBoost blend | worse than XGBoost for both variants (95% CI [-0.0346, -0.0137] and [-0.0263, -0.0118]); not served | [reports/gnn_blend.md](reports/gnn_blend.md) |
-| Throughput | **46.83 events/s** on 3 consumers, scorer p50 **48 ms** | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
+| Throughput | **46.83 events/s** on 3 consumers (unthrottled, 1,000-event backlog; scorer p50 48 ms in that run); scorer p50 **41 ms** at a steady 5 events/s | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
 | Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
 | Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
 | Fraud rings | GNN-ranked top-20 rings: 19.83% labelled fraud per transaction vs 3.50% overall. Small sample; most members are missing-address uids, see Known limitations | [reports/fraud_rings.md](reports/fraud_rings.md) |
 | Tests | 580 unit + 41 integration passed (2026-10-28; 573 passed + 2 skipped without the GNN extras) | [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) |
+
+On one laptop with 3 consumer containers, the scoring pipeline processed **46.8 events/s** unthrottled. At a steady 5 events/s, scoring one event (Feast state read, features, XGBoost, PostgreSQL write, Feast state push) took **41 ms p50 / 109 ms p99**, and an event was in the database **31 ms p50 / 74 ms p99** after it was produced (1,000 replayed validation events; docs/serving.md "Throughput benchmark").
 
 More results and experiments (class imbalance, alert budgets, train/serve skew, demo stream,
 chaos test): [docs/results.md](docs/results.md).
@@ -199,6 +201,7 @@ Every requirement of the project brief, with its status, evidence and gap:
 - Feast: late events are approximate, concurrent writes to one entity can lose an update, and
   a failed push is only logged ([docs/feature_store.md](docs/feature_store.md)).
 - Dashboard: no authentication, no connection pool, one replica.
+- End-to-end latency is measured to the row's `scored_at`, the start of the database write, so it excludes the Feast state push (~14–16 ms p50) and the offset commit. HTTP `/score` latency has not been re-measured since the 2026-10-25 speed-ups.
 - Security scan results and accepted risks: [docs/security.md](docs/security.md).
 
 ## Next steps
@@ -210,6 +213,7 @@ Every requirement of the project brief, with its status, evidence and gap:
 - Exclude uids with missing addr1 from ring linking.
 - An MLflow server with a shared artifact store, so retraining can run in the cluster.
 - Rank drift features by their impact on the score instead of by gain.
+- Next optimization: `entity_keys` (~17 ms) and `feast_push` (~16 ms) are about two-thirds of scoring time; `predict` is ~3 ms (docs/serving.md "Throughput benchmark", backlog run).
 
 ## How this project was built
 

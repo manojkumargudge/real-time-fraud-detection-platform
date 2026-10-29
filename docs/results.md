@@ -92,7 +92,7 @@ demo (`FEATURE_SOURCE=feast`) and the same 4,000 held-out events
 | | Before | After |
 |---|---|---|
 | Unthrottled throughput, 3 consumers | 13.1 events/s | **46.8 events/s** |
-| End-to-end latency at 5 events/s, p50 / p95 | 114 / 669 ms | 31 / 61 ms |
+| End-to-end latency at 5 events/s, produce -> `scored_at` (start of the DB write, before the Feast push and offset commit), p50 / p95 | 114 / 669 ms | 31 / 61 ms |
 | Scorer latency under load, p50 / p95 | 203 / 357 ms | 48 / 105 ms |
 | Consumer CPU under load | ~1.8 cores each | ~0.5 cores each |
 
