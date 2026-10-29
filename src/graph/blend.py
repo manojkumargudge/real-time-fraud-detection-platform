@@ -1,8 +1,10 @@
 """Does a blend (1 - w) * XGBoost + w * GNN help? Two variants, chosen out of sample (experiment).
 
-Usage: ``python -m src.graph.blend`` after ``python -m src.graph.stack`` (reads
-``artifacts/gnn/scores.parquet``). Writes reports/gnn_blend.md and logs one MLflow run per
-variant (experiment ``fraud-gnn``). Batch only: nothing here is served.
+Usage: ``python -m src.graph.blend [--graph account] [--scores P]`` after the matching
+``python -m src.graph.stack`` run (reads ``artifacts/gnn/scores.parquet``, or
+``artifacts/gnn-account/scores.parquet`` for ``--graph account``). Writes reports/gnn_blend.md
+(``gnn_blend_account.md``) and logs one MLflow run per variant (experiment ``fraud-gnn``, tag
+``graph``, the report as an artifact). Batch only: nothing here is served.
 
 Variants (``gnn`` is the second blend input):
 
@@ -39,7 +41,7 @@ from src.data.load import DEFAULT_RAW_DIR, KEY, LABEL, load_ieee_cis
 from src.features.entity import USER_ID, build_entity_keys
 from src.features.history import TIME, HistoryConfig
 from src.features.split import chronological_split
-from src.graph.build import GNN_SCORE, GNN_SCORES_PATH
+from src.graph.build import GNN_SCORE, GRAPHS, checked_scores_path, report_path
 from src.models.compare import (
     ComparisonConfig,
     build_model_frame,
@@ -129,14 +131,16 @@ def compare(side: Side, w: float) -> dict[str, Any]:
     }
 
 
-def build_sides(raw_dir: Path) -> tuple[dict[str, Side], dict[str, Side], dict[str, Any]]:
+def build_sides(
+    raw_dir: Path, scores_path: Path
+) -> tuple[dict[str, Side], dict[str, Side], dict[str, Any]]:
     """Selection (last training block) and validation sides for both variants."""
     df = load_ieee_cis(raw_dir, usecols=[])
     hist = HistoryConfig()
     cols = feature_columns(hist)
     frame = build_model_frame(df, "baseline", hist)
     frame[USER_ID] = build_entity_keys(df)[USER_ID]
-    scores = pd.read_parquet(GNN_SCORES_PATH).set_index(KEY)
+    scores = pd.read_parquet(scores_path).set_index(KEY)
     frame[GNN_SCORE] = frame[KEY].map(scores[GNN_SCORE]).to_numpy()
     frame["gnn_source"] = frame[KEY].map(scores["source"]).to_numpy()
     if frame["gnn_source"].isna().any():
@@ -179,7 +183,10 @@ def build_sides(raw_dir: Path) -> tuple[dict[str, Side], dict[str, Side], dict[s
         "train_end": boundary.train_end,
         "selection_days": (int(last[TIME].min() // 86_400), int(last[TIME].max() // 86_400)),
         "early_rows": len(early),
-        "scores_sha256": hashlib.sha256(GNN_SCORES_PATH.read_bytes()).hexdigest(),
+        "scores_sha256": hashlib.sha256(scores_path.read_bytes()).hexdigest(),
+        "scores_path": scores_path.resolve().relative_to(ROOT).as_posix()
+        if scores_path.resolve().is_relative_to(ROOT)
+        else str(scores_path),
     }
     return selection, validation, info
 
@@ -199,6 +206,7 @@ def log_mlflow(variant: str, result: dict[str, Any], info: dict[str, Any]) -> st
     tags = {
         "stage": "blend",
         "variant": variant,
+        "graph": info["graph"],
         "git_commit": tracking._git("rev-parse", "HEAD") or "unknown",
         "git_dirty": str(bool(tracking._git("status", "--porcelain"))).lower(),
     }
@@ -234,10 +242,15 @@ def log_mlflow(variant: str, result: dict[str, Any], info: dict[str, Any]) -> st
 def main(argv: list[str] | None = None) -> dict[str, Any]:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW_DIR)
+    parser.add_argument("--graph", choices=GRAPHS, default="default")
+    parser.add_argument("--scores", type=Path, default=None, help="score table to read")
     args = parser.parse_args(argv)
+    scores_path = checked_scores_path(args.graph, args.scores)
+    report = report_path(REPORT, args.graph)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     started = time.perf_counter()
-    selection, validation, info = build_sides(args.raw_dir)
+    selection, validation, info = build_sides(args.raw_dir, scores_path)
+    info["graph"] = args.graph
     results: dict[str, Any] = {}
     for variant in VARIANTS:
         sel, val = selection[variant], validation[variant]
@@ -265,8 +278,12 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
         results[variant]["run_id"] = log_mlflow(variant, results[variant], info)
         logger.info("%s chosen w=%.2f validation %s", variant, chosen, valid_result)
     summary = {"results": results, "info": info, "seconds": time.perf_counter() - started}
-    REPORT.write_text(render(summary), encoding="utf-8")
-    logger.info("wrote %s", REPORT)
+    report.write_text(render(summary), encoding="utf-8")
+    from src.graph.train import log_artifacts  # needs torch, like log_mlflow's experiment
+
+    for r in results.values():
+        log_artifacts(r["run_id"], [report])
+    logger.info("wrote %s", report)
     return summary
 
 
@@ -286,8 +303,10 @@ def render(s: dict[str, Any]) -> str:
     out = [
         "# GNN + XGBoost blend",
         "",
-        "`(1 - w) * xgb + w * gnn`, generated by `python -m src.graph.blend` from "
-        f"`artifacts/gnn/scores.parquet` (sha256 `{info['scores_sha256'][:16]}…`).",
+        "`(1 - w) * xgb + w * gnn`, generated by "
+        f"`python -m src.graph.blend --graph {info.get('graph', 'default')}` from "
+        f"`{info.get('scores_path', 'artifacts/gnn/scores.parquet')}` "
+        f"(sha256 `{info['scores_sha256'][:16]}…`).",
         "",
         f"**Selection (never validation):** the last training block (days {d0}-{d1}), with "
         "out-of-fold inputs only: XGBoost (v2 recipe, seed 42) trained on the earlier blocks "
@@ -300,6 +319,7 @@ def render(s: dict[str, Any]) -> str:
     ]
     for variant, r in s["results"].items():
         v = r["validation"]
+        best = max(r["sweep"], key=lambda x: x["ap_blend"])
         out += [
             f"## Variant: {variant}",
             "",
@@ -321,6 +341,10 @@ def render(s: dict[str, Any]) -> str:
             f"95% CI [{v['ci95_low']:+.4f}, {v['ci95_high']:+.4f}] ({v['days']} days, "
             f"{v['resamples']:,} resamples); **{verdict(v)}**. MLflow run `{r['run_id']}`.",
             "",
+            f"Rule flaw (known since 2026-10-28, rule kept unchanged for comparability): the best "
+            f"selection AP was at w = {best['w']:.2f} ({best['ap_blend']:.4f}), the rule chose "
+            f"w = {r['chosen_w']:.2f}.",
+            "",
         ]
     out += [
         "## Limitations",
@@ -335,8 +359,9 @@ def render(s: dict[str, Any]) -> str:
         "that suits the weaker selection models need not suit the final ones.",
         "- **Entity variant:** a static uid average, frozen at the end of the history window; "
         "most uids have few scored transactions behind it, and block 0 has no scores by design.",
-        '- **Rule:** "largest w not worse by more than the margin" can pick a w that adds '
-        "nothing; the verdict line says whether there is evidence of a gain.",
+        '- **Rule (flawed):** "largest w not worse by more than the margin" does not pick the '
+        "best `w` and can pick a `w` that adds nothing or even loses on the selection block; the "
+        "verdict line says whether there is evidence of a gain.",
         "- One GNN seed (42) and one XGBoost seed (42); the stacking report shows a seed spread "
         "of about 0.01 PR-AUC for XGBoost alone.",
         "",

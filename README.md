@@ -18,6 +18,7 @@ is not deployed to real traffic.
 | Fraud rate (IEEE-CIS) | ~3.5% (3.499%) | [reports/eda_summary.md](reports/eda_summary.md) |
 | GNN alone | validation PR-AUC 0.2021 (loses to XGBoost) | [reports/gnn_stacking.md](reports/gnn_stacking.md) |
 | GNN + XGBoost blend | worse than XGBoost for both variants (95% CI [-0.0346, -0.0137] and [-0.0263, -0.0118]); not served | [reports/gnn_blend.md](reports/gnn_blend.md) |
+| GNN with an account (uid) node | no gain: GNN alone 0.2008; blends still worse than XGBoost (transaction -0.0245 [-0.0354, -0.0140], entity -0.0144 [-0.0205, -0.0081]); not served | [docs/gnn.md](docs/gnn.md) "Account node", [reports/gnn_blend_account.md](reports/gnn_blend_account.md) |
 | Throughput | **46.83 events/s** on 3 consumers (unthrottled, 1,000-event backlog; scorer p50 48 ms in that run); scorer p50 **41 ms** at a steady 5 events/s | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
 | Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
 | Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
@@ -214,8 +215,9 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
   clone of main reproduced it byte for byte on 2026-10-28 (same model.json sha256, see Setup).
 - The threshold is chosen on a training holdout and applied to the refit model, so the alert
   rate can drift.
-- IEEE-CIS has no account ID: "user" is a proxy (card + address), and the graph has no account
-  node.
+- IEEE-CIS has no account ID: "user" is a proxy (card + address). The default GNN graph has no
+  account node; the optional account graph adds one but links accounts to devices only through
+  transactions (a direct edge needs edge-level time), and it did not improve the GNN.
 - Fraud rings: a missing addr1 becomes part of the uid (as `<NA>`), so all of a card's
   transactions without an address count as one customer. This affects most of the stored rings:
   of the top 20, 16 contain at least one such uid and 9 consist only of them (45 of 73 members,
@@ -231,7 +233,6 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
 - Retrain from analyst feedback labels (`case_reviews`, latest label per transaction).
 - Model registry link: a link file plus `GET /model` so serving reports its MLflow version
   ([docs/next-steps/model-registry-link.md](docs/next-steps/model-registry-link.md)).
-- An explicit account (`uid`) node in the GNN graph.
 - Exclude uids with missing addr1 from ring linking.
 - An MLflow server with a shared artifact store, so retraining can run in the cluster.
 - Rank drift features by their impact on the score instead of by gain.

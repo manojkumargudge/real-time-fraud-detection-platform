@@ -41,7 +41,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 
 | Item | Status | Evidence | Gap |
 |---|---|---|---|
-| Graph of accounts, devices, cards | Partial | `src/graph/build.py` `ENTITY_COLUMNS`. GNN graph nodes: `tx`, `card` (card1-card6), `device` (`DeviceInfo`), `p_email`, `r_email`, `addr1`. **No uid / account node.** docs/gnn.md "Graph design". | Accounts appear only as card + addr1 nodes, and `DeviceInfo` is a device model / OS string (`Windows`, `iOS Device`), not a device ID. |
+| Graph of accounts, devices, cards | Yes (account graph optional; no gain) | `src/graph/build.py` `ENTITY_COLUMNS`. Default GNN graph nodes: `tx`, `card` (card1-card6), `device` (`DeviceInfo`), `p_email`, `r_email`, `addr1`. `--graph account` adds an `account` (uid) node with tx-account and account-card edges; accounts link to devices through transactions. Evaluated 2026-10-29 (docs/gnn.md "Account node"): GNN alone 0.2008 vs 0.2021, blends still worse than XGBoost v2 (CI below zero), not served. Default graph verified unchanged (edge_index sha256 per edge type). | No direct account-device edge (needs edge-level time, which would change the existing graph's sampling); no account node for uids with a missing addr1; `DeviceInfo` is a device model / OS string (`Windows`, `iOS Device`), not a device ID. |
 | GNN (PyG) | Yes | Hetero GraphSAGE with temporal sampling (`src/graph/model.py`, `data.py`, `train.py`); official validation PR-AUC **0.2021** (MLflow run c233ecd0, reproduced, scores bit-identical) vs XGBoost 0.2992; leakage tests in `tests/test_graph.py` | It loses to XGBoost by about 0.10 PR-AUC; not tuned. |
 | Fraud rings | Yes | `src/graph/rings.py` `ring_components`: union-find connected components of the bipartite **uid - DeviceInfo** graph; devices shared by 2-10 uids only, hub uids (> 3 devices or > 1,000 tx) excluded; card_id never a link. `summarize_rings`, `write_table` -> table `fraud_rings`. **The GNN ranks rings (mean score), it does not build them.** reports/fraud_rings.md: 337 rings, 1,378 users. | Rings rest on a weak link (device model strings) and hand-picked limits. A missing addr1 becomes part of the uid (`<NA>`), so a card's transactions without an address count as one customer: of the top 20 rings in `fraud_rings`, 16 contain such a uid and 9 consist only of them (45 of 73 members). |
 | Ring quality vs base rate | Partial | Measured: `summarize_rings` `fraud_rate` = labelled fraud rate of the ring's transactions. reports/fraud_rings.md: **top-20 ranked rings 19.83%, all rings 4.06%, overall 3.50%.** | Measured per transaction only, not per ring member (uid); the top rings are 2-3 users, so the evidence is weak. |
@@ -115,9 +115,11 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
    `fraud-evaluation`, and the existing reports and `drift_reports` 1-9 were back-filled. Still
    open: new drift checks write only to PostgreSQL. (The champion v2 is tagged
    `git_dirty=true` but was rebuilt byte for byte from a fresh clone on 2026-10-28.)
-5. **The graph is weaker than the brief implies**: no account node, `DeviceInfo` is a model
-   string, the GNN loses to XGBoost (0.2021 vs 0.2992), and ring quality is measured per
-   transaction only on tiny rings.
+5. **The graph is weaker than the brief implies**: the account node exists only in the
+   optional account graph (2026-10-29) and links to devices through transactions; it did not
+   help (GNN alone 0.2008, blends still worse than XGBoost). `DeviceInfo` is a model string,
+   the GNN loses to XGBoost (0.2021 vs 0.2992), and ring quality is measured per transaction
+   only on tiny rings.
 6. **Stale supporting docs (fixed)**: the docs/serving.md diagram, docs/dashboard.md "Not in
    Kubernetes yet" and other stale doc claims were fixed in PR #13; test results were
    regenerated at 915ffdb (580 unit, 41 integration passed). README.md stale items remain
