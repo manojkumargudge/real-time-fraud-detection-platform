@@ -68,3 +68,6 @@ reports/bench/
 
 # Scheduled drift job logs (scripts/scheduled_drift.ps1).
 logs/
+
+# Load test raw output (scripts/load_test_score.py); the committed copy is in docs/evidence/.
+reports/load_test/

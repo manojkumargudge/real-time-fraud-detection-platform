@@ -44,10 +44,36 @@ Aim for production-style engineering, but document operational, security,
 scalability, and compliance limitations honestly. Do not claim financial-sector
 production readiness without appropriate evidence.
 
-## Current project state (2026-10-30: scheduled retraining on the host; freeze otherwise final)
+## Current project state (2026-10-30 end of day: feature freeze; PRs #28-#32 merged)
 
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
+
+### 2026-10-30 end of day (read this first)
+- **Feature freeze** again after this day (user decision 2026-10-30). `main` = merge of PR #32
+  `housekeeping-eod` on top of: #31 load test (432b8f8), #30 Why-flagged panel (1887b58),
+  #29 brief-evidence wording + "ask before any drop/delete/overwrite" rule (edb2e30), #28
+  scheduled retraining (a24cfd7). CI green on all. Verify with `git log --first-parent`.
+- Demo DB 118,108 / 5,093 / 9 / 20 / 6; registry champion v2, production v2, challenger v7.
+  Demo stack stopped (`docker compose stop`, volumes kept); Minikube stopped. Images: api
+  `585e02c00550`, consumer `9c282577c727`, dashboard `7621290406d0` (Why-flagged).
+  State: backups/state-2026-10-30-eod.txt.
+- brief-evidence (PR #29): 36 Yes, 1 Measured (rings, exploratory), 1 Partial (Demo), 2 No
+  (Presentation, Reflection).
+- **Why flagged** (PR #30, docs/dashboard.md, README "Dashboard"): read-only case-page panel,
+  top 5 raising / top 3 lowering features from the served v2 bundle's `pred_contribs`; the
+  feature vector is rebuilt with the point-in-time batch code by `python -m
+  src.dashboard.explain build` (gitignored `artifacts/explain/features.csv.gz`, mounted
+  read-only); parity check per case (sigmoid(margin) = stored score within 1e-6) passes on all
+  5,093 alerts (max 7.0e-8). `tests/test_explain_real.py` is opt-in (EXPLAIN_DEMO_DATABASE_URL,
+  read-only). Minikube dashboard image is one feature behind.
+- **Load test** (PR #31, docs/evidence/2026-10-30-load-test/): `POST /score` writes for new
+  transactions, so it ran on the fraud_bench copy with a temporary API (127.0.0.1:18001).
+  One client ~35 req/s, p50 25 ms; knee between 1 and 5 clients (store = one connection behind
+  a lock, `src/serving/store.py`); unexplained multi-second stalls at c=20 in 2 of 3 runs.
+  Not comparable to the 46.83 events/s Kafka figure. Raw output in gitignored reports/load_test/.
+- Tests: 606 unit passed + 1 skipped (opt-in) locally with the GNN extras; CI 581 passed +
+  11 skipped, 41 integration (PR #30 run #77).
 
 ### 2026-10-30: scheduled retraining (freeze lifted for this change only)
 - Windows Task Scheduler task `FraudDrift-Retrain` (every 6 h, **registered DISABLED**):
@@ -325,15 +351,15 @@ matters (files, numbers, running services) before relying on it.
 
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
-  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **598 passed** with the
-  GNN stack installed (2026-10-29; 550 on 2026-10-26). Without it (CI's unit job),
+  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **606 passed, 1 skipped**
+  with the GNN stack installed (2026-10-30; 598 on 2026-10-29). Without it (CI's unit job),
   `tests/test_graph.py` skips because torch_geometric is missing; the ring tests need no torch.
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
   `TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 python -m pytest
-  tests/test_integration.py` -- 41 passed (CI run #70, 2026-10-29; 30 on 2026-10-26). Never point them at the demo stack.
+  tests/test_integration.py` -- 41 passed (CI run #77, 2026-10-30; 30 on 2026-10-26). Never point them at the demo stack.
 - GNN: `python -m src.graph.train`, `python -m src.graph.stack --degree-limit 1000 --epochs 7`,
   `DATABASE_URL=... python -m src.graph.rings` (needs requirements-gnn.txt; 10-45 min on CPU).
 - Lint/types: `ruff check .`, `ruff format --check .`, `python -m mypy` (strict; src, tests, scripts).
