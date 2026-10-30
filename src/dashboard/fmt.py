@@ -42,6 +42,13 @@ def value(v: Any) -> str:
     return str(v)
 
 
+def feature_value(v: Any) -> str:
+    """A model input for display: like ``value``, but fractions rounded to 4 decimals."""
+    if isinstance(v, float) and not math.isnan(v) and not v.is_integer():
+        return f"{v:.4f}"
+    return value(v)
+
+
 def amount(v: Any) -> str:
     """A transaction amount in dollars with 2 decimals, e.g. ``$994.00``."""
     if v is None or (isinstance(v, float) and math.isnan(v)):

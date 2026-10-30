@@ -159,8 +159,14 @@ services:
       DATABASE_URL: postgresql://fraud:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/fraud
       DASHBOARD_REPORTS_DIR: /app/reports/drift
       PYTHONPATH: /app
+      # Why-flagged panel (src/dashboard/explain.py): the served bundle and the feature file
+      # built on the host (python -m src.dashboard.explain build); both read-only.
+      EXPLAIN_MODEL_DIR: /app/artifacts/baseline
+      EXPLAIN_FEATURES_FILE: /app/artifacts/explain/features.csv.gz
     volumes:
       - ./reports/drift:/app/reports/drift:ro
+      - ./artifacts/baseline:/app/artifacts/baseline:ro
+      - ./artifacts/explain:/app/artifacts/explain:ro
     ports:
       - "127.0.0.1:${DASHBOARD_HOST_PORT:-8501}:8501"
     depends_on:

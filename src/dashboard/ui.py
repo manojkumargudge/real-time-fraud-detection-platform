@@ -45,6 +45,8 @@ COLUMN_LABELS = {
     "version": "Version",
     "field": "Field",
     "value": "Value",
+    "feature": "Feature",
+    "contribution": "Contribution (log-odds)",
     "created_at": "Time (IST)",
     "analyst": "Analyst",
     "from_status": "From",
@@ -82,6 +84,10 @@ RINGS_NOT_RUN = (
     "Fraud ring detection has not run in this deployment (it is a batch job run on the host)."
 )
 NOT_AVAILABLE = "—"  # a ring or drift value from a batch job that has not run here
+EXPLAIN_NOT_RUN = (
+    "No explanation data in this deployment: the feature file is built on the host "
+    "(python -m src.dashboard.explain build) and mounted with the served model."
+)
 DRIFT_ROW8_NOTE = (
     "Row 8 was a --force-retrain run recorded before the forced flag was fixed (a forced run "
     "whose rule also fired was stored as not forced), so its stored flag says not forced. "
@@ -208,6 +214,24 @@ def repo() -> Any:
         st.stop()
     reports = os.environ.get("DASHBOARD_REPORTS_DIR", str(REPO_ROOT / "reports" / "drift"))
     return _default_repository(dsn, reports)
+
+
+@st.cache_resource(show_spinner="Loading the model and the feature file...")
+def _explainer(model_dir: str, features_file: str) -> Any:
+    from src.dashboard.explain import Explainer  # xgboost: only when the panel is shown
+
+    if not Path(features_file).is_file() or not (Path(model_dir) / "model.json").is_file():
+        return None
+    return Explainer.load(Path(model_dir), Path(features_file))
+
+
+def explainer() -> Any:
+    """The Why-flagged explainer (served bundle + feature file), or None where not deployed."""
+    from src.dashboard import explain
+
+    model_dir = os.environ.get("EXPLAIN_MODEL_DIR", str(explain.MODEL_DIR))
+    features = os.environ.get("EXPLAIN_FEATURES_FILE", str(explain.FEATURES_FILE))
+    return _explainer(model_dir, features)
 
 
 @st.cache_data(ttl=READ_TTL_S, show_spinner=False)

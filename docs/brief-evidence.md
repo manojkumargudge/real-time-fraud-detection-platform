@@ -70,7 +70,7 @@ with PostgreSQL / Kafka / Redis, security scans, image push).
 
 | Item | Status | Evidence | Gap |
 |---|---|---|---|
-| Streamlit dashboard: alerts, case status | Yes | `src/dashboard/` (Overview, Alert queue, Case detail, Fraud rings, Drift); workflow `workflow.py`, optimistic locking; `tests/test_dashboard.py` drives the real user path; docs/dashboard.md; screenshots of every page in [docs/screenshots/](screenshots/) (01-overview to 08-drift, demo database, 2026-10-28) | No authentication (self-declared analyst name). |
+| Streamlit dashboard: alerts, case status | Yes | `src/dashboard/` (Overview, Alert queue, Case detail with a read-only Why-flagged panel (served model's per-feature contributions, parity-checked against the stored score, `src/dashboard/explain.py`), Fraud rings, Drift); workflow `workflow.py`, optimistic locking; `tests/test_dashboard.py` drives the real user path; docs/dashboard.md; screenshots of every page in [docs/screenshots/](screenshots/) (01-overview to 08-drift, demo database, 2026-10-28) | No authentication (self-declared analyst name). |
 | Feedback labels | Yes | Dashboard captures feedback labels (append-only case_reviews). Using them in retraining is a next step: all current labels fall in the validation period, so a clean holdout would exclude them. | |
 | Kubernetes (Minikube) | Yes | `k8s/` (kustomization), docs/kubernetes.md "Results" (2026-10-25: 30 events, scores identical to host batch, liveness restart verified) | Not production: single replicas, no Ingress/TLS, no secrets manager. |
 

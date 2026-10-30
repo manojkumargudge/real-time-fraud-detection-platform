@@ -1,12 +1,13 @@
 """Case detail: transaction, score, model, linked ring, other alerts of the customer, status
-change, review history."""
+change, review history, why flagged (read-only feature contributions)."""
 
 from __future__ import annotations
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
-from src.dashboard import case_form, fmt, ui, workflow
+from src.dashboard import case_form, explain, fmt, ui, workflow
 
 HISTORY_COLUMNS = [
     "created_at",
@@ -179,3 +180,59 @@ if history:
     st.dataframe(ui.labelled(reviews), hide_index=True)
 else:
     st.caption("No reviews yet.")
+
+st.subheader("Why flagged")
+explainer = ui.explainer()
+explanation = (
+    explainer.explain(int(case["transaction_id"]), float(case["score"])) if explainer else None
+)
+if explainer is None:
+    st.info(ui.EXPLAIN_NOT_RUN)
+elif explanation is None:
+    st.info("No feature vector for this transaction in the explanation data.")
+elif not explanation.parity_ok:
+    st.warning(
+        "Explanation not shown: the parity check failed, so the rebuilt features are not the "
+        f"ones that were scored (|sigmoid(margin) - stored score| = "
+        f"{explanation.score_diff:.2e}, |contributions + bias - margin| = "
+        f"{explanation.margin_diff:.2e})."
+    )
+else:
+    rows = [(c, "raises the score") for c in explanation.raising]
+    rows += [(c, "lowers the score") for c in explanation.lowering]
+    table = pd.DataFrame(
+        {
+            "feature": [c.label for c, _ in rows],
+            "value": [fmt.feature_value(c.value) for c, _ in rows],
+            "contribution": [round(c.contribution, 4) for c, _ in rows],
+            "direction": [d for _, d in rows],
+        }
+    )
+    chart = (
+        alt.Chart(table)
+        .mark_bar()
+        .encode(
+            y=alt.Y("feature:N", sort=None, title=None, axis=alt.Axis(labelLimit=360)),
+            x=alt.X("contribution:Q", title="Contribution to the score (log-odds)"),
+            color=alt.Color(
+                "direction:N",
+                title=None,
+                scale=alt.Scale(
+                    domain=["raises the score", "lowers the score"], range=["#c0392b", "#2e86c1"]
+                ),
+                legend=alt.Legend(orient="bottom"),
+            ),
+            tooltip=["feature", "value", "contribution"],
+        )
+    )
+    st.altair_chart(chart, width="stretch")
+    st.dataframe(ui.labelled(table[["feature", "value", "contribution"]]), hide_index=True)
+    st.caption(explain.CAPTION)
+    st.caption(
+        f"Top {len(explanation.raising)} features raising and top {len(explanation.lowering)} "
+        "lowering this transaction's score, from the served model's built-in per-feature "
+        "contributions (XGBoost pred_contribs). Parity check passed: all feature contributions "
+        f"plus the bias ({explanation.bias:+.4f}) add up to the model's margin "
+        f"{explanation.margin:+.4f}, and sigmoid(margin) = "
+        f"{explanation.model_score:.6f} matches the stored score {explanation.stored_score:.6f}."
+    )
