@@ -29,6 +29,8 @@ and containerized deployment.
   non-empty and print row counts.
 - Never claim tests, benchmarks, or deployments succeeded without verification.
 - Ask before destructive operations or changes that may discard data.
+- Never drop, delete or overwrite a database, file, folder or registry entry without asking
+  first, even copies or test data.
 - Avoid unnecessary dependencies, repeated explanations, and large file dumps.
 
 ## Workflow
