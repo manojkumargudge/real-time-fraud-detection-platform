@@ -37,7 +37,9 @@ if ($Unregister) {
     else { "$TaskName is not registered" }
     exit 0
 }
-if (($Enable -or $Disable) -and $existing) {
+$definition = @("Once", "At", "ScriptArguments", "EveryHours") | Where-Object { $PSBoundParameters.ContainsKey($_) }
+if (($Enable -or $Disable) -and $existing -and -not $definition) {
+    # Only switch an existing task on or off; passing any schedule parameter re-registers it.
     if ($Enable) { Enable-ScheduledTask -TaskName $TaskName | Out-Null; "enabled $TaskName" }
     else { Disable-ScheduledTask -TaskName $TaskName | Out-Null; "disabled $TaskName" }
     Get-ScheduledTask -TaskName $TaskName | Get-ScheduledTaskInfo |
