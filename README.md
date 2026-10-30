@@ -177,6 +177,29 @@ kubectl apply -k k8s
 (The full order, including the namespace, data stores and the materialize Job, is in
 docs/kubernetes.md "Deploy".)
 
+## Scheduled retraining (host, Windows Task Scheduler)
+
+Task `FraudDrift-Retrain` runs the drift job with automatic retraining every 6 hours:
+`scripts/scheduled_drift.ps1` -> `python -m src.monitoring.run_drift` (retraining on, no
+`--force-retrain`). When a rule in `configs/drift.toml` fires, it trains a challenger
+(alias `challenger`) and runs the bootstrap promotion gate; `champion` moves only if the gate
+passes, and `production` is never moved. It uses the repo's `mlflow.db` and the demo database
+(password read from `.env`, never logged), checks PostgreSQL first, and logs to `logs/`.
+
+```powershell
+# from the repo root; the task is registered DISABLED
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\register_drift_task.ps1            # (re)register, disabled
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\register_drift_task.ps1 -Enable    # start the schedule
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\register_drift_task.ps1 -Disable   # pause it
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\register_drift_task.ps1 -Unregister
+Get-ScheduledTask -TaskName FraudDrift-Retrain | Get-ScheduledTaskInfo   # last run, result, next run
+```
+
+While enabled, every run adds a `drift_reports` row to the demo database, and a run that fires
+registers a new challenger version in the real registry; the demo stack (at least `postgres`)
+must be running, otherwise the run exits with code 2. Proof run (started by Task Scheduler, on
+copies): [docs/evidence/2026-10-30-scheduled-retrain/](docs/evidence/2026-10-30-scheduled-retrain/README.md).
+
 ## Brief to evidence
 
 Every requirement of the project brief, with its status, evidence and gap:
@@ -210,8 +233,11 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
   `drift_reports` 1-9 were back-filled (see "Experiment tracking").
 - Local demo: single-node Kafka, no authentication or TLS, no secrets manager, local MLflow
   (SQLite, no server).
-- Retraining and promotion run on the host only; the Minikube CronJob runs drift checks only,
-  and `production` is never moved automatically ([docs/monitoring.md](docs/monitoring.md)).
+- Scheduled retraining (Task Scheduler, every 6 h) runs on the host only, and only while the
+  laptop is on, awake and the user is logged on; a missed run starts when the laptop is back.
+  The Minikube CronJob still runs drift checks only (`--no-retrain`): in-cluster retraining
+  needs an MLflow server with a shared artifact store. `production` is never moved
+  automatically ([docs/monitoring.md](docs/monitoring.md)).
 - The drift trigger is not calibrated on drift-free periods and has no minimum sample size.
 - The served v2's MLflow run is tagged `git_dirty=true`, but it rebuilds identically: a fresh
   clone of main reproduced it byte for byte on 2026-10-28 (same model.json sha256, see Setup).
