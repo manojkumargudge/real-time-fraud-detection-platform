@@ -24,7 +24,7 @@ is not deployed to real traffic.
 | Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
 | Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
 | Fraud rings (exploratory) | GNN-ranked top-20 rings: 19.83% labelled fraud per transaction vs 3.50% overall as reported, but that reuses labels within a ring; with a strict temporal check (rank on training blocks, rate on validation rows only) 7.96% vs 2.89% in the same rings, on 9 frauds (account graph: 8.14%, 7 frauds). Most members are missing-address uids, see Known limitations | [docs/gnn.md](docs/gnn.md) "Ring ranking check" |
-| Tests | 598 unit passed with the GNN extras (local, 2026-10-29); 573 passed + 10 skipped without them and 41 integration passed (CI run #70, main 305a75a) | CI run #70; older full logs: [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) (2026-10-28) |
+| Tests | 606 unit passed + 1 skipped (an opt-in demo-DB test) with the GNN extras (local, 2026-10-30); 581 passed + 11 skipped without them and 41 integration passed (CI run #77, PR #30) | CI run #77; older full logs: [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) (2026-10-28) |
 
 On one laptop with 3 consumer containers, the scoring pipeline processed **46.8 events/s** unthrottled. At a steady 5 events/s, scoring one event (Feast state read, features, XGBoost, PostgreSQL write, Feast state push) took **41 ms p50 / 109 ms p99**, and an event was in the database **31 ms p50 / 74 ms p99** after it was produced (1,000 replayed validation events; docs/serving.md "Throughput benchmark").
 
@@ -128,9 +128,12 @@ streamlit, xgboost); it has not hung.
      Feast offline store itself in a temporary folder (no Redis, no `materialize`).
    - MLflow UI: `.venv\Scripts\mlflow ui --backend-store-uri sqlite:///mlflow.db` (repo root),
      then http://127.0.0.1:5000. Run artifacts are in `mlruns/`.
+   - Why-flagged panel (dashboard case page): `.venv\Scripts\python -m src.dashboard.explain
+     build` (about 1 min, needs the dataset) writes `artifacts/explain/features.csv.gz`, which
+     the Compose dashboard mounts read-only. Without it the panel says "No explanation data".
 3. **Unit tests** (no services needed): `.venv\Scripts\python -m pytest
-   --ignore=tests/test_integration.py`. Expect **573 passed, 10 skipped** without the GNN extras
-   (598 passed with `requirements-gnn.txt` installed), about 8-15 minutes.
+   --ignore=tests/test_integration.py`. Expect **581 passed, 11 skipped** without the GNN extras
+   (606 passed, 1 skipped with `requirements-gnn.txt` installed), about 8-18 minutes.
 4. **Integration tests** use a separate Compose project that never touches the demo stack:
    ```
    docker compose -f docker-compose.test.yml up -d --wait
