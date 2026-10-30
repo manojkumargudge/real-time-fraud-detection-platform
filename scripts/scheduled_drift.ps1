@@ -8,7 +8,8 @@ the drift rules in configs/drift.toml decide whether a challenger is trained, an
 promotion gate decides whether `champion` moves (`production` never moves). Registered by
 scripts/register_drift_task.ps1 (task "FraudDrift-Retrain", every 6 hours).
 
-- Uses the project's Python (.venv), sets PYTHONUTF8=1 and runs from the repo root.
+- Uses the project's Python (.venv), sets PYTHONUTF8=1 (and PYTHONUNBUFFERED=1 for an ordered
+  log) and runs from the repo root.
 - Database: -DatabaseUrl, else $env:DATABASE_URL, else the demo database built from .env
   (-DatabaseName, default "fraud"). The password is never written to the log.
 - MLflow: -MlflowTrackingUri, else $env:MLFLOW_TRACKING_URI, else the repo's mlflow.db
@@ -103,10 +104,13 @@ if ($null -ne $WindowEndDay) { $arguments += @("--window-end-day", "$WindowEndDa
 if ($ReportsDir) { $arguments += @("--reports-dir", $ReportsDir) }
 Write-Log ("run: python {0}" -f ($arguments -join " "))
 
-# cmd.exe redirection keeps the job's own exit code and both output streams, in order.
-$quoted = ($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join " "
+# Both streams go to the log as plain lines, in order (unbuffered); $LASTEXITCODE is the job's.
+# (Not via cmd.exe /c: Windows PowerShell re-escapes embedded quotes, which breaks the command.)
+$env:PYTHONUNBUFFERED = "1"
 $started = Get-Date
-& cmd.exe /d /c "`"`"$Python`" $quoted >> `"$Log`" 2>&1`""
+$ErrorActionPreference = "Continue"
+& $Python @arguments 2>&1 | ForEach-Object { "$_" } | Add-Content -Path $Log -Encoding UTF8
 $exitCode = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
 Write-Log ("run_drift exit code {0} after {1:N0} s" -f $exitCode, ((Get-Date) - $started).TotalSeconds)
 exit $exitCode
