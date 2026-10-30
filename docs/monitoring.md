@@ -117,7 +117,9 @@ Runs on a shifted copy are marked `synthetic = true`, and their HTML title start
   The fix is an MLflow server with a shared artifact store, which is out of scope here.
 - Scheduling: in Minikube the drift CronJob runs every 6 h with `--no-retrain` (checks only;
   docs/kubernetes.md "Drift CronJob"). The Compose service is one-shot. A run that can retrain
-  is started by hand on the host.
+  runs on the host: by hand, or every 6 h through Windows Task Scheduler (task
+  `FraudDrift-Retrain`, `scripts/register_drift_task.ps1`, registered disabled; README
+  "Scheduled retraining"; proof run docs/evidence/2026-10-30-scheduled-retrain/).
 - The reference scores come from a fresh XGBoost refit, which is not bit-identical across
   platforms. On the same window, host and container gave the same drifted share (0.179) but a
   PSI of 0.0034 vs 0.0050 (drift_reports ids 1 and 4). Container rows store the container path

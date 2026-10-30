@@ -65,3 +65,6 @@ reports/drift/
 reports/chaos/
 # Throughput benchmark results (scripts/bench_throughput.py).
 reports/bench/
+
+# Scheduled drift job logs (scripts/scheduled_drift.ps1).
+logs/

@@ -1,0 +1,90 @@
+[
+  {
+    "id": 10,
+    "run_at": "2026-10-30 06:08:12.189032+00:00",
+    "window_start_dt": 14688000,
+    "window_end_dt": 15724799,
+    "current_rows": 31748,
+    "drifted_feature_share": 0.2857142857142857,
+    "prediction_drift_score": 0.002495402267206449,
+    "delayed_pr_auc": 0.3237538703162331,
+    "triggered": true,
+    "trigger_reasons": [
+      "top-feature drift: R_emaildomain drifted (among the champion's top 5 features by gain)"
+    ],
+    "forced": false,
+    "retrain_run_id": "a827a7b6d79f424ba67905e1a5eec473",
+    "challenger_version": "8",
+    "promotion_decision": "kept champion: challenger better by +0.0052 but CI lower bound -0.0160 <= margin 0.01",
+    "promotion": {
+      "margin": 0.01,
+      "reason": "kept champion: challenger better by +0.0052 but CI lower bound -0.0160 <= margin 0.01",
+      "aliases": {
+        "production": "2",
+        "champion_after": "2",
+        "champion_before": "2"
+      },
+      "promote": false,
+      "ci95_low": -0.016048179416449957,
+      "bootstrap": {
+        "days": 8,
+        "ci95_low": -0.016048179416449957,
+        "ci95_high": 0.025403781544278064,
+        "resamples": 1000,
+        "delta_mean": 0.005307266943038042,
+        "share_b_better": 0.695
+      },
+      "ci95_high": 0.025403781544278064,
+      "delta_mean": 0.005307266943038042,
+      "holdout_rows": 20264,
+      "champion_pr_auc": 0.3237538703162331,
+      "challenger_pr_auc": 0.3289606614928677,
+      "holdout_positives": 617,
+      "reused_challenger": false
+    }
+  },
+  {
+    "id": 11,
+    "run_at": "2026-10-30 06:15:08.133320+00:00",
+    "window_start_dt": 14688000,
+    "window_end_dt": 15724799,
+    "current_rows": 31748,
+    "drifted_feature_share": 0.2857142857142857,
+    "prediction_drift_score": 0.002495402267206449,
+    "delayed_pr_auc": 0.3237538703162331,
+    "triggered": true,
+    "trigger_reasons": [
+      "top-feature drift: R_emaildomain drifted (among the champion's top 5 features by gain)"
+    ],
+    "forced": false,
+    "retrain_run_id": "a827a7b6d79f424ba67905e1a5eec473",
+    "challenger_version": "8",
+    "promotion_decision": "kept champion: challenger better by +0.0052 but CI lower bound -0.0160 <= margin 0.01",
+    "promotion": {
+      "margin": 0.01,
+      "reason": "kept champion: challenger better by +0.0052 but CI lower bound -0.0160 <= margin 0.01",
+      "aliases": {
+        "production": "2",
+        "champion_after": "2",
+        "champion_before": "2"
+      },
+      "promote": false,
+      "ci95_low": -0.016048179416449957,
+      "bootstrap": {
+        "days": 8,
+        "ci95_low": -0.016048179416449957,
+        "ci95_high": 0.025403781544278064,
+        "resamples": 1000,
+        "delta_mean": 0.005307266943038042,
+        "share_b_better": 0.695
+      },
+      "ci95_high": 0.025403781544278064,
+      "delta_mean": 0.005307266943038042,
+      "holdout_rows": 20264,
+      "champion_pr_auc": 0.3237538703162331,
+      "challenger_pr_auc": 0.3289606614928677,
+      "holdout_positives": 617,
+      "reused_challenger": true
+    }
+  }
+]

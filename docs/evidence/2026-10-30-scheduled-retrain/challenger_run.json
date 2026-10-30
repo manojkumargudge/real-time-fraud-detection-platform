@@ -1,0 +1,31 @@
+{
+  "copy_registry_aliases": {
+    "challenger": 8,
+    "champion": 2,
+    "production": 2
+  },
+  "copy_registry_versions": [
+    1,
+    2,
+    7,
+    8
+  ],
+  "challenger_run_id": "a827a7b6d79f424ba67905e1a5eec473",
+  "challenger_run_tags": {
+    "git_commit": "1c7aa87b23c85cca23e8aed8de0d099dd85b65cc",
+    "git_dirty": "false",
+    "imbalance_method": "none",
+    "variant": "baseline",
+    "trigger": "top-feature drift: R_emaildomain drifted (among the champion's top 5 features by gain)",
+    "synthetic": "false",
+    "forced": "false",
+    "role": "challenger",
+    "train_end_dt": "12614331",
+    "train_data_sha256": "d8ada1919f07fc23ca20fd94237d110cc2ce7f069f909d5d54c1f740314ffac3"
+  },
+  "challenger_run_metrics": {
+    "valid_pr_auc": 0.329,
+    "holdout_pr_auc": 0.2821
+  },
+  "challenger_artifact_uri_in_copy_dir": true
+}

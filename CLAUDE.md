@@ -42,12 +42,29 @@ Aim for production-style engineering, but document operational, security,
 scalability, and compliance limitations honestly. Do not claim financial-sector
 production readiness without appropriate evidence.
 
-## Current project state (2026-10-29: feature freeze final; account node, MLflow coverage, docs)
+## Current project state (2026-10-30: scheduled retraining on the host; freeze otherwise final)
 
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
 
-### 2026-10-29 end of day (read this first)
+### 2026-10-30: scheduled retraining (freeze lifted for this change only)
+- Windows Task Scheduler task `FraudDrift-Retrain` (every 6 h, **registered DISABLED**):
+  `scripts/register_drift_task.ps1 [-Enable|-Disable|-Unregister]` ->
+  `scripts/scheduled_drift.ps1` -> `run_drift` with retraining on, no `--force-retrain`.
+  The script sets PYTHONUTF8/PYTHONUNBUFFERED, checks PostgreSQL (exit 2), builds the demo
+  DATABASE_URL from .env (password never logged), logs to `logs/` (gitignored), and exits with
+  the job's code. No src/ or configs/drift.toml change.
+- Proof run started by Task Scheduler on copies (fraud_evidence on the test stack, mlflow.db
+  copy with artifact locations redirected): docs/evidence/2026-10-30-scheduled-retrain/. Fired
+  on R_emaildomain (days 170-181), challenger v8 in the copy only, champion kept (+0.0053,
+  CI [-0.0160, +0.0254]); a second run reused v8. Two script bugs found by the proof run and
+  fixed (cmd.exe quoting; -Enable ignoring a new -At).
+- When enabled, each run writes a drift_reports row to the demo DB and a firing run registers a
+  challenger in the real registry; the demo postgres must be running.
+- Backups before: backups/*-2026-10-30-pre-auto-retrain.* (mlflow.db, mlruns zip, demo dump,
+  artifact sha256).
+
+### 2026-10-29 end of day
 - **Feature freeze is final** (user decision 2026-10-29): docs fixes only from now on.
 - `main` = merge of PR #27 `docs-final` on top of 305a75a (PR #26 gnn-account) and 6218477
   (PR #25 mlflow-coverage); CI green on all three. Verify with `git log --first-parent`.
@@ -351,8 +368,8 @@ matters (files, numbers, running services) before relying on it.
   Chaos test `python -m scripts.chaos_kafka_restart --mode restart|kill|pause` (test stack
   only): no loss, no duplicates, consumers alive. But no run produced `NOT_COORDINATOR` on a
   commit (librdkafka waits for the coordinator), so that path is unit-tested only.
-- Not production-ready: single-node Kafka (RF=1), no auth/TLS, local MLflow, drift job not
-  scheduled.
+- Not production-ready: single-node Kafka (RF=1), no auth/TLS, local MLflow; the drift job with
+  retraining is scheduled only on the host (Task Scheduler, while the laptop is awake).
 - Drift trigger: the top-5-by-gain rule was added on 2026-10-24 after the first runs did not
   fire. It is not calibrated on drift-free periods, and there is no minimum sample size (the
   2026-10-25 Kubernetes run fired on 30 rows). The default window did not fire on 2026-10-27
