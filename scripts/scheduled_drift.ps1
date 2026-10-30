@@ -107,9 +107,12 @@ Write-Log ("run: python {0}" -f ($arguments -join " "))
 # Both streams go to the log as plain lines, in order (unbuffered); $LASTEXITCODE is the job's.
 # (Not via cmd.exe /c: Windows PowerShell re-escapes embedded quotes, which breaks the command.)
 $env:PYTHONUNBUFFERED = "1"
+$env:MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR = "false"  # tqdm bars are unreadable in a log file
 $started = Get-Date
 $ErrorActionPreference = "Continue"
-& $Python @arguments 2>&1 | ForEach-Object { "$_" } | Add-Content -Path $Log -Encoding UTF8
+& $Python @arguments 2>&1 |
+    ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" } } |
+    Add-Content -Path $Log -Encoding UTF8
 $exitCode = $LASTEXITCODE
 $ErrorActionPreference = "Stop"
 Write-Log ("run_drift exit code {0} after {1:N0} s" -f $exitCode, ((Get-Date) - $started).TotalSeconds)
