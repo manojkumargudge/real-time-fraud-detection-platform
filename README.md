@@ -62,6 +62,23 @@ More: [case 1502 customer and review history](docs/screenshots/04-case-1502-cust
 [fraud rings](docs/screenshots/06-fraud-rings-table.png),
 [ring #5](docs/screenshots/07-fraud-ring-5.png).
 
+**Why flagged** (case detail, read-only, 2026-10-30): the top 5 features that raised the case's
+fraud score and the top 3 that lowered it, as horizontal bars with the transaction's value and
+the contribution in log-odds, from the served v2 model's built-in per-feature contributions
+(XGBoost `pred_contribs`, no extra package). Anonymised IEEE-CIS columns keep their code name
+plus "(anonymised)". Contributions explain the model's score, not the cause of fraud.
+
+- **Feature vector:** rebuilt with the point-in-time batch code the model was trained with
+  (the Feast serving path equals it), for the validation window, by
+  `python -m src.dashboard.explain build` (host, about 1 min; writes the gitignored
+  `artifacts/explain/features.csv.gz`, which Compose mounts read-only with the served bundle).
+- **Parity check, per case:** contributions + bias = the model's margin, and sigmoid(margin)
+  = the stored score within 1e-6; otherwise the panel shows a warning instead of bars. All
+  5,093 demo alerts pass (max |score difference| 7.0e-8, max |sum - margin| 5.4e-6).
+- Screenshot: [case 1502, why flagged](docs/screenshots/case-why-flagged.png).
+- The Minikube dashboard image is one feature behind: it has no Why-flagged panel (not
+  rebuilt; the cluster has no feature file).
+
 ## Setup from a fresh clone
 
 > **Verified 2026-10-28 from a fresh clone** (data copied; Kaggle download not tested).

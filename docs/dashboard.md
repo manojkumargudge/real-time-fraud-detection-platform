@@ -35,6 +35,7 @@ hides Streamlit's Deploy button and developer menu.
 | `db.py` | Connections: every read or write gets its own connection; none is shared between Streamlit sessions (threads) |
 | `ui.py` | Repository (one connection per call), read cache (`st.cache_data`, 15 s TTL, cleared after a write), analyst name, schema check, display labels |
 | `fmt.py` | Display formatting, pure: times in IST, whole numbers without ".0", "missing" for blank fields, "—" for no label, dollar amounts |
+| `explain.py` | Why flagged (read-only): per-feature contributions of the served v2 bundle (`pred_contribs`), the parity check against the stored score, and the `build` CLI that writes the point-in-time feature file (README "Dashboard") |
 | `app.py` | Entry point: `st.navigation` over the five pages |
 | `views/*.py` | Thin pages: Overview, Alert queue, Case detail, Fraud rings, Drift. No SQL |
 
@@ -215,3 +216,6 @@ changed under an open form. Re-reading the version at submit time defeated the l
   reached with `kubectl -n fraud-k8s port-forward svc/dashboard 8502:8501`. It reads the
   cluster's own small database (a 20-event replay), not the Compose demo database; fraud rings
   show as "not run in this deployment" (a host batch job).
+  The cluster image is one feature behind (not rebuilt on 2026-10-30): it has no Why-flagged
+  panel; the cluster also has no feature file, so a rebuilt image would show "No explanation
+  data in this deployment".

@@ -104,6 +104,8 @@ def _block_live_services(
     if request.node.get_closest_marker("integration") is None:
         mlflow_db = (tmp_path / "mlflow.db").as_posix()
         monkeypatch.setenv("MLFLOW_TRACKING_URI", f"sqlite:///{mlflow_db}")
+        # The dashboard's Why-flagged panel never reads the repo's generated feature file.
+        monkeypatch.setenv("EXPLAIN_FEATURES_FILE", str(tmp_path / "no-explain-features.csv.gz"))
         monkeypatch.setenv("DATABASE_URL", BLOCKED_DATABASE_URL)
         monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", BLOCKED_KAFKA)
         monkeypatch.setenv("FEATURE_SOURCE", "store")
