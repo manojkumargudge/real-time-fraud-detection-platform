@@ -1,0 +1,72 @@
+{
+  "run": 3,
+  "url": "http://127.0.0.1:18001",
+  "warmup_s": 10.0,
+  "duration_s": 60.0,
+  "levels": [
+    {
+      "concurrency": 1,
+      "requests": 2245,
+      "ok": 2245,
+      "errors": 0,
+      "error_rate": 0.0,
+      "duplicates": 0,
+      "throughput_rps": 37.416666666666664,
+      "p50_ms": 24.79469999889261,
+      "p95_ms": 39.20479999942472,
+      "p99_ms": 50.91069999980391,
+      "max_ms": 165.31749999921885,
+      "events_used": 2598,
+      "ran_out_of_events_after_s": null,
+      "warmup_requests": 353
+    },
+    {
+      "concurrency": 5,
+      "requests": 1321,
+      "ok": 1321,
+      "errors": 0,
+      "error_rate": 0.0,
+      "duplicates": 0,
+      "throughput_rps": 22.016666666666666,
+      "p50_ms": 216.37279999777093,
+      "p95_ms": 325.8209000014176,
+      "p99_ms": 368.20320000333595,
+      "max_ms": 460.7164999979432,
+      "events_used": 1530,
+      "ran_out_of_events_after_s": null,
+      "warmup_requests": 209
+    },
+    {
+      "concurrency": 10,
+      "requests": 1216,
+      "ok": 1216,
+      "errors": 0,
+      "error_rate": 0.0,
+      "duplicates": 0,
+      "throughput_rps": 20.266666666666666,
+      "p50_ms": 482.66590000275755,
+      "p95_ms": 645.6244000000879,
+      "p99_ms": 762.8210000002582,
+      "max_ms": 1075.0741000010748,
+      "events_used": 1421,
+      "ran_out_of_events_after_s": null,
+      "warmup_requests": 205
+    },
+    {
+      "concurrency": 20,
+      "requests": 910,
+      "ok": 910,
+      "errors": 0,
+      "error_rate": 0.0,
+      "duplicates": 0,
+      "throughput_rps": 15.166666666666666,
+      "p50_ms": 1026.6730999974243,
+      "p95_ms": 1705.8715999992273,
+      "p99_ms": 16936.35329999961,
+      "max_ms": 20585.78259999922,
+      "events_used": 1135,
+      "ran_out_of_events_after_s": null,
+      "warmup_requests": 225
+    }
+  ]
+}
