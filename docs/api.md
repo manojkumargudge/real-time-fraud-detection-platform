@@ -126,6 +126,10 @@ was not recorded for this event, so it is left out of the example; see "Latency"
 | Same, backlog of 1,000 events | 48 / 105 / 147 ms | [serving.md](serving.md) "Throughput benchmark" (line 479), 2026-10-25 |
 | Features + score only, Feast path, host process (before the 2026-10-25 speed-ups) | 107.5 / 179.0 / 283.2 ms | [feature_store.md](feature_store.md) "Latency" |
 
-`POST /score` runs the same `Scorer.score_event`. HTTP-level latency of `/score` has not been
-measured since the 2026-10-25 speed-ups; the earlier 5-event samples in the API container are in
-docs/feature_store.md "Latency".
+`POST /score` runs the same `Scorer.score_event`. **Load test of `/score`** (2026-10-30, bench copy
+of the demo database, one laptop, not a production number): one client about 35 req/s, p50 25 ms,
+p95 39-50 ms; the knee is between 1 and 5 concurrent clients (at 5: about 22 req/s, p95 about
+330 ms), because the API's PostgreSQL store is one connection behind a lock; 0 errors in 3 runs
+at 1/5/10/20 clients ([evidence/2026-10-30-load-test/](evidence/2026-10-30-load-test/README.md)).
+This is direct API calls on one API process, not the 46.83 events/s Kafka streaming figure
+(3 consumers, each with its own connection).

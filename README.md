@@ -19,6 +19,7 @@ is not deployed to real traffic.
 | GNN alone | validation PR-AUC 0.2021 (loses to XGBoost) | [reports/gnn_stacking.md](reports/gnn_stacking.md) |
 | GNN + XGBoost blend | worse than XGBoost for both variants (95% CI [-0.0346, -0.0137] and [-0.0263, -0.0118]); not served | [reports/gnn_blend.md](reports/gnn_blend.md) |
 | GNN with an account (uid) node | no gain: GNN alone 0.2008; blends still worse than XGBoost (transaction -0.0245 [-0.0354, -0.0140], entity -0.0144 [-0.0205, -0.0081]); not served | [docs/gnn.md](docs/gnn.md) "Account node", [reports/gnn_blend_account.md](reports/gnn_blend_account.md) |
+| Load test, `POST /score` (bench copy, one laptop) | one client: about **35 req/s**, p50 **25 ms**, p95 39-50 ms; knee between 1 and 5 concurrent clients (at 5: about 22 req/s, p95 about 330 ms) because the API's store is one database connection behind a lock; 0 errors at 1/5/10/20 clients over 3 runs. Direct API calls on one API process, not comparable to the 46.83 events/s Kafka streaming figure below (3 consumers, each with its own connection) | [docs/evidence/2026-10-30-load-test/](docs/evidence/2026-10-30-load-test/README.md) |
 | Throughput | **46.83 events/s** on 3 consumers (unthrottled, 1,000-event backlog; scorer p50 48 ms in that run); scorer p50 **41 ms** at a steady 5 events/s | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
 | Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
 | Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
@@ -270,7 +271,7 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
 - Feast: late events are approximate, concurrent writes to one entity can lose an update, and
   a failed push is only logged ([docs/feature_store.md](docs/feature_store.md)).
 - Dashboard: no authentication, no connection pool, one replica.
-- End-to-end latency is measured to the row's `scored_at`, the start of the database write, so it excludes the Feast state push (~14–16 ms p50) and the offset commit. HTTP `/score` latency has not been re-measured since the 2026-10-25 speed-ups.
+- End-to-end latency is measured to the row's `scored_at`, the start of the database write, so it excludes the Feast state push (~14–16 ms p50) and the offset commit. HTTP `/score` latency was load-tested on a bench copy on 2026-10-30 (Results, "Load test"); the API serialises database access on one connection, so it does not scale with concurrent clients.
 - Security scan results and accepted risks: [docs/security.md](docs/security.md).
 
 ## Next steps
