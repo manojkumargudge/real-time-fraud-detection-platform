@@ -102,9 +102,10 @@ matters (files, numbers, running services) before relying on it.
 - Tests: 598 unit passed with the GNN extras (local); CI: 573 passed + 10 skipped without them,
   41 integration passed (run #70).
 - **Ring ranking is exploratory** (docs/gnn.md "Ring ranking check"): no in-sample GNN
-  scores are used, but the reported top-20 rate (19.83% default, 31.54% account) reuses labels
+  scores are used, but the reported top-20 rate (17.23% default, 22.92% account) reuses labels
   within a ring. Strict temporal check (rank on training blocks 1-2, rate on validation rows):
-  7.96% (9 frauds) default, 8.14% (7 frauds) account, vs 2.89% in the same 203 rings.
+  2.22% (8 frauds) default, 1.42% (5 frauds) account, vs 2.35% in the same 141 rings: no lift
+  (numbers updated 2026-11-02; before the missing-addr1 exclusion 7.96% / 8.14% vs 2.89%).
 
 ### 2026-10-29: account node + MLflow coverage (freeze reopened for these two only)
 - **GNN account node** (branch `gnn-account`, docs/gnn.md "Account node"): `--graph account` on
@@ -256,9 +257,10 @@ matters (files, numbers, running services) before relying on it.
     0.2935 over 3 seeds (-0.0108, spread 0.0115) -> **no gain**, not kept; served model unchanged.
   - card_id is a coarse proxy: 77 values cover 41.9% of training transactions.
   - Fraud rings (`python -m src.graph.rings`): uid + device links only (never card_id), device
-    values shared by <= 10 uids, uids with <= 3 devices and <= 1,000 transactions; 337 rings,
-    largest 38 users (2.8%), 16 unscored (first time block); top-20 labelled fraud rate 19.83%
-    vs 3.50% (weak evidence; exploratory, strict temporal check 7.96%, see above). reports/fraud_rings.md + table `fraud_rings` in the demo Postgres.
+    values shared by <= 10 uids, uids with <= 3 devices and <= 1,000 transactions; missing-addr1
+    uids excluded; 215 rings, largest 18 users (2.2%), 16 unscored (first time block); top-20
+    labelled fraud rate 17.23% vs 3.50% (weak evidence; exploratory, strict temporal check
+    2.22%, see above). reports/fraud_rings.md + table `fraud_rings` in the demo Postgres.
 - CI/CD (.github/workflows/ci.yml): lint + mypy strict + unit tests; integration job with
   PostgreSQL 16, Kafka 3.8.1 (KRaft), Redis 7.4.1 service containers; on push to `main`, image
   pushed to `ghcr.io/manojkumargudge/real-time-fraud-detection-platform` (`<sha>`, `latest`).
