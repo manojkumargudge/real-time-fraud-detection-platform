@@ -36,6 +36,20 @@ def test_hub_devices_do_not_link_users() -> None:
     assert set(comp.index) == {"a", "b"}  # 11 users on "Windows" exceed the limit of 10
 
 
+def test_missing_addr1_uids_never_link_rings() -> None:
+    comp = ring_components(
+        links(
+            [
+                ("1111|<NA>", "shared-device"),
+                ("2222|<NA>", "shared-device"),
+                ("3333|315", "shared-device"),
+                ("4444|315", "shared-device"),
+            ]
+        )
+    )
+    assert set(comp.index) == {"3333|315", "4444|315"}
+
+
 def test_card_id_is_not_a_link() -> None:
     """Two users on the same coarse card_id but no shared device are not a ring."""
     tx = pd.DataFrame(
