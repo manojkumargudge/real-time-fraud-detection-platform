@@ -23,8 +23,8 @@ is not deployed to real traffic.
 | Throughput | **46.83 events/s** on 3 consumers (unthrottled, 1,000-event backlog; scorer p50 48 ms in that run); scorer p50 **41 ms** at a steady 5 events/s | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
 | Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
 | Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
-| Fraud rings (exploratory) | GNN-ranked top-20 rings: 19.83% labelled fraud per transaction vs 3.50% overall as reported, but that reuses labels within a ring; with a strict temporal check (rank on training blocks, rate on validation rows only) 7.96% vs 2.89% in the same rings, on 9 frauds (account graph: 8.14%, 7 frauds). Most members are missing-address uids, see Known limitations | [docs/gnn.md](docs/gnn.md) "Ring ranking check" |
-| Tests | 606 unit passed + 1 skipped (an opt-in demo-DB test) with the GNN extras (local, 2026-10-30); 581 passed + 11 skipped without them and 41 integration passed (CI run #77, PR #30) | CI run #77; older full logs: [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) (2026-10-28) |
+| Fraud rings (exploratory) | GNN-ranked top-20 rings: 17.23% labelled fraud per transaction vs 3.50% overall as reported, but that reuses labels within a ring; with a strict temporal check (rank on training blocks, rate on validation rows only) 2.22% vs 2.35% in the same rings, on 8 frauds (account graph: 1.42%, 5 frauds), so the ranking shows no lift. Uids with a missing address are excluded, see Known limitations | [docs/gnn.md](docs/gnn.md) "Ring ranking check" |
+| Tests | 607 unit passed + 1 skipped (an opt-in demo-DB test) with the GNN extras (local, 2026-11-02); 582 passed + 11 skipped without them and 41 integration passed (CI run #83, PR #33) | CI run #83; older full logs: [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) (2026-10-28) |
 
 On one laptop with 3 consumer containers, the scoring pipeline processed **46.8 events/s** unthrottled. At a steady 5 events/s, scoring one event (Feast state read, features, XGBoost, PostgreSQL write, Feast state push) took **41 ms p50 / 109 ms p99**, and an event was in the database **31 ms p50 / 74 ms p99** after it was produced (1,000 replayed validation events; docs/serving.md "Throughput benchmark").
 
@@ -132,8 +132,8 @@ streamlit, xgboost); it has not hung.
      build` (about 1 min, needs the dataset) writes `artifacts/explain/features.csv.gz`, which
      the Compose dashboard mounts read-only. Without it the panel says "No explanation data".
 3. **Unit tests** (no services needed): `.venv\Scripts\python -m pytest
-   --ignore=tests/test_integration.py`. Expect **581 passed, 11 skipped** without the GNN extras
-   (606 passed, 1 skipped with `requirements-gnn.txt` installed), about 8-18 minutes.
+   --ignore=tests/test_integration.py`. Expect **582 passed, 11 skipped** without the GNN extras
+   (607 passed, 1 skipped with `requirements-gnn.txt` installed), about 8-18 minutes.
 4. **Integration tests** use a separate Compose project that never touches the demo stack:
    ```
    docker compose -f docker-compose.test.yml up -d --wait
@@ -267,10 +267,13 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
 - IEEE-CIS has no account ID: "user" is a proxy (card + address). The default GNN graph has no
   account node; the optional account graph adds one but links accounts to devices only through
   transactions (a direct edge needs edge-level time), and it did not improve the GNN.
-- Fraud rings: a missing addr1 becomes part of the uid (as `<NA>`), so all of a card's
-  transactions without an address count as one customer. This affects most of the stored rings:
-  of the top 20, 16 contain at least one such uid and 9 consist only of them (45 of 73 members,
-  62%), so ring membership partly reflects missing addresses rather than distinct customers.
+- Fraud rings: a uid with a missing addr1 (`<NA>`) is a card's bucket of address-less
+  transactions, not a customer, so these uids are excluded from ring linking (none in the 215
+  rings). Coverage cost: 65,706 transactions (11.13%) and 2,601 of 43,018 uids have a missing
+  addr1, with a fraud rate of 11.78% vs 3.50% overall, and rings can no longer surface them.
+  Fraud transactions inside a ring fell from 645 to 482: 180 left and 17 entered (a device
+  shared by more than 10 uids can now fall within the limit). With the exclusion the ring
+  ranking shows no lift on the strict temporal check (docs/gnn.md "Ring ranking check").
 - Feast: late events are approximate, concurrent writes to one entity can lose an update, and
   a failed push is only logged ([docs/feature_store.md](docs/feature_store.md)).
 - Dashboard: no authentication, no connection pool, one replica.
@@ -282,7 +285,6 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
 - Retrain from analyst feedback labels (`case_reviews`, latest label per transaction).
 - Model registry link: a link file plus `GET /model` so serving reports its MLflow version
   ([docs/next-steps/model-registry-link.md](docs/next-steps/model-registry-link.md)).
-- Exclude uids with missing addr1 from ring linking.
 - An MLflow server with a shared artifact store, so retraining can run in the cluster.
 - Rank drift features by their impact on the score instead of by gain.
 - Next optimization: `entity_keys` (~17 ms) and `feast_push` (~16 ms) are about two-thirds of scoring time; `predict` is ~3 ms (docs/serving.md "Throughput benchmark", backlog run).
