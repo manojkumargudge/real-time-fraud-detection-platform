@@ -44,12 +44,25 @@ Aim for production-style engineering, but document operational, security,
 scalability, and compliance limitations honestly. Do not claim financial-sector
 production readiness without appropriate evidence.
 
-## Current project state (2026-10-30 end of day: feature freeze; PRs #28-#32 merged)
+## Current project state (2026-11-02: feature freeze; PRs #28-#33 merged)
 
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
 
-### 2026-10-30 end of day (read this first)
+### 2026-11-02: missing-addr1 ring exclusion (read this first)
+- PR #33: uids ending in `|<NA>` no longer link rings (`EXCLUDE_MISSING_ADDR1_UIDS`,
+  src/graph/rings.py). Regenerated from the existing GNN scores; no retraining. Only table
+  `fraud_rings` changed in the demo DB (still 20 rows). No more changes to ring rules,
+  thresholds, GNN or models (user decision 2026-11-02).
+- 215 rings, 813 users (was 337, 1,378); top-20 17.23% default, 22.92% account; all rings 3.73%.
+  Strict check 2.22% (8 frauds) vs 2.35% in the same 141 rings: no lift (docs/gnn.md).
+  Numbers in "2026-10-29" notes below were updated where marked; the back-filled MLflow report
+  run still holds the old report (history).
+- Tests: 607 unit passed + 1 skipped locally; CI 582 passed + 11 skipped, 41 integration (run #83).
+- Demo stack left running for recording; state and recording steps:
+  backups/state-2026-11-02-final.txt. FraudDrift-Retrain stays disabled until after recording.
+
+### 2026-10-30 end of day
 - **Feature freeze** again after this day (user decision 2026-10-30). `main` = merge of PR #32
   `housekeeping-eod` on top of: #31 load test (432b8f8), #30 Why-flagged panel (1887b58),
   #29 brief-evidence wording + "ask before any drop/delete/overwrite" rule (edb2e30), #28
@@ -72,7 +85,7 @@ matters (files, numbers, running services) before relying on it.
   One client ~35 req/s, p50 25 ms; knee between 1 and 5 clients (store = one connection behind
   a lock, `src/serving/store.py`); unexplained multi-second stalls at c=20 in 2 of 3 runs.
   Not comparable to the 46.83 events/s Kafka figure. Raw output in gitignored reports/load_test/.
-- Tests: 606 unit passed + 1 skipped (opt-in) locally with the GNN extras; CI 581 passed +
+- Tests then: 606 unit passed + 1 skipped (opt-in) locally with the GNN extras; CI 581 passed +
   11 skipped, 41 integration (PR #30 run #77).
 
 ### 2026-10-30: scheduled retraining (freeze lifted for this change only)
@@ -353,15 +366,15 @@ matters (files, numbers, running services) before relying on it.
 
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
-  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **606 passed, 1 skipped**
-  with the GNN stack installed (2026-10-30; 598 on 2026-10-29). Without it (CI's unit job),
+  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **607 passed, 1 skipped**
+  with the GNN stack installed (2026-11-02; 606 on 2026-10-30). Without it (CI's unit job),
   `tests/test_graph.py` skips because torch_geometric is missing; the ring tests need no torch.
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
   `TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 python -m pytest
-  tests/test_integration.py` -- 41 passed (CI run #77, 2026-10-30; 30 on 2026-10-26). Never point them at the demo stack.
+  tests/test_integration.py` -- 41 passed (CI run #83, 2026-11-02; 30 on 2026-10-26). Never point them at the demo stack.
 - GNN: `python -m src.graph.train`, `python -m src.graph.stack --degree-limit 1000 --epochs 7`,
   `DATABASE_URL=... python -m src.graph.rings` (needs requirements-gnn.txt; 10-45 min on CPU).
 - Lint/types: `ruff check .`, `ruff format --check .`, `python -m mypy` (strict; src, tests, scripts).
