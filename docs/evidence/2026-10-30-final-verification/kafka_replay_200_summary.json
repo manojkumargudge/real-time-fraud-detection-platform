@@ -1,0 +1,122 @@
+{
+  "label": "final-verification",
+  "replay_index": [
+    0,
+    199
+  ],
+  "rate": 5.0,
+  "events": 200,
+  "stored": 200,
+  "statuses": {
+    "scored": 200
+  },
+  "throughput_events_per_s_first_to_last_scored": 5.11,
+  "throughput_events_per_s_first_produce_to_last_scored": 5.04,
+  "e2e_latency_ms": {
+    "p50": 39.2,
+    "p95": 70.89,
+    "p99": 333.71,
+    "n": 200
+  },
+  "scorer_latency_ms": {
+    "p50": 49.4,
+    "p95": 92.8,
+    "p99": 220.7,
+    "n": 200
+  },
+  "stages_ms": {
+    "commit": {
+      "p50": 3.71,
+      "p95": 6.67,
+      "p99": 14.9,
+      "n": 200
+    },
+    "dedupe_get": {
+      "p50": 1.15,
+      "p95": 2.35,
+      "p99": 7.88,
+      "n": 200
+    },
+    "entity_keys": {
+      "p50": 17.2,
+      "p95": 36.13,
+      "p99": 64.95,
+      "n": 200
+    },
+    "feast_push": {
+      "p50": 15.06,
+      "p95": 30.02,
+      "p99": 51.13,
+      "n": 200
+    },
+    "feast_read": {
+      "p50": 2.01,
+      "p95": 4.9,
+      "p99": 30.97,
+      "n": 200
+    },
+    "model_frame": {
+      "p50": 3.92,
+      "p95": 8.9,
+      "p99": 12.0,
+      "n": 200
+    },
+    "pg_save": {
+      "p50": 5.08,
+      "p95": 10.32,
+      "p99": 16.19,
+      "n": 200
+    },
+    "poll": {
+      "p50": 350.21,
+      "p95": 941.33,
+      "p99": 958.76,
+      "n": 200
+    },
+    "predict": {
+      "p50": 3.0,
+      "p95": 8.46,
+      "p99": 41.37,
+      "n": 200
+    },
+    "process": {
+      "p50": 51.61,
+      "p95": 94.96,
+      "p99": 224.86,
+      "n": 200
+    },
+    "state_features": {
+      "p50": 0.12,
+      "p95": 0.33,
+      "p99": 1.04,
+      "n": 200
+    }
+  },
+  "cpu_percent_mean": {
+    "fraud-bench-bench-redis-1": 2.7,
+    "fraud-bench-consumer-1": 6.8,
+    "fraud-bench-consumer-2": 7.8,
+    "fraud-bench-consumer-3": 6.6,
+    "fraud-platform-kafka-1": 57.9,
+    "fraud-platform-postgres-1": 3.5
+  },
+  "cpu_percent_max": {
+    "fraud-bench-bench-redis-1": 9.7,
+    "fraud-bench-consumer-1": 28.5,
+    "fraud-bench-consumer-2": 50.1,
+    "fraud-bench-consumer-3": 20.1,
+    "fraud-platform-kafka-1": 267.7,
+    "fraud-platform-postgres-1": 12.0
+  },
+  "cpu_samples": {
+    "fraud-bench-bench-redis-1": 25,
+    "fraud-bench-consumer-1": 25,
+    "fraud-bench-consumer-2": 25,
+    "fraud-bench-consumer-3": 25,
+    "fraud-platform-kafka-1": 25,
+    "fraud-platform-postgres-1": 25
+  },
+  "producer_seconds": 40.00050955400002,
+  "max_wall_clock_gap_s": 5.0,
+  "discarded": false
+}

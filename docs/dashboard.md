@@ -216,6 +216,6 @@ changed under an open form. Re-reading the version at submit time defeated the l
   reached with `kubectl -n fraud-k8s port-forward svc/dashboard 8502:8501`. It reads the
   cluster's own small database (a 20-event replay), not the Compose demo database; fraud rings
   show as "not run in this deployment" (a host batch job).
-  The cluster image is one feature behind (not rebuilt on 2026-10-30): it has no Why-flagged
-  panel; the cluster also has no feature file, so a rebuilt image would show "No explanation
-  data in this deployment".
+  The cluster image was rebuilt on 2026-10-30 from 4b811c8 (main has since changed only src/graph/rings.py, which the dashboard does not import), but the
+  cluster has no feature file, so its Why-flagged panel shows "No explanation data in this
+  deployment".

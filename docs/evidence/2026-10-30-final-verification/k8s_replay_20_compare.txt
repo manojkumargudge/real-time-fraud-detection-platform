@@ -1,0 +1,35 @@
+In-cluster replay, validation events 20-39 (TransactionID 3459452..3459471), Minikube namespace fraud-k8s, images built from this checkout (src identical to main 4b811c8).
+transaction_id|score|is_alert|model_version (cluster == Compose demo DB, diff empty)
+3459452|0.001432645134627819|false|baseline-9fdad27ea3b0
+3459453|0.04381472244858742|false|baseline-9fdad27ea3b0
+3459454|0.0047223614528775215|false|baseline-9fdad27ea3b0
+3459455|0.003817047690972686|false|baseline-9fdad27ea3b0
+3459456|0.00830224622040987|false|baseline-9fdad27ea3b0
+3459457|0.005278689321130514|false|baseline-9fdad27ea3b0
+3459458|0.013675938360393047|false|baseline-9fdad27ea3b0
+3459459|0.03560328483581543|false|baseline-9fdad27ea3b0
+3459460|0.09445297718048096|false|baseline-9fdad27ea3b0
+3459461|0.0015151513507589698|false|baseline-9fdad27ea3b0
+3459462|0.12623950839042664|false|baseline-9fdad27ea3b0
+3459463|0.0015998375602066517|false|baseline-9fdad27ea3b0
+3459464|0.0029903415124863386|false|baseline-9fdad27ea3b0
+3459465|0.005533398594707251|false|baseline-9fdad27ea3b0
+3459466|0.020572450011968613|false|baseline-9fdad27ea3b0
+3459467|0.0026216066908091307|false|baseline-9fdad27ea3b0
+3459468|0.03114563226699829|false|baseline-9fdad27ea3b0
+3459469|0.026367340236902237|false|baseline-9fdad27ea3b0
+3459470|0.005422608461230993|false|baseline-9fdad27ea3b0
+3459471|0.0019775915425270796|false|baseline-9fdad27ea3b0
+
+Pods after the run:
+api-5d8767cbb7-97b7g 1/1 Running 0
+consumer-8589575489-2khh2 1/1 Running 0
+consumer-8589575489-ffvvj 1/1 Running 0
+consumer-8589575489-hcd8w 1/1 Running 0
+dashboard-8f47477d7-djn8d 1/1 Running 0
+feast-materialize-rmjhv 0/1 Completed 0
+kafka-7b6df8c86f-n829b 1/1 Running 2
+postgres-67869d97d4-2snt7 1/1 Running 2
+produce-events-final-j788z 0/1 Completed 0
+produce-events-jcqmk 0/1 Completed 0
+redis-b87cf54c9-rhq2m 1/1 Running 2
