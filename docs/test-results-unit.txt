@@ -1,20 +1,22 @@
 Unit test results (integration tests NOT run here; see test-results-integration.txt)
 ===================================================================================
 
-Command (Git Bash, repo root; service variables unset, tests/conftest.py points unit tests at
-unreachable services and selects FEATURE_SOURCE=store):
-  env -u DATABASE_URL -u KAFKA_BOOTSTRAP_SERVERS -u TEST_DATABASE_URL -u TEST_KAFKA_BOOTSTRAP -u TEST_REDIS -u MLFLOW_TRACKING_URI -u FEAST_REDIS -u FEATURE_SOURCE .venv/Scripts/python.exe -m pytest --ignore=tests/test_integration.py -p no:cacheprovider -rfEs
+Command (Git Bash, repo root; tests/conftest.py points unit tests at unreachable services, a
+throwaway MLflow store and no explanation feature file, and selects FEATURE_SOURCE=store):
+  MLFLOW_DISABLE_AGENT_HINT=1 PYTHONPATH=. .venv/Scripts/python -m pytest --ignore=tests/test_integration.py -q -p no:cacheprovider -rs
 
-Date:          2026-10-28 (IST)
-Commit tested: 915ffdb (branch docs-refresh; code identical to main e4181c1, docs only on top)
+Date:          2026-11-02 (IST), 12:40-12:51
+Commit tested: c00cdce (main; final-docs changes docs only)
 Python:        Python 3.11.9 (pytest 9.1.1, win32); evidently 0.7.23, mlflow 3.17.2
 
 Summary:
-  With the GNN stack (.venv, torch 2.8.0+cpu): 580 passed, 39 warnings in 757.53s (0:12:37)
-  Skipped: none. Failed: none. (CI's unit job has no GNN stack, so tests/test_graph.py skips there.)
-  Since 2026-10-25: dashboard, review-save fix, dashboard on Kubernetes, GNN blend, drift
-  evidence, Feast training (tests/test_feast_training.py).
+  With the GNN stack (.venv, torch 2.8.0+cpu): 607 passed, 1 skipped, 39 warnings in 654.97s (0:10:54)
+  Skipped: tests/test_explain_real.py (opt-in: needs EXPLAIN_DEMO_DATABASE_URL, read-only, never in CI).
+  Failed: none. (CI run #83: 582 passed, 11 skipped. CI differs from local because its unit job has no GNN stack and no IEEE-CIS dataset, so those tests skip there.)
+  Since 2026-10-28: account graph (tests/test_graph.py), MLflow report runs and back-fill
+  (tests/test_backfill.py), Why-flagged panel (tests/test_explain.py), missing-addr1 ring
+  exclusion (tests/test_rings.py).
 
 Warnings: third-party deprecations (starlette testclient, Feast / its dependencies).
 
-Previous runs: 495 passed on consumer-throughput (2026-10-25); 483 passed on consumer-crash-fix (2026-10-25); 466 passed on drift-rules (2026-10-24); 458 passed on main bd282be (2026-10-24); 417 passed on main 2fe7b70 (2026-10-24); 417 passed on 304ae06 with mlflow 3.16.1 (2026-10-24); 396 passed on d375de9 (2026-10-23); 389 passed on 9994458 (2026-10-23); 369 passed on 614e31f (2026-10-23).
+Previous runs: 606 passed on 4b811c8 (2026-10-30); 580 passed on 915ffdb (2026-10-28); 495 passed on consumer-throughput (2026-10-25); 483 passed on consumer-crash-fix (2026-10-25); 466 passed on drift-rules (2026-10-24); 458 passed on main bd282be (2026-10-24); 417 passed on main 2fe7b70 (2026-10-24); 417 passed on 304ae06 with mlflow 3.16.1 (2026-10-24); 396 passed on d375de9 (2026-10-23); 389 passed on 9994458 (2026-10-23); 369 passed on 614e31f (2026-10-23).

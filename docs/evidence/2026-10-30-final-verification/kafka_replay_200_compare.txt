@@ -1,0 +1,4 @@
+fraud_bench: 200 of 200 replay ids present
+fraud: 200 of 200 replay ids present
+identical (score text, is_alert, model_version): 200; different: 0
+example: 3577340 0.021812206134200096|false|baseline-9fdad27ea3b0

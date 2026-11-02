@@ -4,7 +4,8 @@
 
 Scores card transactions for fraud as they stream through Kafka, using an XGBoost model with
 leakage-safe history features served from Feast. Alerts go to PostgreSQL, where analysts review
-them in a Streamlit dashboard. A batch GNN looks for fraud rings, and an Evidently drift job can
+them in a Streamlit dashboard. A batch job links users into candidate fraud rings, which a GNN ranks
+(no lift on the strict check, see Results), and an Evidently drift job can
 trigger retraining. It uses production-style engineering (CI, tests, security scanning, retries
 and a dead-letter queue, Kubernetes) but runs as a local demo on Docker Compose and Minikube; it
 is not deployed to real traffic.
@@ -24,7 +25,7 @@ is not deployed to real traffic.
 | Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
 | Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
 | Fraud rings (exploratory) | GNN-ranked top-20 rings: 17.23% labelled fraud per transaction vs 3.50% overall as reported, but that reuses labels within a ring; with a strict temporal check (rank on training blocks, rate on validation rows only) 2.22% vs 2.35% in the same rings, on 8 frauds (account graph: 1.42%, 5 frauds), so the ranking shows no lift. Uids with a missing address are excluded, see Known limitations | [docs/gnn.md](docs/gnn.md) "Ring ranking check" |
-| Tests | 607 unit passed + 1 skipped (an opt-in demo-DB test) with the GNN extras (local, 2026-11-02); 582 passed + 11 skipped without them and 41 integration passed (CI run #83, PR #33) | CI run #83; older full logs: [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) (2026-10-28) |
+| Tests | 607 unit passed + 1 skipped (an opt-in demo-DB test) with the GNN extras (local, 2026-11-02); 582 passed + 11 skipped without them and 41 integration passed (CI run #83, PR #33) | CI run #83; full logs: [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) (2026-11-02). CI differs from local because its unit job has no GNN stack and no IEEE-CIS dataset, so those tests skip there. |
 
 On one laptop with 3 consumer containers, the scoring pipeline processed **46.8 events/s** unthrottled. At a steady 5 events/s, scoring one event (Feast state read, features, XGBoost, PostgreSQL write, Feast state push) took **41 ms p50 / 109 ms p99**, and an event was in the database **31 ms p50 / 74 ms p99** after it was produced (1,000 replayed validation events; docs/serving.md "Throughput benchmark").
 
@@ -77,8 +78,8 @@ plus "(anonymised)". Contributions explain the model's score, not the cause of f
   = the stored score within 1e-6; otherwise the panel shows a warning instead of bars. All
   5,093 demo alerts pass (max |score difference| 7.0e-8, max |sum - margin| 5.4e-6).
 - Screenshot: [case 1502, why flagged](docs/screenshots/case-why-flagged.png).
-- The Minikube dashboard image is one feature behind: it has no Why-flagged panel (not
-  rebuilt; the cluster has no feature file).
+- Minikube: the dashboard image was rebuilt on 2026-10-30 from 4b811c8 (main has since changed only src/graph/rings.py, which the dashboard does not import), but the cluster
+  has no feature file, so the panel shows "No explanation data in this deployment".
 
 ## Setup from a fresh clone
 

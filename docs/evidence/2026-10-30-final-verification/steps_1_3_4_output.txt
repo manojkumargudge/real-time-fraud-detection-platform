@@ -1,0 +1,27 @@
+== STEP 1: class counts from raw data
+rows 590540, fraud 20663, legit 569877, rate 3.499%
+matches reports/eda_summary.md (20,663 / 569,877 / 3.499%): True
+== STEP 3: registry, served bundle, PR-AUC, MLflow runs
+aliases {'champion': 2, 'production': 2, 'challenger': 7} ok: True
+model.json: served 9fdad27ea3b0 registry v2 9fdad27ea3b0 equal: True
+metadata.json: served a65a6dfcb68b registry v2 a65a6dfcb68b equal: True
+validation rows 118108, PR-AUC 0.29923830601075374; rounds to 0.2992: True
+MLflow runs by experiment / type:
+  fraud-drift       backfilled                   active   9
+  fraud-evaluation  backfilled                   active   8
+  fraud-gnn         backfilled                   active   2
+  fraud-gnn         stage=blend                  active   4
+  fraud-gnn         stage=stacking               active   3
+  fraud-gnn         training                     active   2
+  fraud-xgboost     role=challenger              active   5
+  fraud-xgboost     role=challenger              deleted  2
+  fraud-xgboost     stage=confirmation           active   4
+  fraud-xgboost     training                     active   7
+  total runs 46
+== STEP 4: GNN scores, blend runs, fraud_rings
+scores.parquet 041078eb43436454 == recorded 041078eb43436454: True
+blend c1a15d8b graph=default: mlflow (0.5, 0.2749, -0.0241, -0.0346, -0.0137) docs (0.5, 0.2749, -0.0241, -0.0346, -0.0137) match: True
+blend 602bb83c graph=default: mlflow (0.45, 0.2797, -0.0192, -0.0263, -0.0118) docs (0.45, 0.2797, -0.0192, -0.0263, -0.0118) match: True
+blend 873b8101 graph=account: mlflow (0.5, 0.2746, -0.0245, -0.0354, -0.014) docs (0.5, 0.2746, -0.0245, -0.0354, -0.014) match: True
+blend fd2a4cea graph=account: mlflow (0.4, 0.2846, -0.0144, -0.0205, -0.0081) docs (0.4, 0.2846, -0.0144, -0.0205, -0.0081) match: True
+fraud_rings rows 20 == 20: True

@@ -10,6 +10,8 @@ flowchart LR
     MLFLOW[("MLflow registry<br/>local SQLite mlflow.db<br/>champion = production = v2")]
     GNN["GNN + fraud rings<br/>batch job src/graph"]
     RETRAIN["Retraining + promotion gate<br/>(when the drift job fires)"]
+    TASK["Task Scheduler: FraudDrift-Retrain<br/>every 6 h, registered disabled<br/>scripts/scheduled_drift.ps1"]
+    EXPLAIN[("Explanation feature file<br/>artifacts/explain/features.csv.gz<br/>python -m src.dashboard.explain build")]
   end
 
   subgraph BOTH["Docker Compose demo and Minikube"]
@@ -35,6 +37,9 @@ flowchart LR
   DASH -- "case reviews -> labels" --> PG
   DATA --> GNN -- "fraud_rings table" --> PG
   PG --> DRIFT -- "rule fires (host run)" --> RETRAIN -- "challenger alias" --> MLFLOW
+  TASK -- "runs run_drift with retraining" --> DRIFT
+  FEAT --> EXPLAIN -- "read-only mount: Why flagged" --> DASH
+  MLFLOW -- "v2 bundle, pred_contribs" --> DASH
 ```
 
 **Legend**
@@ -51,6 +56,12 @@ flowchart LR
 - Features: Feast stores per-entity state; training (offline store) and serving (Redis) compute
   the features from it with the same function, `entity_state.history_features`
   ([feature_store.md](feature_store.md)).
+- Scheduled retraining (host only): Windows Task Scheduler task `FraudDrift-Retrain` runs the
+  drift job with retraining every 6 h while the laptop is on and awake; it is registered
+  disabled (README "Scheduled retraining").
+- Why flagged (dashboard case page, read-only): the served v2 bundle's per-feature
+  contributions on the point-in-time feature vector from the explanation file, built on the
+  host and mounted read-only into the Compose dashboard (not in Minikube).
 - Labels: analyst reviews are stored append-only in `case_reviews`; they are not yet used for
   retraining.
 - Details: [serving.md](serving.md), [feature_store.md](feature_store.md),

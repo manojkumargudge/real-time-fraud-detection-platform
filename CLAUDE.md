@@ -71,7 +71,7 @@ matters (files, numbers, running services) before relying on it.
   Demo stack stopped (`docker compose stop`, volumes kept); Minikube stopped. Images: api
   `585e02c00550`, consumer `9c282577c727`, dashboard `7621290406d0` (Why-flagged).
   State: backups/state-2026-10-30-eod.txt.
-- brief-evidence (PR #29): 36 Yes, 1 Measured (rings, exploratory), 1 Partial (Demo), 2 No
+- brief-evidence (PR #29): 36 Yes, 1 Measured ("no lift on strict check", rings, exploratory), 1 Partial (Demo), 2 No
   (Presentation, Reflection).
 - **Why flagged** (PR #30, docs/dashboard.md, README "Dashboard"): read-only case-page panel,
   top 5 raising / top 3 lowering features from the served v2 bundle's `pred_contribs`; the
@@ -79,7 +79,7 @@ matters (files, numbers, running services) before relying on it.
   src.dashboard.explain build` (gitignored `artifacts/explain/features.csv.gz`, mounted
   read-only); parity check per case (sigmoid(margin) = stored score within 1e-6) passes on all
   5,093 alerts (max 7.0e-8). `tests/test_explain_real.py` is opt-in (EXPLAIN_DEMO_DATABASE_URL,
-  read-only). Minikube dashboard image is one feature behind.
+  read-only). Minikube dashboard image rebuilt 2026-10-30 from 4b811c8; it has the panel but no feature file.
 - **Load test** (PR #31, docs/evidence/2026-10-30-load-test/): `POST /score` writes for new
   transactions, so it ran on the fraud_bench copy with a temporary API (127.0.0.1:18001).
   One client ~35 req/s, p50 25 ms; knee between 1 and 5 clients (store = one connection behind
@@ -272,8 +272,8 @@ matters (files, numbers, running services) before relying on it.
   - Fraud rings (`python -m src.graph.rings`): uid + device links only (never card_id), device
     values shared by <= 10 uids, uids with <= 3 devices and <= 1,000 transactions; missing-addr1
     uids excluded; 215 rings, largest 18 users (2.2%), 16 unscored (first time block); top-20
-    labelled fraud rate 17.23% vs 3.50% (weak evidence; exploratory, strict temporal check
-    2.22%, see above). reports/fraud_rings.md + table `fraud_rings` in the demo Postgres.
+    labelled fraud rate 17.23% vs 3.50% (exploratory; strict temporal check 2.22% vs 2.35%,
+    no lift, see above). reports/fraud_rings.md + table `fraud_rings` in the demo Postgres.
 - CI/CD (.github/workflows/ci.yml): lint + mypy strict + unit tests; integration job with
   PostgreSQL 16, Kafka 3.8.1 (KRaft), Redis 7.4.1 service containers; on push to `main`, image
   pushed to `ghcr.io/manojkumargudge/real-time-fraud-detection-platform` (`<sha>`, `latest`).

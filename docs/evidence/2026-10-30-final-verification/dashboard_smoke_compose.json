@@ -1,0 +1,36 @@
+[
+  {
+    "page": "Overview",
+    "marker": "Alerts by status",
+    "found": true,
+    "errors": []
+  },
+  {
+    "page": "Alert queue",
+    "marker": "Open alert id",
+    "found": true,
+    "errors": []
+  },
+  {
+    "page": "Fraud rings",
+    "marker": "Ring",
+    "found": true,
+    "errors": []
+  },
+  {
+    "page": "Drift",
+    "marker": "Drift reports",
+    "found": true,
+    "errors": []
+  },
+  {
+    "page": "Case detail (1502)",
+    "found": true,
+    "why_flagged": true,
+    "parity_passed": true,
+    "parity_warning": false,
+    "top_feature_recipient_email": true,
+    "analyst_field": "",
+    "errors": []
+  }
+]
