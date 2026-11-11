@@ -94,7 +94,7 @@ matrix takes about 38 min, pandas about 2 s.
 |---|---|
 | `python -m src.models.train` (CLI) | **Feast** by default; `--feature-source pandas` switches |
 | direct calls (`fit_baseline`, `model_frame`, studies, tests) | pandas by default; `feature_source="feast"` switches |
-| automatic retraining by the drift job (`run_job` in `src/monitoring/run_drift.py` -> `build_model_frame` -> `retrain_and_compare` -> `fit_on_split`) | **pandas** (no option) |
+| automatic retraining by the drift job (`run_job` in `src/monitoring/run_drift.py` -> `retraining_frame` -> `retrain_and_compare` -> `fit_on_split`) | **Feast** by default since 2026-11-11 (`--retrain-feature-source pandas` switches). The job checks the Feast rows against the batch rows and fails if they differ. On the real data: 505,109 rows, same sha256, challenger `model.json` byte-identical to the pandas path; +41 min per retraining run ([evidence](evidence/2026-11-11-retrain-feast/README.md)). The drift checks themselves use the batch frame. |
 
 Retrieval runs in time-ordered chunks of 4,000 rows. Each chunk's offline source holds only the
 snapshots a point-in-time join can pick for that chunk, because Feast's dask file store

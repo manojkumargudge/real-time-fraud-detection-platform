@@ -1,0 +1,50 @@
+2026/11/11 15:05:12 INFO mlflow.agent.hint: Load the `instrumenting-with-mlflow-tracing` skill at C:\Users\Manojkumar Gudge\Desktop\Real-Time Financial Fraud Detection Platform\.venv\Lib\site-packages\mlflow\assistant\skills\instrumenting-with-mlflow-tracing\SKILL.md before writing any tracing code; it ships with this MLflow install. Set MLFLOW_DISABLE_AGENT_HINT=1 to silence this.
+2026-11-11 15:05:15,779 INFO src.serving.model loaded model version=baseline-9fdad27ea3b0 features=28
+2026-11-11 15:05:30,454 INFO src.data.load loaded transactions file=train_transaction.csv rows=590540 cols=17
+2026-11-11 15:05:30,949 INFO src.data.load loaded identity file=train_identity.csv rows=144233 cols=3
+2026-11-11 15:05:31,218 INFO src.data.load merged rows=590540 with_identity=144233 (24.4%)
+2026-11-11 15:05:36,598 INFO src.features.history computed history features rows=590540 uids=43018 cards=14893 features=12
+2026-11-11 15:05:36,884 INFO src.features.split chronological split train_end=7615091 valid_start=7615091 train=306868 valid=76718 gap_dropped=0
+2026-11-11 15:05:37,391 INFO src.features.preprocess fitted categorical encoder rows=306868 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1388}
+2026-11-11 15:06:23,948 INFO src.features.preprocess fitted categorical encoder rows=383586 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1491}
+2026-11-11 15:07:05,710 INFO src.monitoring.run_drift window champion_train: TransactionDT 86400..12192899 (day 1.00 .. 141.12)
+2026-11-11 15:07:05,710 INFO src.monitoring.run_drift window challenger_train: TransactionDT 86400..12614331 (day 1.00 .. 146.00)
+2026-11-11 15:07:05,711 INFO src.monitoring.run_drift window holdout: TransactionDT 12614332..13219131 (day 146.00 .. 153.00)
+2026-11-11 15:07:05,711 INFO src.monitoring.run_drift window current: TransactionDT 14688000..15724799 (day 170.00 .. 182.00)
+2026-11-11 15:07:05,711 INFO src.monitoring.run_drift now=15811131 label_cutoff=13219131 (delay 30 days)
+C:\Users\Manojkumar Gudge\Desktop\Real-Time Financial Fraud Detection Platform\.venv\Lib\site-packages\feast\infra\online_stores\sqlite.py:91: UserWarning:
+
+Field name "vector_enabled" in "SqliteOnlineStoreConfig" shadows an attribute in parent "VectorStoreConfig"
+
+C:\Users\Manojkumar Gudge\Desktop\Real-Time Financial Fraud Detection Platform\.venv\Lib\site-packages\feast\infra\online_stores\sqlite.py:91: UserWarning:
+
+Field name "vector_len" in "SqliteOnlineStoreConfig" shadows an attribute in parent "VectorStoreConfig"
+
+2026-11-11 15:07:58,518 INFO feast.infra.registry.registry Registry file not found. Creating new registry.
+C:\Users\Manojkumar Gudge\Desktop\Real-Time Financial Fraud Detection Platform\src\features\feast_store.py:207: DeprecationWarning:
+
+Entity value_type will be mandatory in the next release. Please specify a value_type for entity 'uid'.
+
+C:\Users\Manojkumar Gudge\Desktop\Real-Time Financial Fraud Detection Platform\src\features\feast_store.py:208: DeprecationWarning:
+
+Entity value_type will be mandatory in the next release. Please specify a value_type for entity 'card_id'.
+
+C:\Users\Manojkumar Gudge\Desktop\Real-Time Financial Fraud Detection Platform\.venv\Lib\site-packages\feast\feature_store.py:581: RuntimeWarning:
+
+On demand feature view is an experimental feature. This API is stable, but the functionality does not scale well for offline retrieval
+
+2026-11-11 15:48:24,247 INFO src.features.feast_training feast historical features rows=505109 seconds=2478.4
+2026-11-11 15:48:36,144 INFO src.monitoring.run_drift retraining frame: Feast offline store, 505109 rows x 31 columns in 2488 s (identical to the batch frame: 505109 rows, sha256 5326f6fda279b2b657f4830205e698b9bd3ed247c0b24037d1ca14fdb3f54571 on both sides)
+2026-11-11 15:48:36,287 INFO src.monitoring.retrain window champion_train: TransactionDT 86400..12192899 (day 1.00 .. 141.12)
+2026-11-11 15:48:36,290 INFO src.monitoring.retrain window challenger_train: TransactionDT 86400..12614331 (day 1.00 .. 146.00)
+2026-11-11 15:48:36,290 INFO src.monitoring.retrain window holdout: TransactionDT 12614332..13219131 (day 146.00 .. 153.00)
+2026-11-11 15:48:36,480 INFO src.features.split chronological split train_end=9736657 valid_start=9736657 train=387876 valid=96969 gap_dropped=0
+2026-11-11 15:48:37,495 INFO src.features.preprocess fitted categorical encoder rows=387876 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1494}
+2026-11-11 15:49:22,964 INFO src.features.preprocess fitted categorical encoder rows=484845 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1654}
+2026-11-11 15:49:52,542 INFO src.models.train saved model version=baseline-5dfeb952e74c dir=C:\Users\MANOJK~1\AppData\Local\Temp\tmpt8qxad6o\challenger
+2026-11-11 15:49:53,587 INFO src.models.tracking logged MLflow run id=e7d2fbc73f834804b08d7b5b426bda89 experiment=fraud-xgboost uri=sqlite:///C:/Users/MANOJK~1/AppData/Local/Temp/p2/feast/mlflow.db
+2026-11-11 15:49:54,649 INFO src.serving.model loaded model version=baseline-5dfeb952e74c features=28
+2026-11-11 15:49:54,826 INFO src.models.tracking registered fraud-xgboost version=8 alias=challenger
+2026-11-11 15:50:13,076 INFO src.monitoring.retrain promotion NO: challenger 0.3290 champion 0.3238 delta 0.0053 CI95 [-0.0160, 0.0254] (kept champion: challenger better by +0.0052 but CI lower bound -0.0160 <= margin 0.01)
+2026-11-11 15:50:19,607 INFO src.monitoring.run_drift drift report id=11 triggered=True reasons=["top-feature drift: R_emaildomain drifted (among the champion's top 5 features by gain)"] share=0.286 prediction psi=0.0025 delayed_pr_auc=0.3238 report=C:\Users\MANOJK~1\AppData\Local\Temp\p2\feast\reports\drift_20261111T102013Z.html
+{"drift_report_id": 11}

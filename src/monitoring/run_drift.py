@@ -64,6 +64,8 @@ logger = logging.getLogger("src.monitoring.run_drift")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REPORTS_DIR = REPO_ROOT / "reports" / "drift"
 SERVED_BUNDLE = REPO_ROOT / "artifacts" / "baseline"
+# Same default as `python -m src.models.train --feature-source` (src.models.train).
+DEFAULT_RETRAIN_FEATURE_SOURCE = "feast"
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,61 @@ class JobOptions:
     reports_dir: Path = REPORTS_DIR
     mlflow_uri: str | None = None
     champion_source: str = "unknown"
+    # Training matrix for a challenger: "feast" (offline store, the train CLI default) or
+    # "pandas" (batch code). Both give the same frame (checked in retraining_frame's caller).
+    retrain_feature_source: str = DEFAULT_RETRAIN_FEATURE_SOURCE
+
+
+def retraining_frame(
+    raw: pd.DataFrame, batch_frame: pd.DataFrame, cutoff: int, feature_source: str
+) -> pd.DataFrame:
+    """Labelled model-frame rows (``TransactionDT <= cutoff``) for training a challenger.
+
+    ``pandas`` reuses the batch frame the checks were computed on. ``feast`` rebuilds the rows
+    with the history features read from the Feast offline store, as the train CLI does by
+    default (``src.models.train.model_frame``). History features are point-in-time (strictly
+    earlier or at the row's timestamp), so building them from the rows up to the cutoff gives
+    the same values as from all rows; the result must equal the batch rows exactly, otherwise
+    the job fails rather than train on a different matrix.
+    """
+    import time
+
+    from src.features.feast_training import FEATURE_SOURCES, compare_frames, frame_sha256
+
+    if feature_source not in FEATURE_SOURCES:
+        raise ValueError(f"unknown feature source {feature_source!r}; expected {FEATURE_SOURCES}")
+    expected = usable_labels(batch_frame, cutoff)
+    if feature_source == "pandas":
+        logger.info(
+            "retraining frame: pandas batch features, %d rows x %d columns, sha256 %s",
+            len(expected),
+            expected.shape[1],
+            frame_sha256(expected),
+        )
+        return expected
+    from src.models.train import model_frame
+
+    started = time.perf_counter()
+    feast = model_frame(usable_labels(raw, cutoff), feature_source)
+    elapsed = time.perf_counter() - started
+    diff = compare_frames(feast, expected)
+    if diff["rows"][0] != diff["rows"][1] or not (  # type: ignore[index]
+        diff["same_columns"]
+        and diff["same_dtypes"]
+        and diff["same_index"]
+        and not diff["differing_columns"]
+    ):
+        raise RuntimeError(f"Feast training frame differs from the batch frame: {diff}")
+    logger.info(
+        "retraining frame: Feast offline store, %d rows x %d columns in %.0f s "
+        "(identical to the batch frame: %d rows, sha256 %s on both sides)",
+        len(feast),
+        feast.shape[1],
+        elapsed,
+        len(expected),
+        frame_sha256(feast),
+    )
+    return feast
 
 
 def champion_train_window(champion: ModelBundle) -> Window:
@@ -212,7 +269,7 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
 
         # With retraining enabled, inputs.champion is the MLflow champion (see _load_champion).
         registry = MlflowRegistry(opts.mlflow_uri or tracking_uri())
-        labelled = usable_labels(frame, cutoff)
+        labelled = retraining_frame(raw, frame, cutoff, opts.retrain_feature_source)
         result = retrain_and_compare(
             labelled,
             retrain_windows,
@@ -223,6 +280,7 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
                 "trigger": "; ".join(trigger.reasons) or "none (forced)",
                 "synthetic": str(synthetic).lower(),
                 "forced": str(forced).lower(),
+                "feature_source": opts.retrain_feature_source,
             },
         )
         retrain_run_id, challenger_version = result.run_id, result.challenger_version
@@ -359,6 +417,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--synthetic-amount-factor", type=float)
     parser.add_argument("--reports-dir", type=Path, default=REPORTS_DIR)
+    parser.add_argument(
+        "--retrain-feature-source",
+        choices=("feast", "pandas"),
+        default=DEFAULT_RETRAIN_FEATURE_SOURCE,
+        help="training matrix for a challenger: Feast offline store (default, as the train "
+        "CLI) or the pandas batch code; the job checks that both are identical",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -384,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         reports_dir=args.reports_dir,
         mlflow_uri=mlflow_uri,
         champion_source=source,
+        retrain_feature_source=args.retrain_feature_source,
     )
     report_id = run_job(inputs, cfg, opts, dsn)
     print(json.dumps({"drift_report_id": report_id}))
