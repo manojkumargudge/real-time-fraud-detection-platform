@@ -5,6 +5,12 @@
 # feast 0.47.0: RCE in the Kubernetes materializer job; not used (local/Redis online store only).
 CVE-2025-11157 exp:2027-01-31
 
+# feast 0.47.0: RCE through dill-deserialized UDFs on the Feast feature server / registry server
+# (GHSA-gg2p-37pv-v7fq, GHSA-q63x-9pfm-mjx4). Embedded Feast, local registry, no server exposed:
+# FeatureStore runs in-process; no feature or registry server in Compose, k8s or scripts.
+CVE-2026-18948 exp:2027-01-31
+CVE-2026-56121 exp:2027-01-31
+
 # pyarrow 18.0.0: use-after-free reading Arrow IPC files; only our own parquet is read; pinned by feast.
 CVE-2026-25087 exp:2027-01-31
 

@@ -2,6 +2,8 @@
 # security/check_ignores.py turns these into --ignore-vuln flags and fails once an entry expires.
 # Reviewed 2026-10-23; re-review each entry before its expiry date.
 PYSEC-2026-1366 | 2027-01-31 | feast 0.47.0 (CVE-2025-11157): RCE in the Kubernetes materializer job; not used here (local/Redis only); 0.54 needs numpy 2 / newer pydantic
+CVE-2026-18948  | 2027-01-31 | feast 0.47.0 (GHSA-gg2p-37pv-v7fq, fixed 0.67.0): dill UDF deserialization RCE on the feature/registry server; embedded Feast, local registry, no server exposed (no feature/registry server)
+CVE-2026-56121  | 2027-01-31 | feast 0.47.0 (GHSA-q63x-9pfm-mjx4, fixed 0.63.0): unauthenticated RCE via registry server gRPC (ApplyFeatureView UDF); embedded Feast, local registry, no server exposed (no feature/registry server)
 PYSEC-2026-113  | 2027-01-31 | pyarrow 18.0.0 (CVE-2026-25087): use-after-free reading Arrow IPC *files*; only our own parquet is read; pinned by feast 0.47
 # torch 2.8.0 (requirements-gnn.txt, batch only, not in the serving image). 2.10 fails to load on
 # Windows after pandas (WinError 1114); none of these code paths is used and nothing is torch.load-ed.
