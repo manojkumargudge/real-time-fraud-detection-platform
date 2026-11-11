@@ -279,7 +279,11 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
   a failed push is only logged ([docs/feature_store.md](docs/feature_store.md)).
 - Dashboard: no authentication, no connection pool, one replica.
 - End-to-end latency is measured to the row's `scored_at`, the start of the database write, so it excludes the Feast state push (~14–16 ms p50) and the offset commit. HTTP `/score` latency was load-tested on a bench copy on 2026-10-30 (Results, "Load test"); the API serialises database access on one connection, so it does not scale with concurrent clients.
-- Security scan results and accepted risks: [docs/security.md](docs/security.md).
+- Security scan results and accepted risks: [docs/security.md](docs/security.md). Accepted
+  pip-audit risks (expire 2027-01-31) include three feast 0.47.0 RCE advisories:
+  CVE-2025-11157 (Kubernetes materializer job, not used) and, added 2026-11-11, CVE-2026-18948
+  and CVE-2026-56121 (RCE through the Feast feature/registry server): embedded Feast, local
+  registry, no server exposed. Fixing them means feast >= 0.67 (numpy 2).
 
 ## Next steps
 
