@@ -363,7 +363,9 @@ def run_captured(
         scored=scenario["scored"],
         champion=scenario["champion"],
     )
-    options = job.JobOptions(reports_dir=tmp_path, **{"retrain": False, **opts})
+    # pandas unless a test asks for Feast: the Feast path has its own tests below.
+    defaults = {"retrain": False, "retrain_feature_source": "pandas"}
+    options = job.JobOptions(reports_dir=tmp_path, **{**defaults, **opts})
     job.run_job(inputs, cfg, options, dsn="unused")
     return rows[0]
 
@@ -699,3 +701,88 @@ def test_fingerprint_changes_with_rows_labels_and_window() -> None:
     assert training_fingerprint(train, 0, 101, CFG) != base
     other_seed = config_with(retrain={"seed": 7})
     assert training_fingerprint(train, 0, 100, other_seed) != base
+
+
+# --- training matrix from the Feast offline store ---------------------------------------------
+
+
+def test_feast_is_the_default_retraining_feature_source() -> None:
+    assert job.JobOptions().retrain_feature_source == "feast"
+    assert job.DEFAULT_RETRAIN_FEATURE_SOURCE == "feast"
+
+
+def test_retraining_frame_from_feast_equals_the_batch_frame(
+    scenario: dict[str, Any], tmp_path: Path
+) -> None:
+    pytest.importorskip("feast")
+    raw = scenario["raw"]
+    batch = build_model_frame(raw, "baseline", HistoryConfig())
+    cutoff = int(raw[TIME].quantile(0.8))
+    feast = job.retraining_frame(raw, batch, cutoff, "feast")
+    pandas_rows = job.retraining_frame(raw, batch, cutoff, "pandas")
+    assert len(feast) > 0 and len(pandas_rows) > 0
+    print(f"feast rows {len(feast)} vs pandas rows {len(pandas_rows)}")
+    assert int(feast[TIME].max()) <= cutoff
+    pd.testing.assert_frame_equal(feast, pandas_rows, check_exact=True)
+
+
+def test_retraining_frame_fails_when_feast_differs(
+    scenario: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.models.train as train_mod
+
+    raw = scenario["raw"]
+    batch = build_model_frame(raw, "baseline", HistoryConfig())
+    cutoff = int(raw[TIME].quantile(0.8))
+
+    def shifted(df: pd.DataFrame, source: str) -> pd.DataFrame:
+        frame = build_model_frame(df, "baseline", HistoryConfig())
+        frame["TransactionAmt"] = frame["TransactionAmt"] + 1.0
+        return frame
+
+    monkeypatch.setattr(train_mod, "model_frame", shifted)
+    with pytest.raises(RuntimeError, match="differs from the batch frame"):
+        job.retraining_frame(raw, batch, cutoff, "feast")
+
+
+def test_retraining_frame_rejects_an_unknown_source(scenario: dict[str, Any]) -> None:
+    raw = scenario["raw"]
+    batch = build_model_frame(raw, "baseline", HistoryConfig())
+    with pytest.raises(ValueError, match="unknown feature source"):
+        job.retraining_frame(raw, batch, int(raw[TIME].max()), "spark")
+
+
+def test_job_trains_the_challenger_on_the_feast_frame(
+    scenario: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real job path: a fired check retrains on the Feast-built rows, tagged as such."""
+    pytest.importorskip("feast")
+    import src.monitoring.retrain as retrain_mod
+
+    seen: dict[str, Any] = {}
+
+    def fake_retrain(labelled: pd.DataFrame, windows: Any, *args: Any, **kwargs: Any) -> Any:
+        seen["labelled"] = labelled
+        seen["tags"] = kwargs["tags"]
+        raise RuntimeError("stop after capture")
+
+    monkeypatch.setattr(retrain_mod, "retrain_and_compare", fake_retrain)
+    monkeypatch.setattr(retrain_mod, "MlflowRegistry", lambda uri: None)
+    cfg = small_cfg(feature_drift={"share_threshold": 0.01})  # make sure it fires
+    with pytest.raises(RuntimeError, match="stop after capture"):
+        run_captured(
+            scenario,
+            cfg,
+            tmp_path,
+            monkeypatch,
+            retrain=True,
+            mlflow_uri="unused",
+            retrain_feature_source="feast",
+        )
+    assert seen["tags"]["feature_source"] == "feast"
+    raw = scenario["raw"]
+    now = int(scenario["scored"]["transaction_dt"].max())
+    batch = build_model_frame(raw, "baseline", HistoryConfig())
+    expected = batch.loc[batch[TIME] <= now - 3 * DAY]
+    assert len(seen["labelled"]) == len(expected) > 0
+    pd.testing.assert_frame_equal(seen["labelled"], expected, check_exact=True)

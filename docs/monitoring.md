@@ -53,7 +53,12 @@ every label newer than the cutoff and show that the results do not change.
 **When it fires** (host only):
 
 1. Train a challenger with the champion's recipe on every usable label before the holdout. The
-   holdout is the last 7 days of usable labels, (cutoff - 7 days, cutoff].
+   holdout is the last 7 days of usable labels, (cutoff - 7 days, cutoff]. The training matrix
+   comes from the Feast offline store (`--retrain-feature-source feast`, the default since
+   2026-11-11, as in the training CLI; `pandas` switches back). The job fails if the Feast rows
+   differ from the batch rows in any value. Feast adds about 41 min to a run that retrains;
+   the challenger is byte-identical to the pandas path
+   (docs/evidence/2026-11-11-retrain-feast/).
 2. Log it to MLflow and register it with alias `challenger`.
 3. Score champion and challenger on the same holdout. Paired bootstrap of the PR-AUC
    difference: 1,000 resamples, seed 42, resampling whole days.
@@ -78,7 +83,8 @@ no such tags, so the next real run trains one more time.
 **Design trade-off**
 
 - **The trigger is cheap and sensitive by design.** A false alarm costs one retrain (about
-  73 s on this laptop), and a reused challenger costs nothing.
+  45 min on this laptop with the default Feast matrix, about 5 min with
+  `--retrain-feature-source pandas`), and a reused challenger costs nothing.
 - **Production is protected by the bootstrap promotion gate, not by the trigger.** `champion`
   moves only if the 95% CI lower bound of the PR-AUC gain is above the margin, and
   `production` is never moved by the job.

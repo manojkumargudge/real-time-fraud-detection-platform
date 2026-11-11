@@ -619,6 +619,8 @@ def test_drift_job_end_to_end_writes_drift_reports(
     assert windows["challenger_train"]["end_dt"] < windows["holdout"]["start_dt"]
     assert Path(report_path).is_file()
     assert str(client.get_model_version_by_alias("fraud-xgboost", "challenger").version) == "2"
+    # Default job options: the challenger is trained on the Feast offline-store matrix.
+    assert client.get_run(run_id).data.tags["feature_source"] == "feast"
     assert str(client.get_model_version_by_alias("fraud-xgboost", "production").version) == "1"
     expected_champion = "2" if promotion["promote"] else "1"
     assert str(client.get_model_version_by_alias("fraud-xgboost", "champion").version) == (
