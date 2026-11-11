@@ -1,0 +1,64 @@
+store: sqlite:///mlflow.db (opened read-only)
+
+== experiment 0 Default: 0 active runs (0 deleted)
+== experiment 1 fraud-xgboost: 16 active runs (2 deleted)
+  ebcc31668174 active  FINISHED  baseline-scale_pos_weight-seed42       imbalance=scale_pos_weight
+  8bb61a5e06b5 active  FINISHED  baseline-scale_pos_weight-seed42       imbalance=scale_pos_weight
+  d4447f0172cd active  FINISHED  baseline-scale_pos_weight-seed7        imbalance=scale_pos_weight
+  88cc9bd0fdab active  FINISHED  baseline-scale_pos_weight-seed2026     imbalance=scale_pos_weight
+  71c4f1bd8205 active  FINISHED  baseline-none-seed42                   imbalance=none            
+  1985c38de961 active  FINISHED  baseline-none-seed7                    imbalance=none            
+  f9d1f856e31a active  FINISHED  baseline-none-seed2026                 imbalance=none            
+  519e2edebe9c active  FINISHED  confirm-W1-scale_pos_weight-seed42     imbalance=scale_pos_weight
+  8252a82f4c12 active  FINISHED  confirm-W1-none-seed42                 imbalance=none            
+  1b5de0d468db active  FINISHED  confirm-W2-scale_pos_weight-seed42     imbalance=scale_pos_weight
+  93afe7e84084 active  FINISHED  confirm-W2-none-seed42                 imbalance=none            
+  19a8be823260 deleted FINISHED  challenger-4750731                     imbalance=none            
+  79a08a92ff3f deleted FINISHED  challenger-4750731                     imbalance=none            
+  71a37490318a active  FINISHED  challenger-12614332                    imbalance=none            
+  5a8b870f9d0c active  FINISHED  challenger-12614332                    imbalance=none            
+  061592d85f95 active  FINISHED  challenger-12614332                    imbalance=none            
+  4de105c1289f active  FINISHED  challenger-12614332                    imbalance=none            
+  c0d5d83d32db active  FINISHED  challenger-12614332                    imbalance=none            
+== experiment 2 fraud-gnn: 11 active runs (0 deleted)
+  cf8d6fd82abd active  FINISHED  gnn-seed42                             imbalance=-               
+  8d48f1584376 active  FINISHED  gnn-seed42                             imbalance=-               
+  e59ec3eb2de9 active  FINISHED  gnn-seed42                             imbalance=-               
+  c233ecd002ab active  FINISHED  gnn-seed42                             imbalance=-               
+  c1a15d8b8a27 active  FINISHED  blend-transaction                      imbalance=-               
+  602bb83c26fc active  FINISHED  blend-entity                           imbalance=-               
+  5b6afa992ac4 active  FINISHED  gnn-stacking-report                    imbalance=-               
+  10b7e0a4e819 active  FINISHED  fraud-rings-report                     imbalance=-               
+  ea7d2ffaec49 active  FINISHED  gnn-seed42                             imbalance=-               
+  873b81014150 active  FINISHED  blend-transaction                      imbalance=-               
+  fd2a4ceafd2e active  FINISHED  blend-entity                           imbalance=-               
+== experiment 3 fraud-evaluation: 8 active runs (0 deleted)
+  22a36c7101ad active  FINISHED  model-comparison                       imbalance=-               
+  5c7e15d61ca5 active  FINISHED  model-comparison-seeds                 imbalance=-               
+  fd92a5e4f47a active  FINISHED  evaluation-study                       imbalance=-               
+  da2377f342cd active  FINISHED  robust-evaluation-pilot                imbalance=-               
+  4f66c471b2e0 active  FINISHED  robust-evaluation-full                 imbalance=-               
+  84d078c31e68 active  FINISHED  leakage-audit                          imbalance=-               
+  b5522fdcad0f active  FINISHED  model-v1-vs-v2                         imbalance=-               
+  d0b0ac9dd7f3 active  FINISHED  imbalance-decision                     imbalance=-               
+== experiment 4 fraud-drift: 9 active runs (0 deleted)
+  cb4d21330037 active  FINISHED  drift-report-1                         imbalance=-               
+  02ec9961bf59 active  FINISHED  drift-report-2                         imbalance=-               
+  ce5898d3cf84 active  FINISHED  drift-report-3                         imbalance=-               
+  1bdfd4b7fe35 active  FINISHED  drift-report-4                         imbalance=-               
+  0c1f835cbfca active  FINISHED  drift-report-5                         imbalance=-               
+  cc684214d53d active  FINISHED  drift-report-6                         imbalance=-               
+  2120e161c82a active  FINISHED  drift-report-7                         imbalance=-               
+  e6de9734a754 active  FINISHED  drift-report-8                         imbalance=-               
+  8dd06f33565d active  FINISHED  drift-report-9                         imbalance=-               
+
+active runs in total: 44
+registry fraud-xgboost aliases: [('challenger', 7), ('champion', 2), ('production', 2)]
+
+== class weights vs none (experiment fraud-xgboost, runs baseline-<method>-seed<N>, metric valid_pr_auc)
+  scale_pos_weight seeds=3 valid_pr_auc=[0.2591, 0.2504, 0.2457] mean=0.2517
+  none             seeds=3 valid_pr_auc=[0.2877, 0.2992, 0.2935] mean=0.2935
+  confirm-W1-scale_pos_weight-seed42   valid_pr_auc=0.2212
+  confirm-W1-none-seed42               valid_pr_auc=0.2349
+  confirm-W2-scale_pos_weight-seed42   valid_pr_auc=0.2528
+  confirm-W2-none-seed42               valid_pr_auc=0.2958
