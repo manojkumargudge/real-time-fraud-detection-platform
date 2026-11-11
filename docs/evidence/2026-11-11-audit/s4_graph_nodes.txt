@@ -1,0 +1,48 @@
+torch_geometric 2.8.1
+
+== graph default (degree limit 1000, train + validation)
+  node tx         590,540
+  node card        14,816
+  node device       1,781
+  node p_email         41
+  node r_email         51
+  node addr1          284
+  edge ('tx', 'has_card', 'card')                 344,449
+  edge ('card', 'rev_card', 'tx')                 344,449
+  edge ('tx', 'has_device', 'device')              29,248
+  edge ('device', 'rev_device', 'tx')              29,248
+  edge ('tx', 'has_p_email', 'p_email')            11,403
+  edge ('p_email', 'rev_p_email', 'tx')            11,403
+  edge ('tx', 'has_r_email', 'r_email')             9,338
+  edge ('r_email', 'rev_r_email', 'tx')             9,338
+  edge ('tx', 'has_addr1', 'addr1')                 8,810
+  edge ('addr1', 'rev_addr1', 'tx')                 8,810
+
+== graph account (degree limit 1000, train + validation)
+  node tx         590,540
+  node card        14,816
+  node device       1,781
+  node p_email         41
+  node r_email         51
+  node addr1          284
+  node account     40,392
+  edge ('tx', 'has_card', 'card')                 344,449
+  edge ('card', 'rev_card', 'tx')                 344,449
+  edge ('tx', 'has_device', 'device')              29,248
+  edge ('device', 'rev_device', 'tx')              29,248
+  edge ('tx', 'has_p_email', 'p_email')            11,403
+  edge ('p_email', 'rev_p_email', 'tx')            11,403
+  edge ('tx', 'has_r_email', 'r_email')             9,338
+  edge ('r_email', 'rev_r_email', 'tx')             9,338
+  edge ('tx', 'has_addr1', 'addr1')                 8,810
+  edge ('addr1', 'rev_addr1', 'tx')                 8,810
+  edge ('tx', 'has_account', 'account')           463,997
+  edge ('account', 'rev_account', 'tx')           463,997
+  edge ('account', 'uses_card', 'card')            37,695
+  edge ('card', 'rev_uses_card', 'account')        37,695
+
+== GNN + XGBoost blend runs in MLflow (experiment fraud-gnn, read-only)
+  c1a15d8b8a27 blend-transaction  graph=default  validation delta vs XGBoost v2 -0.0241 CI95 [-0.0346, -0.0137] -> not served
+  602bb83c26fc blend-entity       graph=default  validation delta vs XGBoost v2 -0.0192 CI95 [-0.0263, -0.0118] -> not served
+  873b81014150 blend-transaction  graph=account  validation delta vs XGBoost v2 -0.0245 CI95 [-0.0354, -0.0140] -> not served
+  fd2a4ceafd2e blend-entity       graph=account  validation delta vs XGBoost v2 -0.0144 CI95 [-0.0205, -0.0081] -> not served
