@@ -295,8 +295,11 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
 ## Next steps
 
 - Retrain from analyst feedback labels (`case_reviews`, latest label per transaction).
-- Model registry link: a link file plus `GET /model` so serving reports its MLflow version
-  ([docs/next-steps/model-registry-link.md](docs/next-steps/model-registry-link.md)).
+- Model registry link: **done 2026-11-12**. `python -m src.models.link_registry --alias
+  production` writes `artifacts/baseline/registry.json` only if the registry version's
+  `model.json` equals the served one; serving verifies it at startup and reports it at
+  `GET /model` ([docs/api.md](docs/api.md)). Still open: the registry version per scored row and
+  on the dashboard tile.
 - An MLflow server with a shared artifact store, so retraining can run in the cluster.
 - Rank drift features by their impact on the score instead of by gain.
 - Next optimization: `entity_keys` (~17 ms) and `feast_push` (~16 ms) are about two-thirds of scoring time; `predict` is ~3 ms (docs/serving.md "Throughput benchmark", backlog run).

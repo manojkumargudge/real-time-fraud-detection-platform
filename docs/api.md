@@ -32,6 +32,34 @@ Example (HTTP 200):
 **Errors:** HTTP **503** with the same body, `"status": "degraded"` and `"store_ok": false`, when
 the store ping fails.
 
+## GET /model
+
+**Purpose:** which model is served and, if linked, its MLflow registry version (added
+2026-11-12). Serving never imports mlflow: the link is the file `registry.json` next to the
+bundle, written on the host by `python -m src.models.link_registry --alias production` only if
+the registry version's `model.json` is byte-identical to the served one. At startup
+`ModelBundle.load` refuses a `registry.json` whose `model_sha256` differs from the loaded model
+(a wrong link is worse than none); without the file the model is served as "not linked".
+
+**Request:** no parameters. **Response** (HTTP 200):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `model_version` | string | as in `/health` |
+| `model_sha256` | string | sha256 of the served `model.json` |
+| `threshold` | number | alert threshold of the bundle |
+| `linked` | boolean | `registry.json` present and verified |
+| `model_name`, `registry_version`, `alias`, `run_id`, `linked_at` | string or null | from `registry.json`; null when not linked |
+
+Example (served bundle linked to `fraud-xgboost` v2, 2026-11-12):
+
+```json
+{"model_version": "baseline-9fdad27ea3b0", "model_sha256": "9fdad27ea3b07d5c29159bae75acc3ecaa7bf671943ab543bf9385145b89ba88", "threshold": 0.12806208431720734, "linked": true, "model_name": "fraud-xgboost", "registry_version": "2", "alias": "production", "run_id": "71c4f1bd820548c984341a06e51e33fc", "linked_at": "2026-11-12T06:39:58+00:00"}
+```
+
+`/health` is unchanged. The startup log line of the API and the consumers names the version:
+`loaded model version=baseline-9fdad27ea3b0 features=28 registry=fraud-xgboost v2 (production)`.
+
 ## POST /score
 
 **Purpose:** score one transaction event, persist the score (and an alert at or above the

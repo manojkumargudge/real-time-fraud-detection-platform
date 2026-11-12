@@ -1,6 +1,9 @@
-# Next step (proposal, not implemented): link the served model to its MLflow registry version
+# Link the served model to its MLflow registry version
 
-Proposed 2026-10-27 (Part 2C). Not built. The text below is the proposal as written.
+**Implemented 2026-11-12** (S2 in prod-gap-audit.md): `src/models/link_registry.py`,
+`ModelBundle.registry`, `GET /model` ([docs/api.md](../api.md)). Per-row registry version and
+the dashboard tile remain as described in section 3-4 below. The text below is the 2026-10-27
+proposal as written.
 
 ## 1. How the model is loaded today
 - **Source:** a file, not a registry URI. `ModelBundle.load(MODEL_DIR)` in [src/serving/model.py](../../src/serving/model.py) is called from `Settings.load_bundle()` in [src/serving/config.py:60](../../src/serving/config.py#L60). The API and the consumers both go through `Settings.from_env()`.

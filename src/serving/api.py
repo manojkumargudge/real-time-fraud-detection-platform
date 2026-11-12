@@ -83,6 +83,23 @@ def create_app(scorer: Scorer | None = None) -> FastAPI:
         }
         return JSONResponse(body, status_code=200 if store_ok else 503)
 
+    @app.get("/model")
+    def model(request: Request) -> dict[str, Any]:
+        """The served model and, if linked, its MLflow registry version (``registry.json``)."""
+        bundle = request.app.state.scorer.bundle
+        link = bundle.registry
+        return {
+            "model_version": bundle.model_version,
+            "model_sha256": bundle.metadata["model_sha256"],
+            "threshold": bundle.threshold,
+            "linked": link is not None,
+            "model_name": link.name if link else None,
+            "registry_version": link.version if link else None,
+            "alias": link.alias if link else None,
+            "run_id": link.run_id if link else None,
+            "linked_at": link.linked_at if link else None,
+        }
+
     @app.post("/score", response_model=ScoreResponse)
     def score(event: TransactionEvent, request: Request) -> ScoreResponse:
         s: Scorer = request.app.state.scorer
