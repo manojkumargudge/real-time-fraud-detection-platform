@@ -20,6 +20,11 @@ days = 30
 # Window used when the CLI gets no --window-start-day / --window-end-day: the last N days
 # before now.
 default_days = 7
+# Minimum rows in EACH of the current and reference windows. Below it the run is stored as
+# "insufficient data": no check can fire and nothing is retrained (not even with
+# --force-retrain). Fixed at 1,000 on 2026-11-12 as a round a-priori floor, before any run
+# with it and without looking at results (the 2026-10-25 Kubernetes run fired on 30 rows).
+min_rows = 1000
 
 [feature_drift]
 # Per-feature test on the model's input features (Evidently DataDriftPreset). Both methods are

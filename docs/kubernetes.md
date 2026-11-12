@@ -129,7 +129,9 @@ The Job runs `python -m src.features.feast_store materialize --before validation
 - **The drift CronJob checks only** (`--no-retrain`); retraining stays on the host.
 - **Evidence of an in-cluster drift run:** 2026-10-25, "Results" → "Full deployment" below: a
   run created from the CronJob (`drift-manual`) wrote `drift_reports` row 1 (30 rows, share
-  0.893, `triggered = true`, retraining not run). That deployment's namespace was deleted
+  0.893, `triggered = true`, retraining not run). Since 2026-11-12 a 30-row window is reported
+  as "insufficient data" instead (minimum 1,000 rows per window, docs/monitoring.md); the
+  cluster image has the new rule only after a rebuild. That deployment's namespace was deleted
   afterwards. The current deployment has no `drift_reports` table yet (the job creates it on
   its first run; checked 2026-10-28), so the cluster's Drift page shows "No drift reports in
   this database yet".

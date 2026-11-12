@@ -37,6 +37,7 @@ class ReferenceConfig(_Strict):
 
 class CurrentConfig(_Strict):
     default_days: int = Field(ge=1)
+    min_rows: int = Field(ge=1)  # per window (current and reference); below it: no trigger
 
 
 class FeatureDriftConfig(_Strict):

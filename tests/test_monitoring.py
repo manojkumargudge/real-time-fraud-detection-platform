@@ -332,7 +332,7 @@ def small_cfg(**sections: dict[str, Any]) -> DriftConfig:
     base: dict[str, dict[str, Any]] = {
         "labels": {"delay_days": 3},
         "reference": {"days": 10},
-        "current": {"default_days": 5},
+        "current": {"default_days": 5, "min_rows": 1},  # 60 synthetic days: tiny windows
         "performance": {"window_days": 6, "min_positives": 1},
         "retrain": {"holdout_days": 2},
         "promotion": {"resamples": 200},
@@ -823,3 +823,91 @@ def test_dirty_tree_stops_retraining_before_the_training_matrix(
             allow_dirty=True,
         )
     assert seen["allow_dirty"] is True
+
+
+# --- minimum rows per window (M3) ----------------------------------------------------------------
+
+
+def test_repo_config_requires_1000_rows_per_window() -> None:
+    assert load_config(DEFAULT_CONFIG).current.min_rows == 1000
+
+
+@pytest.mark.parametrize(
+    ("current", "reference", "expected"),
+    [
+        (1000, 1000, None),
+        (999, 1000, "current window 999 rows"),
+        (1000, 999, "reference window 999 rows"),
+        (30, 5, "current window 30 rows, reference window 5 rows"),
+    ],
+)
+def test_insufficient_data_boundary(current: int, reference: int, expected: str | None) -> None:
+    reason = job.insufficient_data(current, reference, 1000)
+    if expected is None:
+        assert reason is None
+    else:
+        assert reason is not None and reason.startswith("insufficient data")
+        assert expected in reason and "min_rows 1,000" in reason
+
+
+def last_rows(scenario: dict[str, Any], n: int) -> dict[str, Any]:
+    scored = scenario["scored"].sort_values("transaction_dt").tail(n)
+    return {**scenario, "scored": scored}
+
+
+def test_30_row_window_reports_insufficient_data_and_never_retrains(
+    scenario: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 2026-10-25 Kubernetes run fired on 30 rows; with min_rows 1,000 it cannot."""
+    import src.monitoring.retrain as retrain_mod
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("retraining must never run on insufficient data")
+
+    monkeypatch.setattr(retrain_mod, "retrain_and_compare", boom)
+    monkeypatch.setattr(retrain_mod, "MlflowRegistry", lambda uri: None)
+    thirty = last_rows(scenario, 30)
+    # Thresholds low enough that the checks would fire with enough rows.
+    fires = {"feature_drift": {"share_threshold": 0.01}}
+    enough = run_captured(
+        thirty, small_cfg(**fires, current={"min_rows": 30}), tmp_path, monkeypatch
+    )
+    print(f"current_rows {enough.current_rows}, reference_rows {enough.reference_rows}")
+    assert enough.current_rows == 30 and enough.reference_rows > 0
+    assert enough.triggered  # at min_rows 30 the same window fires
+
+    cfg = small_cfg(**fires, current={"min_rows": 1000})
+    for forced in (False, True):
+        row = run_captured(
+            thirty,
+            cfg,
+            tmp_path,
+            monkeypatch,
+            retrain=True,
+            force_retrain=forced,
+            mlflow_uri="unused",
+        )
+        assert row.current_rows == 30
+        assert not row.triggered and row.trigger_reasons == []
+        assert row.retrain_run_id is None and row.challenger_version is None
+        assert row.promotion_decision is not None
+        assert row.promotion_decision.startswith("insufficient data: current window 30 rows")
+        assert ("forced retrain refused" in row.promotion_decision) == forced
+        assert row.forced == forced
+        assert row.windows["min_rows"] == {
+            "required": 1000,
+            "current_rows": 30,
+            "reference_rows": row.reference_rows,
+            "sufficient": False,
+        }
+        assert "INSUFFICIENT DATA" in Path(row.report_path).read_text(encoding="utf-8")
+
+
+def test_enough_rows_leave_the_trigger_unchanged(
+    scenario: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = small_cfg(feature_drift={"share_threshold": 0.01})
+    row = run_captured(scenario, cfg, tmp_path, monkeypatch)
+    assert row.windows["min_rows"]["sufficient"] is True
+    assert row.triggered and row.trigger_reasons
+    assert not (row.promotion_decision or "").startswith("insufficient data")

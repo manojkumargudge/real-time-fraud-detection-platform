@@ -31,6 +31,18 @@ time. Every window below is in transaction time and is printed and stored with e
 | Delayed-label performance | PR-AUC of stored scores on labels in (cutoff - 7 days, cutoff], needing at least 30 frauds | PR-AUC < champion validation PR-AUC - 0.05 |
 | Top-feature drift (added later, see below) | the same per-feature test and threshold, on the champion's top 5 features by XGBoost gain (read from the champion's booster on every run, not hardcoded) | any of them drifts |
 
+**Minimum rows per window (added 2026-11-12).** Every check above runs only if the current and
+the reference window each hold at least `[current] min_rows` = **1,000** rows. The value was
+fixed a priori: a round floor chosen on 2026-11-12 before any run used it and without looking at
+any result, motivated only by the 2026-10-25 Kubernetes run that fired on 30 rows. Below it the
+run is still stored, with the measured drift values for reference, but `triggered = false`,
+`trigger_reasons = []`, `promotion_decision = "insufficient data: current window N rows ... <
+min_rows 1,000; no trigger, no retrain"` and `windows.min_rows` = `{required, current_rows,
+reference_rows, sufficient: false}`; the HTML title starts with "INSUFFICIENT DATA". Nothing is
+retrained, not even with `--force-retrain` (the decision then ends "(forced retrain refused)").
+No other rule or threshold changed. With the full demo stream a 7-day window holds about
+20,000 rows, so the documented firing runs (days 170-181/182) are not affected.
+
 **Why the top-feature rule exists.** It was added on 2026-10-24, *after* the first demo runs
 (runs 1 to 3 below). Those runs showed that the share rule (more than half of 28 features) did
 not fire on a synthetic 2x TransactionAmt shift: only 11 of 28 features drifted, although

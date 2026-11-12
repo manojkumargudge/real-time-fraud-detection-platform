@@ -46,7 +46,7 @@ from src.models.metrics import average_precision
 from src.monitoring.config import DEFAULT_CONFIG, DriftConfig, load_config
 from src.monitoring.drift import SCORE, run_drift, save_html
 from src.monitoring.report_store import DriftReportRow, insert_report, load_scored
-from src.monitoring.rules import CheckResults, evaluate_trigger
+from src.monitoring.rules import CheckResults, TriggerDecision, evaluate_trigger
 from src.monitoring.windows import (
     RetrainWindows,
     Window,
@@ -90,6 +90,18 @@ class JobOptions:
     # "pandas" (batch code). Both give the same frame (checked in retraining_frame's caller).
     retrain_feature_source: str = DEFAULT_RETRAIN_FEATURE_SOURCE
     allow_dirty: bool = False  # retrain even with uncommitted code (MLflow tag allow_dirty)
+
+
+def insufficient_data(current_rows: int, reference_rows: int, min_rows: int) -> str | None:
+    """``None`` if both windows have at least ``min_rows`` rows, else the stored reason."""
+    short = [
+        f"{name} window {n:,} rows"
+        for name, n in (("current", current_rows), ("reference", reference_rows))
+        if n < min_rows
+    ]
+    if not short:
+        return None
+    return f"insufficient data: {', '.join(short)} < min_rows {min_rows:,}; no trigger, no retrain"
 
 
 def retraining_frame(
@@ -251,6 +263,12 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
     )
     trigger = evaluate_trigger(checks, cfg)
     forced = opts.force_retrain  # stored as given; trigger_reasons shows whether it also fired
+    shortfall = insufficient_data(len(cur), len(ref), cfg.current.min_rows)
+    if shortfall is not None:
+        # Too few rows for any drift statistic to mean something: nothing fires, nothing is
+        # retrained (not even when forced). The measured values are still stored for reference.
+        logger.warning("%s", shortfall)
+        trigger = TriggerDecision(fired=False, reasons=[])
 
     windows = {
         w.name: w.to_dict()
@@ -258,13 +276,21 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
     }
     windows["now"] = {"dt": now, "day": round(now / 86400, 3)}
     windows["label_cutoff"] = {"dt": cutoff, "day": round(cutoff / 86400, 3)}
+    windows["min_rows"] = {
+        "required": cfg.current.min_rows,
+        "current_rows": len(cur),
+        "reference_rows": len(ref),
+        "sufficient": shortfall is None,
+    }
     for w in (champ_train, retrain_windows.challenger_train, retrain_windows.holdout, current):
         logger.info("window %s", w.describe())
     logger.info("now=%d label_cutoff=%d (delay %d days)", now, cutoff, cfg.labels.delay_days)
 
     retrain_run_id = challenger_version = decision_text = None
     promotion: dict[str, Any] | None = None
-    if (trigger.fired or opts.force_retrain) and opts.retrain:
+    if shortfall is not None:
+        decision_text = shortfall + (" (forced retrain refused)" if forced else "")
+    elif (trigger.fired or opts.force_retrain) and opts.retrain:
         from src.models.tracking import check_clean_tree, tracking_uri
         from src.monitoring.retrain import MlflowRegistry, retrain_and_compare
 
@@ -296,7 +322,8 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     title = (
-        f"{'SYNTHETIC=TRUE ' if synthetic else ''}Drift report {stamp}: current "
+        f"{'SYNTHETIC=TRUE ' if synthetic else ''}"
+        f"{'INSUFFICIENT DATA ' if shortfall is not None else ''}Drift report {stamp}: current "
         f"day {current.start / 86400:.1f}-{(current.end + 1) / 86400:.1f} vs reference "
         f"day {reference.start / 86400:.1f}-{(reference.end + 1) / 86400:.1f}"
         + (f" (TransactionAmt x{opts.synthetic_amount_factor} on a copy)" if synthetic else "")
