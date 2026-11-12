@@ -47,6 +47,13 @@ def load_registry_link(directory: Path, model_sha256: str) -> RegistryLink | Non
     the loaded model, or that is malformed, stops the load: a wrong link is worse than none."""
     path = directory / REGISTRY_FILE
     if not path.is_file():
+        # Defined behaviour (2026-11-12): serve anyway, report "not linked" (GET /model has null
+        # registry fields) and say how to create the link.
+        logger.warning(
+            "no %s: the served model is not linked to an MLflow registry version; create it on "
+            "the host with `python -m src.models.link_registry --alias production`",
+            path,
+        )
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))

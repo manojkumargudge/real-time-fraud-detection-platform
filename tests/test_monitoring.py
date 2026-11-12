@@ -808,8 +808,27 @@ def test_dirty_tree_stops_retraining_before_the_training_matrix(
     monkeypatch.setattr(retrain_mod, "MlflowRegistry", lambda uri: None)
     monkeypatch.setattr(job, "retraining_frame", no_frame)
     cfg = small_cfg(feature_drift={"share_threshold": 0.01})  # make sure it fires
-    with pytest.raises(tracking.DirtyTreeError):
-        run_captured(scenario, cfg, tmp_path, monkeypatch, retrain=True, mlflow_uri="unused")
+    rows: list[DriftReportRow] = []
+
+    def capture(dsn: str, row: DriftReportRow) -> int:
+        rows.append(row)
+        return 41
+
+    monkeypatch.setattr(job, "insert_report", capture)
+    inputs = job.JobInputs(
+        raw=scenario["raw"], scored=scenario["scored"], champion=scenario["champion"]
+    )
+    opts = job.JobOptions(
+        reports_dir=tmp_path, retrain=True, mlflow_uri="unused", retrain_feature_source="pandas"
+    )
+    with pytest.raises(job.RetrainBlockedError) as blocked:
+        job.run_job(inputs, cfg, opts, dsn="unused")
+    # The row is stored before the job fails: the Drift page shows the blocked retrain.
+    assert blocked.value.report_id == 41 and len(rows) == 1
+    assert rows[0].triggered and rows[0].retrain_run_id is None
+    assert rows[0].promotion_decision is not None
+    assert rows[0].promotion_decision.startswith("blocked: dirty tree")
+    assert "src/monitoring/run_drift.py" in rows[0].promotion_decision
 
     monkeypatch.setattr(job, "retraining_frame", lambda raw, frame, cutoff, src: frame)
     with pytest.raises(RuntimeError, match="stop after capture"):
@@ -911,3 +930,28 @@ def test_enough_rows_leave_the_trigger_unchanged(
     assert row.windows["min_rows"]["sufficient"] is True
     assert row.triggered and row.trigger_reasons
     assert not (row.promotion_decision or "").startswith("insufficient data")
+
+
+def test_blocked_retrain_exits_non_zero_and_logs(
+    scenario: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """main(): the row id is printed, the exit code is EXIT_RETRAIN_BLOCKED, an ERROR is logged."""
+    import logging
+
+    def blocked_job(*args: Any, **kwargs: Any) -> int:
+        raise job.RetrainBlockedError(12, "blocked: dirty tree (uncommitted code changes: x)")
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused@127.0.0.1:1/x")
+    monkeypatch.setattr(job, "run_job", blocked_job)
+    monkeypatch.setattr(job, "load_scored", lambda dsn: scenario["scored"])
+    monkeypatch.setattr(job, "load_ieee_cis", lambda *a, **k: scenario["raw"])
+    monkeypatch.setattr(job, "_load_champion", lambda *a: (scenario["champion"], "test"))
+    with caplog.at_level(logging.ERROR, logger="src.monitoring.run_drift"):
+        code = job.main(["--reports-dir", str(tmp_path)])
+    assert code == job.EXIT_RETRAIN_BLOCKED != 0
+    assert '"drift_report_id": 12' in capsys.readouterr().out
+    assert "blocked: dirty tree" in caplog.text

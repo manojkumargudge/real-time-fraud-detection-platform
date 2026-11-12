@@ -171,3 +171,37 @@ def test_link_refuses_an_unknown_alias(registry: tuple[str, Path]) -> None:
     _, bundle = registry
     with pytest.raises(link_registry.LinkError, match="not found"):
         link_registry.registry_link("nonexistent", bundle)
+
+
+def test_missing_link_file_serves_with_a_warning_and_null_registry(
+    bundle_dir: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Defined behaviour: no registry.json -> the API starts, /model has nulls, one WARNING."""
+    import logging
+
+    d = copy_bundle(bundle_dir, tmp_path)
+    assert not (d / REGISTRY_FILE).exists()
+    with caplog.at_level(logging.WARNING, logger="src.serving.model"):
+        body = api_get(d, "/model")
+        health = api_get(d, "/health")
+    assert health["status"] == "ok"
+    assert body["linked"] is False
+    assert all(
+        body[k] is None for k in ("model_name", "registry_version", "alias", "run_id", "linked_at")
+    )
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings and "not linked" in warnings[0].getMessage()
+    assert "link_registry" in warnings[0].getMessage()
+
+
+def test_present_link_file_logs_no_warning(
+    bundle_dir: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    d = copy_bundle(bundle_dir, tmp_path)
+    (d / REGISTRY_FILE).write_text(json.dumps(link_record(served_sha(d))), encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="src.serving.model"):
+        body = api_get(d, "/model")
+    assert body["linked"] is True and body["registry_version"] == "2"
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

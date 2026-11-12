@@ -80,6 +80,14 @@ every label newer than the cutoff and show that the results do not change.
 The job **fails** if the champion's or the challenger's training window overlaps the holdout:
 the comparison would then be in-sample.
 
+**Uncommitted code blocks retraining** (since 2026-11-12). Training refuses a dirty tree
+(`src.models.tracking.check_clean_tree`; untracked files outside `src/`, `configs/` and
+`requirements*` do not count). The job checks this before building the training matrix; if it is
+dirty, nothing is trained, the row is still stored with `promotion_decision = "blocked: dirty
+tree (...); retraining not run"`, the Drift page shows Retrain "blocked (dirty tree)", an ERROR
+is logged and `run_drift` exits with code 4 (`--allow-dirty` overrides it; the MLflow run is
+then tagged `allow_dirty=true`).
+
 `--force-retrain` (host only) runs steps 1 to 4 even when no check fired. The row is then
 stored with `forced = true`, and the promotion rule and the `production` guard are unchanged.
 It cannot be combined with `--no-retrain`.

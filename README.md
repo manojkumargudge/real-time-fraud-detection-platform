@@ -137,6 +137,13 @@ streamlit, xgboost); it has not hung.
    - Why-flagged panel (dashboard case page): `.venv\Scripts\python -m src.dashboard.explain
      build` (about 1 min, needs the dataset) writes `artifacts/explain/features.csv.gz`, which
      the Compose dashboard mounts read-only. Without it the panel says "No explanation data".
+   - Registry link (optional; `GET /model`, [docs/api.md](docs/api.md)): add `--register` to the
+     training command above (registers the run and points `champion` at it), then
+     `.venv\Scripts\python -m src.models.link_registry --alias champion` writes
+     `artifacts/baseline/registry.json` (only if the registry's `model.json` equals the served
+     one; `--check` compares without writing). Without the file the API and consumers still
+     start: they log a WARNING "no registry.json ... not linked" and `/model` returns
+     `linked: false` with null registry fields.
 3. **Unit tests** (no services needed): `.venv\Scripts\python -m pytest
    --ignore=tests/test_integration.py`. Expect **582 passed, 11 skipped** without the GNN extras
    (607 passed, 1 skipped with `requirements-gnn.txt` installed), about 8-18 minutes.
@@ -225,8 +232,10 @@ Get-ScheduledTask -TaskName FraudDrift-Retrain | Get-ScheduledTaskInfo   # last 
 While enabled, every run adds a `drift_reports` row to the demo database, and a run that fires
 registers a new challenger version in the real registry; the demo stack (at least `postgres`)
 must be running, otherwise the run exits with code 2. A run that fires on a tree with
-uncommitted code changes stops before training (`DirtyTreeError`, non-zero exit, no `drift_reports` row); the
-scheduled script never passes `--allow-dirty`. Proof run (started by Task Scheduler, on
+uncommitted code changes does not train: it still stores its `drift_reports` row with
+`promotion_decision = "blocked: dirty tree (...); retraining not run"` (Drift page: Retrain
+"blocked (dirty tree)"), logs an ERROR and exits with code 4. The scheduled script never passes
+`--allow-dirty`. Proof run (started by Task Scheduler, on
 copies): [docs/evidence/2026-10-30-scheduled-retrain/](docs/evidence/2026-10-30-scheduled-retrain/README.md).
 
 ## Brief to evidence
