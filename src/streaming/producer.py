@@ -32,6 +32,12 @@ class StreamOrderError(ValueError):
     """An event before the validation cut-off or out of time order."""
 
 
+def producer_config(bootstrap_servers: str) -> dict[str, Any]:
+    """Event producer settings: ``acks=all`` and idempotence, so a send that librdkafka retries
+    after a lost acknowledgement cannot append the same event to the topic twice."""
+    return {"bootstrap.servers": bootstrap_servers, "acks": "all", "enable.idempotence": True}
+
+
 def stream_events(raw_dir: str, skip: int, limit: int) -> tuple[int, list[dict[str, Any]]]:
     """``(cut-off, events)``: validation-period transactions in (TransactionDT, ID) order."""
     df = load_ieee_cis(raw_dir, usecols=[])
@@ -102,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = Settings.from_env()
-    producer = Producer({"bootstrap.servers": settings.kafka_bootstrap_servers, "acks": "all"})
+    producer = Producer(producer_config(settings.kafka_bootstrap_servers))
     start, events = stream_events(args.raw_dir, args.skip, args.limit)
     logger.info("streaming validation period from TransactionDT %d events=%d", start, len(events))
     return publish(producer, settings.kafka_topic, events, args.rate, not_before=start)

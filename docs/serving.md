@@ -194,7 +194,12 @@ are kept.
 
 **Offsets:**
 - An offset is committed only after the database write or a **confirmed** dead-letter write.
-  The producer is idempotent with `acks=all`, and delivery must be confirmed.
+  The dead-letter producer (`build_dlq_producer`, `src/streaming/reliability.py`) and the event
+  producer (`producer_config`, `src/streaming/producer.py`) are both idempotent with
+  `acks=all`; a dead-letter write must be confirmed before the offset is committed. The event
+  producer was not idempotent before 2026-11-12: the demo topic holds 118,109 offsets for
+  118,108 stored rows, most likely one retried send written twice and skipped by the consumer
+  as a duplicate (unproven; the messages had been removed by retention when it was found).
 - If the dead-letter write fails, it is retried with backoff and nothing is committed.
 - A commit rejected by a rebalance (`ILLEGAL_GENERATION`, `UNKNOWN_MEMBER_ID`,
   `REBALANCE_IN_PROGRESS`) is logged; the message is redelivered and deduplicated.

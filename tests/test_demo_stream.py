@@ -87,3 +87,21 @@ def test_feast_push_happens_after_save_and_never_for_duplicates(bundle_dir: Path
     first, again = scorer.score_event(event), scorer.score_event(event)
     assert not first.duplicate and again.duplicate
     assert calls == [("push", event.TransactionID, True)]  # once, and only after the save
+
+
+def test_event_producer_is_idempotent_with_acks_all() -> None:
+    """A retried send must not append an event twice (demo offsets 118,109 vs 118,108 rows)."""
+    from src.streaming.producer import producer_config
+
+    cfg = producer_config("broker:9092")
+    assert cfg["enable.idempotence"] is True
+    assert cfg["acks"] == "all"
+    assert cfg["bootstrap.servers"] == "broker:9092"
+
+
+def test_event_producer_config_is_accepted_by_librdkafka() -> None:
+    from confluent_kafka import Producer
+
+    from src.streaming.producer import producer_config
+
+    Producer(producer_config("localhost:1"))  # librdkafka rejects unknown/invalid settings here
