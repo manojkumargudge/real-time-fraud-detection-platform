@@ -8,7 +8,12 @@ only pushed to GHCR when it passes. The scanners gate differently:
 - **pip-audit** fails on **any** advisory, of any severity, that is not in
   `security/pip-audit-ignore.txt`. New advisories can turn CI red without a code change.
 - **bandit** fails on any medium- or high-severity finding in `src/`; low findings are not shown.
-- An accepted-risk entry past its expiry date also fails the job.
+- **14 days before** an accepted-risk entry expires, CI fails (since 2026-11-12): the security
+  job's first step runs `python security/check_ignores.py check-expiry
+  security/pip-audit-ignore.txt .trivyignore` (both lists; every `.trivyignore` entry needs an
+  `exp:` date), and `tests/test_security_ignores.py` applies the same rule to the real lists in
+  the unit job. The rule is `expiry < today + 14 days`; with the current earliest expiry
+  2027-01-31, CI fails from 2027-01-18 until the entries are re-reviewed.
 
 | Scanner | Scope | Gate |
 |---|---|---|
@@ -38,8 +43,8 @@ Fixed on 2026-10-23 (first scan):
   133 -> 65, of which 63 have no Debian fix yet
 - bandit: no medium/high findings (6 low: asserts, the `<NA>` token, the `git` subprocess)
 
-Accepted risks (reason and expiry in `security/pip-audit-ignore.txt` / `.trivyignore`; CI fails
-again after the expiry date, 2027-01-31):
+Accepted risks (reason and expiry in `security/pip-audit-ignore.txt` / `.trivyignore`; all expire
+2027-01-31, and CI fails from 2027-01-18, 14 days before):
 
 | Package | Advisory | Why accepted |
 |---|---|---|
