@@ -267,7 +267,9 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
   The Minikube CronJob still runs drift checks only (`--no-retrain`): in-cluster retraining
   needs an MLflow server with a shared artifact store. `production` is never moved
   automatically ([docs/monitoring.md](docs/monitoring.md)).
-- The drift trigger is not calibrated on drift-free periods and has no minimum sample size.
+- The drift trigger is not calibrated on drift-free periods. Since 2026-11-12 it needs at least
+  1,000 rows in both the current and the reference window (fixed a priori; below it the run is
+  stored as "insufficient data" and never retrains; docs/monitoring.md).
 - The served v2's MLflow run is tagged `git_dirty=true`, but it rebuilds identically: a fresh
   clone of main reproduced it byte for byte on 2026-10-28 (same model.json sha256, see Setup).
 - The threshold is chosen on a training holdout and applied to the refit model, so the alert
