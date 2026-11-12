@@ -23,6 +23,31 @@ from src.dashboard import data, workflow  # noqa: E402
 from src.serving.store import ALERT_STATUSES  # noqa: E402
 
 APP = str(Path(__file__).resolve().parents[1] / "src" / "dashboard" / "app.py")
+TESTER, TESTER_PASSWORD = "tester", "correct-horse-battery"  # throwaway test credentials
+
+
+@pytest.fixture(autouse=True)
+def users_file(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """S7: every page needs a signed-in analyst; tests use a throwaway users file (bcrypt, low
+    cost factor) holding tester, alice and bob."""
+    from src.dashboard import auth
+
+    path = tmp_path_factory.mktemp("users") / "dashboard-users.toml"
+    auth.write_users(
+        path,
+        {name: auth.hash_password(TESTER_PASSWORD, rounds=4) for name in (TESTER, "alice", "bob")},
+    )
+    monkeypatch.setenv("DASHBOARD_USERS_FILE", str(path))
+    return path
+
+
+def sign_in(at: AppTest, user: str, password: str) -> AppTest:
+    """The real path: type into the sign-in form and press Sign in."""
+    at.text_input(key="sign_in_user").input(user)
+    at.text_input(key="sign_in_password").input(password)
+    next(b for b in at.button if b.label == "Sign in").click()
+    return at.run()
+
 
 ALLOWED = {
     ("open", "investigating"),
@@ -297,6 +322,8 @@ def app(fake: FakeRepository, page: str | None = None, **state: Any) -> AppTest:
     for key, value in state.items():
         at.session_state[key] = value
     at.run()
+    if "analyst" not in state:  # sign in through the form unless a test chose the user
+        sign_in(at, TESTER, TESTER_PASSWORD)
     if page is not None:
         at.switch_page(page)
         at.run()
@@ -434,30 +461,66 @@ def test_window_label_floors_the_stored_day_values() -> None:
     assert ui.window_label(141, 144) == "141-144"
 
 
-def test_writes_need_an_analyst_name(fake: FakeRepository) -> None:
-    at = app(fake, "views/case.py", alert_id=1)
-    assert "Enter your analyst name" in texts(at)
-    submit = next(b for b in at.button if b.label == "Save")
-    assert submit.disabled
-
-
-def test_analyst_name_survives_opening_a_case(fake: FakeRepository) -> None:
-    """The real path: type the name into the sidebar, then open a case from the queue.
-
-    open_case() uses st.switch_page, which (Streamlit >= 1.46) deletes widget keys at the start
-    of the new page's run; without persist_state the name was gone on every opened case.
-    """
-    at = app(fake)
-    at.sidebar.text_input(key="analyst").input("alice").run()
-    at.switch_page("views/alerts.py")
+def test_pages_need_a_signed_in_analyst(fake: FakeRepository) -> None:
+    """S7: before sign-in only the form renders; no page, no data."""
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["repo"] = fake
     at.run()
-    next(n for n in at.number_input if n.label == "Open alert id").set_value(1)
-    next(b for b in at.button if b.label == "Open case").click().run()
-    assert not at.exception, at.exception
-    assert at.session_state["alert_id"] == 1
+    assert not at.exception
+    assert any(b.label == "Sign in" for b in at.button)
+    assert "Alert queue" not in texts(at) and not at.dataframe
+    assert "analyst" not in at.session_state
+
+
+def test_wrong_password_and_unknown_user_are_refused(fake: FakeRepository) -> None:
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["repo"] = fake
+    at.run()
+    for user, password in ((TESTER, "wrong-password-1"), ("mallory", TESTER_PASSWORD)):
+        sign_in(at, user, password)
+        assert "Unknown user or wrong password." in texts(at)
+        assert "analyst" not in at.session_state
+    assert at.session_state["sign_in_password"] == ""  # the password is not kept
+
+
+def test_no_users_file_means_nobody_can_sign_in(
+    fake: FakeRepository, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DASHBOARD_USERS_FILE", str(tmp_path / "missing.toml"))
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["repo"] = fake
+    at.run()
+    assert "No dashboard users are configured" in texts(at)
+    assert not any(b.label == "Sign in" for b in at.button)
+
+
+def test_signed_in_user_is_the_analyst_across_opening_a_case(fake: FakeRepository) -> None:
+    """The real path: sign in as alice, open a case from the queue, save a review; the review
+    records the signed-in name (there is no free-text name field any more)."""
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["repo"] = fake
+    at.run()
+    sign_in(at, "alice", TESTER_PASSWORD)
     assert at.session_state["analyst"] == "alice"
-    assert "Enter your analyst name" not in texts(at)
-    assert "Choose a new status" in texts(at)  # Save waits only for the status now
+    assert not any(ti.label == "Analyst name" for ti in at.text_input)
+    open_case_from_queue(at, 1)
+    assert at.session_state["alert_id"] == 1 and at.session_state["analyst"] == "alice"
+    assert "Signed in as **alice**" in texts(at)
+    at.run()
+    at.selectbox[0].set_value("confirmed_fraud")
+    at.run()
+    next(b for b in at.button if b.label == "Save").click()
+    at.run()
+    (review,) = fake.reviews[1]
+    assert review["analyst"] == "alice"
+
+
+def test_sign_out_returns_to_the_form(fake: FakeRepository) -> None:
+    at = app(fake)
+    assert at.session_state["analyst"] == TESTER
+    next(b for b in at.button if b.label == "Sign out").click().run()
+    assert "analyst" not in at.session_state
+    assert any(b.label == "Sign in" for b in at.button)
 
 
 def test_case_status_change_is_saved_and_listed(fake: FakeRepository) -> None:
@@ -627,12 +690,8 @@ def test_changing_the_alert_id_after_a_save_writes_nothing(fake: FakeRepository)
     assert (fake.cases[2]["status"], fake.cases[2]["version"]) == ("open", 1)
 
 
-def test_save_is_disabled_until_a_name_and_a_status_are_set(fake: FakeRepository) -> None:
-    nobody = app(fake, "views/case.py", alert_id=1)
-    assert nobody.selectbox[0].value is None
-    assert save_button(nobody).disabled and "Enter your analyst name" in texts(nobody)
-    nobody.selectbox[0].set_value("investigating").run()
-    assert save_button(nobody).disabled and "Enter your analyst name" in texts(nobody)
+def test_save_is_disabled_until_a_status_is_set(fake: FakeRepository) -> None:
+    """Signed in (the only way to see a case since S7), Save waits for a status."""
     named = app(fake, "views/case.py", alert_id=1, analyst="alice")
     assert named.selectbox[0].value is None
     assert save_button(named).disabled and "Choose a new status" in texts(named)
@@ -703,8 +762,12 @@ def test_case_page_has_no_form_so_enter_cannot_submit(fake: FakeRepository) -> N
 # st.switch_page) and typing into widgets; only the in-memory repository is injected.
 
 
-def start(fake: FakeRepository) -> AppTest:
-    return app(fake)  # Overview, no session state besides the fake repository
+def start(fake: FakeRepository, user: str = TESTER) -> AppTest:
+    """Overview after signing in through the form (no other session state is injected)."""
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["repo"] = fake
+    at.run()
+    return sign_in(at, user, TESTER_PASSWORD)
 
 
 def go_to(at: AppTest, page: str) -> AppTest:
@@ -829,8 +892,7 @@ def test_case_fields_show_whole_numbers_dollars_and_missing(fake: FakeRepository
 
 
 def test_case_times_review_labels_and_drift_runs_are_in_ist(fake: FakeRepository) -> None:
-    at = start(fake)
-    at.sidebar.text_input(key="analyst").input("alice").run()
+    at = start(fake, "alice")
     open_case_from_queue(at, 1)
     assert "alert created 2026-10-26 14:30 IST, updated 2026-10-26 14:30 IST" in texts(at)
     save(at, "investigating")  # in-memory fake only

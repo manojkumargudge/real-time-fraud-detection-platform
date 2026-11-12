@@ -92,7 +92,7 @@ def discard(state: State, token: str) -> None:
 def disabled_reason(analyst: str, to_status: str | None) -> str | None:
     """Why Save is disabled (shown under the button), or None when it is enabled."""
     if not analyst:
-        return "Enter your analyst name in the sidebar."
+        return "Sign in to change cases."
     if not to_status:
         return "Choose a new status."
     return None
@@ -113,7 +113,7 @@ def save(state: State, repo: Saver, token: str, analyst: str) -> tuple[str, str]
     elif not to_status:
         result = ("error", "Choose a new status; nothing was saved.")
     elif not analyst:
-        result = ("error", "Enter your analyst name in the sidebar; nothing was saved.")
+        result = ("error", "Sign in to change cases; nothing was saved.")
     else:
         try:
             new_version = repo.change_status(
