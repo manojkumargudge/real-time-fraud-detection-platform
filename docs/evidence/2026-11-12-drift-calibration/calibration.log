@@ -1,0 +1,85 @@
+2026-11-12 16:14:56,717 INFO src.serving.model loaded model version=baseline-9fdad27ea3b0 features=28 registry=fraud-xgboost v2 (production)
+2026-11-12 16:14:56,719 INFO scripts.drift_calibration planned 11 windows: 61-68, 68-75, 75-82, 82-89, 89-96, 96-103, 103-110, 110-117, 117-124, 124-131, 131-138
+2026-11-12 16:15:17,447 INFO src.data.load loaded transactions file=train_transaction.csv rows=590540 cols=17
+2026-11-12 16:15:18,426 INFO src.data.load loaded identity file=train_identity.csv rows=144233 cols=3
+2026-11-12 16:15:18,884 INFO src.data.load merged rows=590540 with_identity=144233 (24.4%)
+2026-11-12 16:15:24,345 INFO src.features.history computed history features rows=590540 uids=43018 cards=14893 features=12
+2026-11-12 16:15:24,686 INFO src.features.split chronological split train_end=2135914 valid_start=2135914 train=107471 valid=26868 gap_dropped=0
+2026-11-12 16:15:25,088 INFO src.features.preprocess fitted categorical encoder rows=107471 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 914}
+2026-11-12 16:15:33,667 INFO src.features.preprocess fitted categorical encoder rows=134339 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1047}
+2026-11-12 16:15:39,881 INFO src.features.split chronological split train_end=3900604 valid_start=3900604 train=178990 valid=44748 gap_dropped=0
+2026-11-12 16:15:40,380 INFO src.features.preprocess fitted categorical encoder rows=178990 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1154}
+2026-11-12 16:16:13,052 INFO src.features.preprocess fitted categorical encoder rows=223738 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1236}
+2026-11-12 16:16:53,909 INFO scripts.drift_calibration window 61-68 rows 23476/89399 share 0.107 psi 0.0236 fired=False [] (89 s)
+2026-11-12 16:16:53,990 INFO src.features.split chronological split train_end=2498485 valid_start=2498485 train=126244 valid=31562 gap_dropped=0
+2026-11-12 16:16:54,529 INFO src.features.preprocess fitted categorical encoder rows=126244 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1020}
+2026-11-12 16:17:07,901 INFO src.features.preprocess fitted categorical encoder rows=157806 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1120}
+2026-11-12 16:17:17,044 INFO src.features.split chronological split train_end=4474037 valid_start=4474037 train=197771 valid=49443 gap_dropped=0
+2026-11-12 16:17:17,686 INFO src.features.preprocess fitted categorical encoder rows=197771 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1191}
+2026-11-12 16:17:43,854 INFO src.features.preprocess fitted categorical encoder rows=247214 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1272}
+2026-11-12 16:18:18,272 INFO scripts.drift_calibration window 68-75 rows 20638/89408 share 0.071 psi 0.0233 fired=False [] (84 s)
+2026-11-12 16:18:18,357 INFO src.features.split chronological split train_end=2933310 valid_start=2933310 train=142812 valid=35704 gap_dropped=0
+2026-11-12 16:18:18,950 INFO src.features.preprocess fitted categorical encoder rows=142812 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1079}
+2026-11-12 16:18:30,262 INFO src.features.preprocess fitted categorical encoder rows=178516 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1154}
+2026-11-12 16:18:36,466 INFO src.features.split chronological split train_end=4990740 valid_start=4990740 train=214281 valid=53571 gap_dropped=0
+2026-11-12 16:18:37,163 INFO src.features.preprocess fitted categorical encoder rows=214281 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1219}
+2026-11-12 16:19:02,688 INFO src.features.preprocess fitted categorical encoder rows=267852 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1311}
+2026-11-12 16:19:36,089 INFO scripts.drift_calibration window 75-82 rows 20437/89336 share 0.143 psi 0.0058 fired=False [] (78 s)
+2026-11-12 16:19:36,189 INFO src.features.split chronological split train_end=3346868 valid_start=3346868 train=159080 valid=39770 gap_dropped=0
+2026-11-12 16:19:36,816 INFO src.features.preprocess fitted categorical encoder rows=159080 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1123}
+2026-11-12 16:20:03,526 INFO src.features.preprocess fitted categorical encoder rows=198850 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1193}
+2026-11-12 16:28:07,841 INFO src.features.split chronological split train_end=5459090 valid_start=5459090 train=230631 valid=57658 gap_dropped=0
+2026-11-12 16:28:09,024 INFO src.features.preprocess fitted categorical encoder rows=230631 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1254}
+2026-11-12 16:29:26,974 INFO src.features.preprocess fitted categorical encoder rows=288289 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1356}
+2026-11-12 16:30:30,065 INFO scripts.drift_calibration window 82-89 rows 21059/89439 share 0.036 psi 0.0045 fired=False [] (654 s)
+2026-11-12 16:30:30,188 INFO src.features.split chronological split train_end=3788058 valid_start=3788058 train=174723 valid=43681 gap_dropped=0
+2026-11-12 16:30:30,789 INFO src.features.preprocess fitted categorical encoder rows=174723 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1149}
+2026-11-12 16:31:02,027 INFO src.features.preprocess fitted categorical encoder rows=218404 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1229}
+2026-11-12 16:31:21,784 INFO src.features.split chronological split train_end=5879776 valid_start=5879776 train=247478 valid=61870 gap_dropped=0
+2026-11-12 16:31:22,664 INFO src.features.preprocess fitted categorical encoder rows=247478 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1272}
+2026-11-12 16:32:08,950 INFO src.features.preprocess fitted categorical encoder rows=309348 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1392}
+2026-11-12 16:32:57,352 INFO scripts.drift_calibration window 89-96 rows 28004/90944 share 0.143 psi 0.0058 fired=False [] (147 s)
+2026-11-12 16:32:57,462 INFO src.features.split chronological split train_end=4328998 valid_start=4328998 train=193125 valid=48282 gap_dropped=0
+2026-11-12 16:32:58,134 INFO src.features.preprocess fitted categorical encoder rows=193125 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1183}
+2026-11-12 16:33:21,600 INFO src.features.preprocess fitted categorical encoder rows=241407 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1265}
+2026-11-12 16:33:36,024 INFO src.features.split chronological split train_end=6548263 valid_start=6548263 train=269881 valid=67471 gap_dropped=0
+2026-11-12 16:33:36,856 INFO src.features.preprocess fitted categorical encoder rows=269881 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1313}
+2026-11-12 16:34:33,575 INFO src.features.preprocess fitted categorical encoder rows=337352 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1425}
+2026-11-12 16:35:26,498 INFO scripts.drift_calibration window 96-103 rows 22030/95945 share 0.107 psi 0.0081 fired=True ["top-feature drift: addr2, R_emaildomain drifted (among the champion's top 5 features by gain)"] (149 s)
+2026-11-12 16:35:26,653 INFO src.features.split chronological split train_end=4843568 valid_start=4843568 train=209940 valid=52486 gap_dropped=0
+2026-11-12 16:35:27,410 INFO src.features.preprocess fitted categorical encoder rows=209940 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1212}
+2026-11-12 16:36:00,922 INFO src.features.preprocess fitted categorical encoder rows=262426 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1299}
+2026-11-12 16:36:22,736 INFO src.features.split chronological split train_end=7070430 valid_start=7070430 train=287505 valid=71877 gap_dropped=0
+2026-11-12 16:36:23,907 INFO src.features.preprocess fitted categorical encoder rows=287505 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1355}
+2026-11-12 16:36:43,164 INFO src.features.preprocess fitted categorical encoder rows=359382 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1452}
+2026-11-12 16:37:06,665 INFO scripts.drift_calibration window 103-110 rows 20718/96956 share 0.107 psi 0.0121 fired=True ["top-feature drift: addr2 drifted (among the champion's top 5 features by gain)"] (100 s)
+2026-11-12 16:37:06,771 INFO src.features.split chronological split train_end=5352436 valid_start=5352436 train=226577 valid=56645 gap_dropped=0
+2026-11-12 16:37:07,265 INFO src.features.preprocess fitted categorical encoder rows=226577 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1243}
+2026-11-12 16:37:36,162 INFO src.features.preprocess fitted categorical encoder rows=283222 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1338}
+2026-11-12 16:38:02,088 INFO src.features.split chronological split train_end=7522053 valid_start=7522053 train=304080 valid=76020 gap_dropped=0
+2026-11-12 16:38:02,655 INFO src.features.preprocess fitted categorical encoder rows=304080 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1384}
+2026-11-12 16:38:24,931 INFO src.features.preprocess fitted categorical encoder rows=380100 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1488}
+2026-11-12 16:38:47,640 INFO scripts.drift_calibration window 110-117 rows 20980/96878 share 0.143 psi 0.0149 fired=True ["top-feature drift: card3 drifted (among the champion's top 5 features by gain)", 'performance: delayed-label PR-AUC 0.3297 < champion validation 0.4365 - 0.05'] (101 s)
+2026-11-12 16:38:47,783 INFO src.features.split chronological split train_end=5771085 valid_start=5771085 train=243022 valid=60756 gap_dropped=0
+2026-11-12 16:38:48,316 INFO src.features.preprocess fitted categorical encoder rows=243022 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1268}
+2026-11-12 16:39:32,548 INFO src.features.preprocess fitted categorical encoder rows=303778 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1384}
+2026-11-12 16:40:01,603 INFO src.features.split chronological split train_end=7972556 valid_start=7972556 train=320864 valid=80216 gap_dropped=0
+2026-11-12 16:40:02,088 INFO src.features.preprocess fitted categorical encoder rows=320864 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1408}
+2026-11-12 16:40:35,342 INFO src.features.preprocess fitted categorical encoder rows=401080 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1518}
+2026-11-12 16:41:19,360 INFO scripts.drift_calibration window 117-124 rows 22376/97302 share 0.214 psi 0.0183 fired=True ["top-feature drift: card3 drifted (among the champion's top 5 features by gain)", 'performance: delayed-label PR-AUC 0.2399 < champion validation 0.3759 - 0.05'] (152 s)
+2026-11-12 16:41:19,493 INFO src.features.split chronological split train_end=6390486 valid_start=6390486 train=264568 valid=66142 gap_dropped=0
+2026-11-12 16:41:19,992 INFO src.features.preprocess fitted categorical encoder rows=264568 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1304}
+2026-11-12 16:41:52,774 INFO src.features.preprocess fitted categorical encoder rows=330710 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1415}
+2026-11-12 16:42:19,412 INFO src.features.split chronological split train_end=8348824 valid_start=8348824 train=338764 valid=84692 gap_dropped=0
+2026-11-12 16:42:20,248 INFO src.features.preprocess fitted categorical encoder rows=338764 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1428}
+2026-11-12 16:42:51,057 INFO src.features.preprocess fitted categorical encoder rows=423456 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1559}
+2026-11-12 16:43:17,370 INFO scripts.drift_calibration window 124-131 rows 21717/92746 share 0.036 psi 0.0058 fired=True ['performance: delayed-label PR-AUC 0.2304 < champion validation 0.2851 - 0.05'] (118 s)
+2026-11-12 16:43:17,450 INFO src.features.split chronological split train_end=6906620 valid_start=6906620 train=282972 valid=70744 gap_dropped=0
+2026-11-12 16:43:17,851 INFO src.features.preprocess fitted categorical encoder rows=282972 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1338}
+2026-11-12 16:43:30,792 INFO src.features.preprocess fitted categorical encoder rows=353716 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1445}
+2026-11-12 16:43:38,968 INFO src.features.split chronological split train_end=8811507 valid_start=8811507 train=356138 valid=89035 gap_dropped=0
+2026-11-12 16:43:39,454 INFO src.features.preprocess fitted categorical encoder rows=356138 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1449}
+2026-11-12 16:44:03,045 INFO src.features.preprocess fitted categorical encoder rows=445173 vocab_sizes={'ProductCD': 5, 'card4': 4, 'card6': 4, 'P_emaildomain': 59, 'R_emaildomain': 60, 'DeviceType': 2, 'DeviceInfo': 1587}
+2026-11-12 16:44:26,528 INFO scripts.drift_calibration window 131-138 rows 18589/91457 share 0.036 psi 0.0046 fired=False [] (69 s)
+2026-11-12 16:44:27,286 INFO scripts.drift_calibration false fires 5 of 11 windows -> C:\Users\MANOJK~1\AppData\Local\Temp\calwt\out
+{"windows": 11, "fires": 5, "seconds": 1772.8, "git_commit": "74571721637f611a0317b06924889735853750ac"}
