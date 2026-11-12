@@ -170,6 +170,94 @@ def test_scorer_on_postgres_matches_in_memory(bundle_dir: Path, pg_store: Postgr
     assert pg.score_event(TransactionEvent.model_validate(events[0])).duplicate
 
 
+@needs_db
+def test_one_pooled_store_saves_concurrently_without_duplicates_or_losses(pg_dsn: str) -> None:
+    """S3: one PostgresStore (pool of 5) shared by 40 threads; 20 ids, each saved twice at once."""
+    store = PostgresStore(pg_dsn, pool_size=5)
+    barrier = threading.Barrier(40)
+    results: dict[int, list[bool]] = {i: [] for i in range(1, 21)}
+    lock = threading.Lock()
+
+    def save(tid: int) -> None:
+        barrier.wait()
+        ok = store.save(record(tid, 100 + tid, card=f"c{tid}", alert=tid % 2 == 0))
+        with lock:
+            results[tid].append(ok)
+
+    threads = [threading.Thread(target=save, args=(tid,)) for tid in results for _ in range(2)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    try:
+        assert all(sorted(r) == [False, True] for r in results.values())  # one insert per id
+        counts = store.counts()
+        print(f"rows {counts['scored_transactions']}, alerts {counts['alerts']} (expect 20, 10)")
+        assert counts == {"scored_transactions": 20, "alerts": 10}
+        assert store.pool_size == 5
+    finally:
+        store.close()
+
+
+@needs_db
+def test_concurrent_score_requests_on_the_pool(bundle_dir: Path, pg_dsn: str) -> None:
+    """S3: 100 events, each POSTed twice at the same time by 20 client threads, against one API
+    with a pooled store: every event stored exactly once (no duplicate rows, no lost writes),
+    one fresh + one duplicate response per id with the same score, and the scores equal a
+    sequential in-memory run bit for bit."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fastapi.testclient import TestClient
+
+    from src.serving.api import create_app
+
+    bundle = ModelBundle.load(bundle_dir)
+    events = [
+        event(
+            TransactionID=i,
+            TransactionDT=100_000 + 60 * i,
+            TransactionAmt=5.0 + i,
+            card1=2000 + i,  # one card per event: history (and so the score) is order-free
+        )
+        for i in range(1, 101)
+    ]
+    expected = {
+        e["TransactionID"]: Scorer(bundle, InMemoryStore())
+        .score_event(TransactionEvent.model_validate(e))
+        .score
+        for e in events
+    }
+    store = PostgresStore(pg_dsn, pool_size=10)
+    with (
+        TestClient(create_app(Scorer(bundle, store))) as client,
+        ThreadPoolExecutor(max_workers=20) as pool,
+    ):
+        responses = list(pool.map(lambda e: client.post("/score", json=e), events + events))
+    try:
+        assert all(r.status_code == 200 for r in responses), [r.text for r in responses[:3]]
+        by_id: dict[int, list[dict[str, Any]]] = {}
+        for r in responses:
+            body = r.json()
+            by_id.setdefault(body["transaction_id"], []).append(body)
+        assert len(by_id) == 100
+        for tid, bodies in by_id.items():
+            assert sorted(b["duplicate"] for b in bodies) == [False, True], tid
+            assert bodies[0]["score"] == bodies[1]["score"] == expected[tid]  # bit-identical
+        with psycopg.connect(pg_dsn) as conn:
+            rows, distinct = conn.execute(
+                "SELECT count(*), count(DISTINCT transaction_id) FROM scored_transactions"
+            ).fetchone() or (0, 0)
+            alerts = (conn.execute("SELECT count(*) FROM alerts").fetchone() or (0,))[0]
+        fresh_alerts = sum(
+            b["is_alert"] for bodies in by_id.values() for b in bodies if not b["duplicate"]
+        )
+        print(f"rows {rows}, distinct {distinct}, alerts {alerts}, fresh alerts {fresh_alerts}")
+        assert rows == distinct == 100
+        assert alerts == fresh_alerts
+    finally:
+        store.close()
+
+
 @dataclass
 class KafkaEnv:
     """Throwaway source + DLQ topics and consumer group on the live broker."""

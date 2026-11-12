@@ -9,5 +9,6 @@ starlette==1.7.0
 pydantic==2.14.1
 uvicorn==0.34.0
 psycopg[binary]==3.2.3
+psycopg-pool==3.2.8  # PostgresStore connection pool (DB_POOL_SIZE, default 10)
 confluent-kafka==2.6.1
 feast[redis]==0.47.0

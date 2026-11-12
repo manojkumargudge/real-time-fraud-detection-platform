@@ -821,3 +821,27 @@ class TestServingSpeedups:
             np.testing.assert_array_equal(
                 bundle.predict(row), bundle.booster.inplace_predict(old, missing=np.nan)
             )
+
+
+class TestPoolSize:
+    """S3: DB_POOL_SIZE sets the PostgresStore pool's maximum (default 10)."""
+
+    def test_default_is_10(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.serving.store import DEFAULT_POOL_SIZE, pool_size_from_env
+
+        monkeypatch.delenv("DB_POOL_SIZE", raising=False)
+        assert pool_size_from_env() == DEFAULT_POOL_SIZE == 10
+
+    def test_env_value_is_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.serving.store import pool_size_from_env
+
+        monkeypatch.setenv("DB_POOL_SIZE", "4")
+        assert pool_size_from_env() == 4
+
+    @pytest.mark.parametrize("raw", ["0", "101", "ten", ""])
+    def test_invalid_values_are_rejected(self, monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+        from src.serving.store import pool_size_from_env
+
+        monkeypatch.setenv("DB_POOL_SIZE", raw)
+        with pytest.raises(ValueError, match="DB_POOL_SIZE"):
+            pool_size_from_env()
