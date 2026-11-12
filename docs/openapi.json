@@ -339,6 +339,27 @@
         "summary": "Health"
       }
     },
+    "/model": {
+      "get": {
+        "description": "The served model and, if linked, its MLflow registry version (``registry.json``).",
+        "operationId": "model_model_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Model Model Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Model"
+      }
+    },
     "/score": {
       "post": {
         "operationId": "score_score_post",

@@ -26,6 +26,42 @@ class ModelBundleError(RuntimeError):
     """The model bundle is missing, corrupt, or incompatible with this code version."""
 
 
+REGISTRY_FILE = "registry.json"  # written by `python -m src.models.link_registry` (host)
+REGISTRY_KEYS = ("name", "version", "alias", "run_id", "model_sha256", "linked_at")
+
+
+@dataclass(frozen=True)
+class RegistryLink:
+    """The MLflow registry version the served ``model.json`` was verified against."""
+
+    name: str
+    version: str
+    alias: str
+    run_id: str
+    model_sha256: str
+    linked_at: str
+
+
+def load_registry_link(directory: Path, model_sha256: str) -> RegistryLink | None:
+    """``registry.json`` if present (None if absent). A link whose ``model_sha256`` differs from
+    the loaded model, or that is malformed, stops the load: a wrong link is worse than none."""
+    path = directory / REGISTRY_FILE
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        link = RegistryLink(**{k: str(raw[k]) for k in REGISTRY_KEYS})
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ModelBundleError(f"malformed {path}: {exc}") from exc
+    if link.model_sha256 != model_sha256:
+        raise ModelBundleError(
+            f"{path} links {link.name} v{link.version} with model_sha256 "
+            f"{link.model_sha256[:12]}..., but the loaded model.json is {model_sha256[:12]}...; "
+            "re-run `python -m src.models.link_registry` or remove the file"
+        )
+    return link
+
+
 @dataclass(frozen=True)
 class ModelBundle:
     booster: xgb.Booster
@@ -35,6 +71,7 @@ class ModelBundle:
     threshold: float
     model_version: str
     metadata: dict[str, Any]
+    registry: RegistryLink | None = None  # None = not linked (no registry.json)
 
     @classmethod
     def load(cls, directory: Path | str) -> ModelBundle:
@@ -52,8 +89,10 @@ class ModelBundle:
             )
         if meta.get("variant") != "baseline":
             raise ModelBundleError("only the baseline (card_id/uid) variant may be served")
-        if hashlib.sha256(model_path.read_bytes()).hexdigest() != meta.get("model_sha256"):
+        model_sha256 = hashlib.sha256(model_path.read_bytes()).hexdigest()
+        if model_sha256 != meta.get("model_sha256"):
             raise ModelBundleError("model.json does not match model_sha256 in metadata")
+        registry = load_registry_link(directory, model_sha256)
 
         config = HistoryConfig(
             windows=tuple((k, int(v)) for k, v in meta["history_windows"].items()),
@@ -84,8 +123,14 @@ class ModelBundle:
             threshold=threshold,
             model_version=str(meta["model_version"]),
             metadata=meta,
+            registry=registry,
         )
-        logger.info("loaded model version=%s features=%d", bundle.model_version, len(expected))
+        logger.info(
+            "loaded model version=%s features=%d registry=%s",
+            bundle.model_version,
+            len(expected),
+            f"{registry.name} v{registry.version} ({registry.alias})" if registry else "not linked",
+        )
         return bundle
 
     def predict(self, frame: pd.DataFrame) -> FloatArray:
