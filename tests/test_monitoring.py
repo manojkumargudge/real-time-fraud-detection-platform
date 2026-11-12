@@ -786,3 +786,40 @@ def test_job_trains_the_challenger_on_the_feast_frame(
     expected = batch.loc[batch[TIME] <= now - 3 * DAY]
     assert len(seen["labelled"]) == len(expected) > 0
     pd.testing.assert_frame_equal(seen["labelled"], expected, check_exact=True)
+
+
+def test_dirty_tree_stops_retraining_before_the_training_matrix(
+    scenario: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.models.tracking as tracking
+    import src.monitoring.retrain as retrain_mod
+
+    seen: dict[str, Any] = {}
+
+    def fake_retrain(*args: Any, **kwargs: Any) -> Any:
+        seen["allow_dirty"] = kwargs["allow_dirty"]
+        raise RuntimeError("stop after capture")
+
+    def no_frame(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the training matrix must not be built on a dirty tree")
+
+    monkeypatch.setattr(tracking, "dirty_paths", lambda: ["src/monitoring/run_drift.py"])
+    monkeypatch.setattr(retrain_mod, "retrain_and_compare", fake_retrain)
+    monkeypatch.setattr(retrain_mod, "MlflowRegistry", lambda uri: None)
+    monkeypatch.setattr(job, "retraining_frame", no_frame)
+    cfg = small_cfg(feature_drift={"share_threshold": 0.01})  # make sure it fires
+    with pytest.raises(tracking.DirtyTreeError):
+        run_captured(scenario, cfg, tmp_path, monkeypatch, retrain=True, mlflow_uri="unused")
+
+    monkeypatch.setattr(job, "retraining_frame", lambda raw, frame, cutoff, src: frame)
+    with pytest.raises(RuntimeError, match="stop after capture"):
+        run_captured(
+            scenario,
+            cfg,
+            tmp_path,
+            monkeypatch,
+            retrain=True,
+            mlflow_uri="unused",
+            allow_dirty=True,
+        )
+    assert seen["allow_dirty"] is True

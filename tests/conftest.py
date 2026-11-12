@@ -101,6 +101,10 @@ def _block_live_services(
     touching the live stack, and score with the store path (no Redis). MLflow goes to a
     throwaway SQLite file, never the repo's mlflow.db (evaluation mains log their reports).
     Tests may still delenv/setenv these; integration tests are exempt."""
+    # Training refuses a dirty tree (src.models.tracking.check_clean_tree); tests must not
+    # depend on the developer's working tree, so they see a clean one unless a test overrides
+    # dirty_paths itself (tests/test_tracking.py).
+    monkeypatch.setattr("src.models.tracking.dirty_paths", lambda: [])
     if request.node.get_closest_marker("integration") is None:
         mlflow_db = (tmp_path / "mlflow.db").as_posix()
         monkeypatch.setenv("MLFLOW_TRACKING_URI", f"sqlite:///{mlflow_db}")

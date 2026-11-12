@@ -195,6 +195,7 @@ def retrain_and_compare(
     registry: MlflowRegistry,
     *,
     tags: dict[str, str],
+    allow_dirty: bool = False,
 ) -> RetrainResult:
     """``labelled``: model-frame rows already restricted to usable labels (``usable_labels``)."""
     from src.models.tracking import log_training_run, register_version
@@ -233,6 +234,7 @@ def retrain_and_compare(
                     TRAIN_FINGERPRINT_TAG: fingerprint,
                 },
                 run_name=f"challenger-{windows.holdout.start}",
+                allow_dirty=allow_dirty,
             )
             challenger = ModelBundle.load(bundle_dir)
         version = register_version(registry.client, run_id, CHALLENGER)

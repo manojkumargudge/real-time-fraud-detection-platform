@@ -180,10 +180,15 @@ def main(
     track: bool = False,
     register: bool = False,
     feature_source: str = DEFAULT_FEATURE_SOURCE,
+    allow_dirty: bool = False,
 ) -> dict[str, Any]:
     """Train and save the bundle; with ``track``, also log the run to MLflow (``register``
     additionally registers it and points the ``champion`` alias at it)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    if track or register:
+        from src.models.tracking import check_clean_tree
+
+        check_clean_tree(allow_dirty)  # fail before training, not after it
     df = load_ieee_cis(raw_dir, usecols=[])
     run = fit_baseline(df, cfg, feature_source)
     save_bundle(run.trained, run.metadata, out_dir)
@@ -193,7 +198,11 @@ def main(
         from src.models.tracking import log_training_run
 
         log_training_run(
-            run, out_dir, imbalance_method=run.metadata["config"]["imbalance"], register=register
+            run,
+            out_dir,
+            imbalance_method=run.metadata["config"]["imbalance"],
+            register=register,
+            allow_dirty=allow_dirty,
         )
     return saved
 
@@ -215,6 +224,11 @@ def _cli(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--register", action="store_true", help="register the run and move the champion alias"
     )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="train even with uncommitted code changes (MLflow tag allow_dirty=true)",
+    )
     args = parser.parse_args(argv)
     main(
         out_dir=args.out_dir,
@@ -222,6 +236,7 @@ def _cli(argv: list[str] | None = None) -> None:
         track=not args.no_track,
         register=args.register,
         feature_source=args.feature_source,
+        allow_dirty=args.allow_dirty,
     )
 
 
