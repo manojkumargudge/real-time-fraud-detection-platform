@@ -78,6 +78,55 @@ def _git(*args: str) -> str | None:
     return out.stdout.strip()
 
 
+# Untracked files under these prefixes count as code changes (they can be imported or read by
+# training); other untracked files (reports, evidence, notes) do not.
+CODE_PREFIXES = ("src/", "configs/", "requirements")
+
+
+class DirtyTreeError(RuntimeError):
+    """Training refused: the working tree has uncommitted code changes (see ``--allow-dirty``)."""
+
+
+def dirty_paths() -> list[str] | None:
+    """Uncommitted code changes: every changed tracked file plus untracked files under
+    ``CODE_PREFIXES``. ``None`` if git is unavailable (the tree cannot be verified)."""
+    out = _git("status", "--porcelain")
+    return None if out is None else code_changes(out)
+
+
+def code_changes(porcelain: str) -> list[str]:
+    """Paths from ``git status --porcelain`` output that count as code changes."""
+    paths: list[str] = []
+    for line in porcelain.splitlines():
+        if not line.strip():
+            continue
+        status, path = line[:2], line[3:].strip().strip('"')
+        if status == "??" and not path.startswith(CODE_PREFIXES):
+            continue
+        paths.append(path)
+    return paths
+
+
+def check_clean_tree(allow_dirty: bool = False) -> dict[str, str]:
+    """Refuse to train from a tree whose code is not committed, so every logged or registered
+    model can be rebuilt from ``git_commit``. ``allow_dirty`` overrides it; the run is then
+    tagged ``allow_dirty = true``. Returns the tags to add to the run."""
+    paths = dirty_paths()
+    if allow_dirty:
+        return {"allow_dirty": "true"}
+    if paths is None:
+        raise DirtyTreeError(
+            "cannot verify the working tree (git unavailable); pass --allow-dirty to train anyway"
+        )
+    if paths:
+        shown = ", ".join(paths[:5]) + (f" (+{len(paths) - 5} more)" if len(paths) > 5 else "")
+        raise DirtyTreeError(
+            f"uncommitted code changes: {shown}. Commit them, or pass --allow-dirty "
+            "(the run is then tagged allow_dirty=true)"
+        )
+    return {}
+
+
 def run_params(run: BaselineRun, imbalance_method: str) -> dict[str, Any]:
     md = run.metadata
     return {
@@ -127,8 +176,13 @@ def log_training_run(
     uri: str | None = None,
     extra_tags: dict[str, str] | None = None,
     run_name: str | None = None,
+    allow_dirty: bool = False,
 ) -> str:
-    """Log one training run (and optionally register it as champion); returns the run ID."""
+    """Log one training run (and optionally register it as champion); returns the run ID.
+
+    Raises ``DirtyTreeError`` before anything is logged if the code is not committed, unless
+    ``allow_dirty`` (then tagged ``allow_dirty = true``)."""
+    guard_tags = check_clean_tree(allow_dirty)
     uri = uri or tracking_uri()
     client = MlflowClient(tracking_uri=uri, registry_uri=uri)
     commit = _git("rev-parse", "HEAD") or "unknown"
@@ -137,6 +191,7 @@ def log_training_run(
         "git_dirty": str(bool(_git("status", "--porcelain"))).lower(),
         "imbalance_method": imbalance_method,
         "variant": str(run.metadata["variant"]),
+        **guard_tags,
         **(extra_tags or {}),
     }
     seed = run.metadata["seed"]

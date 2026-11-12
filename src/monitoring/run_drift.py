@@ -89,6 +89,7 @@ class JobOptions:
     # Training matrix for a challenger: "feast" (offline store, the train CLI default) or
     # "pandas" (batch code). Both give the same frame (checked in retraining_frame's caller).
     retrain_feature_source: str = DEFAULT_RETRAIN_FEATURE_SOURCE
+    allow_dirty: bool = False  # retrain even with uncommitted code (MLflow tag allow_dirty)
 
 
 def retraining_frame(
@@ -264,8 +265,10 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
     retrain_run_id = challenger_version = decision_text = None
     promotion: dict[str, Any] | None = None
     if (trigger.fired or opts.force_retrain) and opts.retrain:
-        from src.models.tracking import tracking_uri
+        from src.models.tracking import check_clean_tree, tracking_uri
         from src.monitoring.retrain import MlflowRegistry, retrain_and_compare
+
+        check_clean_tree(opts.allow_dirty)  # before the (long) training matrix, not after
 
         # With retraining enabled, inputs.champion is the MLflow champion (see _load_champion).
         registry = MlflowRegistry(opts.mlflow_uri or tracking_uri())
@@ -282,6 +285,7 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
                 "forced": str(forced).lower(),
                 "feature_source": opts.retrain_feature_source,
             },
+            allow_dirty=opts.allow_dirty,
         )
         retrain_run_id, challenger_version = result.run_id, result.challenger_version
         prefix = "forced retrain" + ("" if trigger.fired else " (no check fired)") + ": "
@@ -424,6 +428,11 @@ def main(argv: list[str] | None = None) -> int:
         help="training matrix for a challenger: Feast offline store (default, as the train "
         "CLI) or the pandas batch code; the job checks that both are identical",
     )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="retrain even with uncommitted code changes (MLflow tag allow_dirty=true)",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -450,6 +459,7 @@ def main(argv: list[str] | None = None) -> int:
         mlflow_uri=mlflow_uri,
         champion_source=source,
         retrain_feature_source=args.retrain_feature_source,
+        allow_dirty=args.allow_dirty,
     )
     report_id = run_job(inputs, cfg, opts, dsn)
     print(json.dumps({"drift_report_id": report_id}))

@@ -116,6 +116,11 @@ streamlit, xgboost); it has not hung.
    logs the run to a local `mlflow.db`. On the verification run this reproduced the served v2
    **byte for byte**: model `baseline-9fdad27ea3b0` (same model.json sha256), validation PR-AUC
    0.2992.
+   - Training that logs to MLflow **refuses a dirty tree** (uncommitted tracked changes, or
+     untracked files under `src/`, `configs/` or `requirements*`), so every logged model can be
+     rebuilt from its `git_commit` tag. `--allow-dirty` overrides it and tags the run
+     `allow_dirty=true` (same flag on `src.monitoring.run_drift` and
+     `src.models.imbalance_comparison`; `--no-track` skips MLflow and the check).
    - `--imbalance none` matters. The brief asks for class weights or SMOTE. v1 was trained with
      class weights (`scale_pos_weight`, still the CLI default); over 3 seeds and two later time
      windows no weight scored higher (mean validation PR-AUC 0.2935 vs 0.2517), so v2 is served
@@ -219,7 +224,9 @@ Get-ScheduledTask -TaskName FraudDrift-Retrain | Get-ScheduledTaskInfo   # last 
 
 While enabled, every run adds a `drift_reports` row to the demo database, and a run that fires
 registers a new challenger version in the real registry; the demo stack (at least `postgres`)
-must be running, otherwise the run exits with code 2. Proof run (started by Task Scheduler, on
+must be running, otherwise the run exits with code 2. A run that fires on a tree with
+uncommitted code changes stops before training (`DirtyTreeError`, non-zero exit, no `drift_reports` row); the
+scheduled script never passes `--allow-dirty`. Proof run (started by Task Scheduler, on
 copies): [docs/evidence/2026-10-30-scheduled-retrain/](docs/evidence/2026-10-30-scheduled-retrain/README.md).
 
 ## Brief to evidence

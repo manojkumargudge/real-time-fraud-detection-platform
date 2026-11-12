@@ -135,20 +135,25 @@ def render(results: list[RunResult], decision: Decision, champion_note: str) -> 
     return "\n".join(lines)
 
 
-def main(raw_dir: Path = DEFAULT_RAW_DIR, report: Path = REPORT) -> Decision:
+def main(
+    raw_dir: Path = DEFAULT_RAW_DIR, report: Path = REPORT, allow_dirty: bool = False
+) -> Decision:
     # Imported here so the module (and its unit tests) load without an MLflow store.
     from mlflow.tracking import MlflowClient
 
     from src.models import tracking
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    tracking.check_clean_tree(allow_dirty)  # fail before six training runs, not after
     df = load_ieee_cis(raw_dir, usecols=[])
     results: list[RunResult] = []
     for method in (CURRENT, CHALLENGER):
         for seed in SEEDS:
             run = fit_baseline(df, ComparisonConfig(seed=seed, imbalance=method))
             bundle = save_bundle(run.trained, run.metadata, CANDIDATES / f"{method}-seed{seed}")
-            run_id = tracking.log_training_run(run, bundle, imbalance_method=method)
+            run_id = tracking.log_training_run(
+                run, bundle, imbalance_method=method, allow_dirty=allow_dirty
+            )
             results.append(
                 RunResult(
                     method,
@@ -279,12 +284,16 @@ def with_confirmation(report_text: str, section: str) -> str:
     return f"{head}\n\n{section}"
 
 
-def confirm(raw_dir: Path = DEFAULT_RAW_DIR, report: Path = REPORT) -> list[WindowResult]:
+def confirm(
+    raw_dir: Path = DEFAULT_RAW_DIR, report: Path = REPORT, allow_dirty: bool = False
+) -> list[WindowResult]:
     from src.features.entity import SECONDS_PER_DAY
     from src.features.history import TIME, HistoryConfig
     from src.models import tracking
     from src.models.compare import build_model_frame
     from src.models.robust_eval import define_windows, window_split
+
+    tracking.check_clean_tree(allow_dirty)  # fail before training, not after
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     df = load_ieee_cis(raw_dir, usecols=[])
@@ -311,6 +320,7 @@ def confirm(raw_dir: Path = DEFAULT_RAW_DIR, report: Path = REPORT) -> list[Wind
                 imbalance_method=method,
                 extra_tags={"stage": "confirmation", "window": name},
                 run_name=f"confirm-{name}-{method}-seed{CONFIRM_SEED}",
+                allow_dirty=allow_dirty,
             )
             metrics[method] = tracking.run_metrics(run)
             logger.info(
@@ -347,7 +357,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--confirm", action="store_true", help="re-check on windows W1/W2 (seed 42) only"
     )
-    if parser.parse_args().confirm:
-        confirm()
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="train even with uncommitted code changes (MLflow tag allow_dirty=true)",
+    )
+    cli = parser.parse_args()
+    if cli.confirm:
+        confirm(allow_dirty=cli.allow_dirty)
     else:
-        main()
+        main(allow_dirty=cli.allow_dirty)

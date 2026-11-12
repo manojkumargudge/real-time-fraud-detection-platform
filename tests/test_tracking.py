@@ -170,3 +170,86 @@ def test_version_comparison_lists_every_metric_where_the_new_model_is_worse() ->
     assert len(worse) == len(RATES) + 1  # recall at each budget + recall at deployed threshold
     assert all("recall is lower" in w for w in worse)
     assert worse_points(new, new) == []
+
+
+# --- dirty-tree guard (S1) ---------------------------------------------------------------------
+
+
+def test_code_changes_counts_tracked_edits_and_untracked_code_only() -> None:
+    porcelain = "\n".join(
+        [
+            " M src/models/train.py",
+            "M  README.md",
+            "?? docs/evidence/new/run.log",
+            "?? src/models/new_module.py",
+            "?? configs/extra.toml",
+            "?? requirements-extra.txt",
+            "?? reports/x.md",
+        ]
+    )
+    assert tracking.code_changes(porcelain) == [
+        "src/models/train.py",
+        "README.md",
+        "src/models/new_module.py",
+        "configs/extra.toml",
+        "requirements-extra.txt",
+    ]
+    assert tracking.code_changes("") == []
+    assert tracking.code_changes("?? notes.txt\n?? docs/a.md") == []
+
+
+def test_clean_tree_passes_without_tags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tracking, "dirty_paths", lambda: [])
+    assert tracking.check_clean_tree() == {}
+
+
+def test_dirty_tree_is_refused_and_names_the_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tracking, "dirty_paths", lambda: ["src/a.py", "configs/b.toml"])
+    with pytest.raises(tracking.DirtyTreeError, match=r"src/a.py, configs/b.toml.*--allow-dirty"):
+        tracking.check_clean_tree()
+
+
+def test_unverifiable_tree_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tracking, "dirty_paths", lambda: None)
+    with pytest.raises(tracking.DirtyTreeError, match="cannot verify"):
+        tracking.check_clean_tree()
+
+
+def test_dirty_training_run_logs_nothing_unless_allowed(
+    synthetic_frame: pd.DataFrame, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = f"sqlite:///{(tmp_path / 'mlflow.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    monkeypatch.setattr(tracking, "dirty_paths", lambda: ["src/models/train.py"])
+    run = fit_baseline(synthetic_frame, FAST)
+    bundle = save_bundle(run.trained, run.metadata, tmp_path / "bundle")
+
+    with pytest.raises(tracking.DirtyTreeError):
+        tracking.log_training_run(run, bundle, register=True)
+    client = MlflowClient(tracking_uri=uri, registry_uri=uri)
+    runs = client.search_runs([e.experiment_id for e in client.search_experiments()])
+    print(f"runs after refusal: {len(runs)}")
+    assert runs == []  # refused before anything was logged or registered
+    assert client.search_registered_models() == []
+
+    run_id = tracking.log_training_run(run, bundle, register=True, allow_dirty=True)
+    tags = client.get_run(run_id).data.tags
+    assert tags["allow_dirty"] == "true"
+    assert str(client.get_model_version_by_alias("fraud-xgboost", "champion").version) == "1"
+
+
+def test_train_cli_refuses_a_dirty_tree_before_training(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.models.train as train_mod
+
+    monkeypatch.setattr(tracking, "dirty_paths", lambda: ["src/models/train.py"])
+
+    def no_load(*args: object, **kwargs: object) -> None:
+        raise AssertionError("data must not be loaded when the tree is dirty")
+
+    monkeypatch.setattr(train_mod, "load_ieee_cis", no_load)
+    with pytest.raises(tracking.DirtyTreeError):
+        train_mod._cli(["--out-dir", str(tmp_path / "out")])
+    with pytest.raises(AssertionError, match="must not be loaded"):  # flag passes the guard
+        train_mod._cli(["--out-dir", str(tmp_path / "out"), "--allow-dirty"])
