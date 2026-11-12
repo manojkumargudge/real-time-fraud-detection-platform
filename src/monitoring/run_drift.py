@@ -92,6 +92,19 @@ class JobOptions:
     allow_dirty: bool = False  # retrain even with uncommitted code (MLflow tag allow_dirty)
 
 
+RETRAIN_BLOCKED_PREFIX = "blocked: dirty tree"
+EXIT_RETRAIN_BLOCKED = 4  # run_drift exit code when the row was stored but retraining was blocked
+
+
+class RetrainBlockedError(RuntimeError):
+    """Retraining was needed but refused (uncommitted code); the drift row *was* stored."""
+
+    def __init__(self, report_id: int, reason: str) -> None:
+        super().__init__(f"drift report id={report_id}: {reason}")
+        self.report_id = report_id
+        self.reason = reason
+
+
 def insufficient_data(current_rows: int, reference_rows: int, min_rows: int) -> str | None:
     """``None`` if both windows have at least ``min_rows`` rows, else the stored reason."""
     short = [
@@ -291,32 +304,38 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
     if shortfall is not None:
         decision_text = shortfall + (" (forced retrain refused)" if forced else "")
     elif (trigger.fired or opts.force_retrain) and opts.retrain:
-        from src.models.tracking import check_clean_tree, tracking_uri
+        from src.models.tracking import DirtyTreeError, check_clean_tree, tracking_uri
         from src.monitoring.retrain import MlflowRegistry, retrain_and_compare
 
-        check_clean_tree(opts.allow_dirty)  # before the (long) training matrix, not after
-
-        # With retraining enabled, inputs.champion is the MLflow champion (see _load_champion).
-        registry = MlflowRegistry(opts.mlflow_uri or tracking_uri())
-        labelled = retraining_frame(raw, frame, cutoff, opts.retrain_feature_source)
-        result = retrain_and_compare(
-            labelled,
-            retrain_windows,
-            champion,
-            cfg,
-            registry,
-            tags={
-                "trigger": "; ".join(trigger.reasons) or "none (forced)",
-                "synthetic": str(synthetic).lower(),
-                "forced": str(forced).lower(),
-                "feature_source": opts.retrain_feature_source,
-            },
-            allow_dirty=opts.allow_dirty,
-        )
-        retrain_run_id, challenger_version = result.run_id, result.challenger_version
-        prefix = "forced retrain" + ("" if trigger.fired else " (no check fired)") + ": "
-        decision_text = (prefix if forced else "") + result.decision.reason
-        promotion = result.summary()
+        blocked = None
+        try:
+            check_clean_tree(opts.allow_dirty)  # before the (long) training matrix, not after
+        except DirtyTreeError as exc:
+            blocked = f"{RETRAIN_BLOCKED_PREFIX} ({exc}); retraining not run"
+            logger.error("retraining blocked: %s", exc)
+            decision_text = blocked
+        if blocked is None:
+            # With retraining enabled, inputs.champion is the MLflow champion (_load_champion).
+            registry = MlflowRegistry(opts.mlflow_uri or tracking_uri())
+            labelled = retraining_frame(raw, frame, cutoff, opts.retrain_feature_source)
+            result = retrain_and_compare(
+                labelled,
+                retrain_windows,
+                champion,
+                cfg,
+                registry,
+                tags={
+                    "trigger": "; ".join(trigger.reasons) or "none (forced)",
+                    "synthetic": str(synthetic).lower(),
+                    "forced": str(forced).lower(),
+                    "feature_source": opts.retrain_feature_source,
+                },
+                allow_dirty=opts.allow_dirty,
+            )
+            retrain_run_id, challenger_version = result.run_id, result.challenger_version
+            prefix = "forced retrain" + ("" if trigger.fired else " (no check fired)") + ": "
+            decision_text = (prefix if forced else "") + result.decision.reason
+            promotion = result.summary()
     elif trigger.fired:
         decision_text = "not run: retraining disabled (--no-retrain; host-only step)"
 
@@ -385,6 +404,9 @@ def run_job(inputs: JobInputs, cfg: DriftConfig, opts: JobOptions, dsn: str) -> 
         "n/a" if delayed_ap is None else f"{delayed_ap:.4f}",
         report_path,
     )
+    if decision_text is not None and decision_text.startswith(RETRAIN_BLOCKED_PREFIX):
+        # The row is stored (the Drift page shows the blocked status); the run still fails.
+        raise RetrainBlockedError(report_id, decision_text)
     return report_id
 
 
@@ -488,7 +510,12 @@ def main(argv: list[str] | None = None) -> int:
         retrain_feature_source=args.retrain_feature_source,
         allow_dirty=args.allow_dirty,
     )
-    report_id = run_job(inputs, cfg, opts, dsn)
+    try:
+        report_id = run_job(inputs, cfg, opts, dsn)
+    except RetrainBlockedError as exc:
+        logger.error("%s (exit %d)", exc, EXIT_RETRAIN_BLOCKED)
+        print(json.dumps({"drift_report_id": exc.report_id, "retrain": "blocked: dirty tree"}))
+        return EXIT_RETRAIN_BLOCKED
     print(json.dumps({"drift_report_id": report_id}))
     return 0
 

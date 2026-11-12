@@ -890,3 +890,21 @@ def test_drift_page_explains_an_empty_drift_reports_table(fake: FakeRepository) 
     assert "No drift reports in this database yet" in info
     assert "create job drift-manual --from=cronjob/drift" in info
     assert at.dataframe == []
+
+
+def test_drift_page_shows_a_retrain_blocked_by_a_dirty_tree(fake: FakeRepository) -> None:
+    """Real user path: navigate to the Drift page; the blocked row says so in both columns."""
+    blocked = "blocked: dirty tree (uncommitted code changes: src/a.py); retraining not run"
+    row = {
+        **fake.list_drift_reports()[0],
+        "id": 10,
+        "forced": False,
+        "promotion_decision": blocked,
+        "challenger_version": None,
+    }
+    fake.list_drift_reports = lambda: [row]  # type: ignore[method-assign]
+    at = app(fake, "views/drift.py")
+    assert not at.exception
+    table = at.dataframe[0].value
+    assert table.iloc[0]["Retrain"] == "blocked (dirty tree)"
+    assert any(blocked in str(v) for v in table.iloc[0].values)

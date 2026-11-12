@@ -109,6 +109,8 @@ def window_label(start_day: float, end_day: float) -> str:
 
 def retrain_label(report: dict[str, Any]) -> str:
     """Why retraining ran for a drift report, from the stored flags."""
+    if str(report.get("promotion_decision") or "").startswith("blocked: dirty tree"):
+        return "blocked (dirty tree)"
     if report["forced"]:
         return "forced"
     return "rule fired" if report["triggered"] else "no"

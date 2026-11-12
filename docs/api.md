@@ -39,7 +39,9 @@ the store ping fails.
 bundle, written on the host by `python -m src.models.link_registry --alias production` only if
 the registry version's `model.json` is byte-identical to the served one. At startup
 `ModelBundle.load` refuses a `registry.json` whose `model_sha256` differs from the loaded model
-(a wrong link is worse than none); without the file the model is served as "not linked".
+(a wrong link is worse than none); without the file the model is served as "not linked": the
+API and consumers start normally, log one WARNING (`no .../registry.json: the served model is not
+linked ...`) and `/model` returns `linked: false` with null registry fields.
 
 **Request:** no parameters. **Response** (HTTP 200):
 
