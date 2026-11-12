@@ -286,22 +286,58 @@ def configure_logging() -> None:
 
 
 def analyst_name() -> str:
-    """The analyst name typed once per session (sidebar); no authentication."""
+    """The signed-in user (``sign_in_gate``); recorded as ``analyst`` on every review."""
     return str(st.session_state.get("analyst", "")).strip()
 
 
-def sidebar() -> None:
-    with st.sidebar:
-        # persist_state="session": since Streamlit 1.46, st.switch_page (open_case) deletes widget
-        # keys at the start of the new page's run, so the name was lost on every opened case.
-        st.text_input(
-            "Analyst name",
-            key="analyst",
-            persist_state="session",
-            help="Recorded on every review. No authentication: the name is self-declared.",
+def _sign_in(users: dict[str, str]) -> None:
+    from src.dashboard import auth
+
+    name = str(st.session_state.get("sign_in_user", "")).strip()
+    password = str(st.session_state.get("sign_in_password", ""))
+    if auth.verify(users, name, password):
+        st.session_state["analyst"] = name
+        st.session_state.pop("sign_in_error", None)
+        logging.getLogger(__name__).info("dashboard sign-in user=%s", name)
+    else:
+        st.session_state["sign_in_error"] = "Unknown user or wrong password."
+        logging.getLogger(__name__).warning("dashboard sign-in failed user=%s", name)
+    st.session_state["sign_in_password"] = ""  # never keep the password in the session
+
+
+def _sign_out() -> None:
+    st.session_state.pop("analyst", None)
+
+
+def sign_in_gate() -> bool:
+    """Every page needs a signed-in analyst (bcrypt hashes in DASHBOARD_USERS_FILE). Returns
+    False after rendering the sign-in form; the caller stops the run."""
+    from src.dashboard import auth
+
+    if analyst_name():
+        with st.sidebar:
+            st.write(f"Signed in as **{analyst_name()}**")
+            st.button("Sign out", key="sign_out", on_click=_sign_out)
+        return True
+    st.title("Fraud analyst dashboard")
+    try:
+        users = auth.load_users()
+    except auth.UsersFileError as exc:
+        st.error(f"The dashboard users file is invalid: {exc}")
+        return False
+    if not users:
+        st.error(
+            f"No dashboard users are configured ({auth.users_file()}). Create one on the host: "
+            "python -m src.dashboard.auth add <name>."
         )
-        if not analyst_name():
-            st.caption("Enter your name to change cases.")
+        return False
+    with st.form("sign_in"):
+        st.text_input("Username", key="sign_in_user")
+        st.text_input("Password", type="password", key="sign_in_password")
+        st.form_submit_button("Sign in", on_click=_sign_in, args=(users,))
+    if "sign_in_error" in st.session_state:
+        st.error(st.session_state["sign_in_error"])
+    return False
 
 
 def open_case(alert_id: int) -> None:
