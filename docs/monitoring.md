@@ -202,7 +202,9 @@ What the second demo shows:
   line), so it is noisier than the share rule. It does not fire on every window: in the
   2026-10-27 evidence run (on copies; docs/evidence/2026-10-27-drift-trigger/) the default
   window, days 176-182, did not fire, and days 170-181, chosen after that, fired on
-  `R_emaildomain` without `--force-retrain`. The rule is not calibrated on drift-free periods.
+  `R_emaildomain` without `--force-retrain`. On 11 in-training-period windows (days 61-137,
+  frozen rules) the trigger fired on 5 (days 96-130), top-feature drift in 4 of them
+  (docs/evidence/2026-11-13-drift-calibration/); no threshold was changed.
 - Windows in these tables give the first and the **last day included**: days 170-182 covers
   170.0 up to the end of the data (182.999), and 170-181 is one day shorter. The CLI's
   `--window-end-day` is exclusive (`--window-start-day 141 --window-end-day 145` = days 141-144).

@@ -276,9 +276,16 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
   The Minikube CronJob still runs drift checks only (`--no-retrain`): in-cluster retraining
   needs an MLflow server with a shared artifact store. `production` is never moved
   automatically ([docs/monitoring.md](docs/monitoring.md)).
-- The drift trigger is not calibrated on drift-free periods. Since 2026-11-12 it needs at least
-  1,000 rows in both the current and the reference window (fixed a priori; below it the run is
-  stored as "insufficient data" and never retrains; docs/monitoring.md).
+- The drift trigger fires without any injected shift: replayed on 11 in-training-period
+  windows (days 61-137, frozen rules, no threshold change) it fired on **5 of 11** (days 96-130):
+  top-feature drift in 4 (addr2, card3, R_emaildomain), the performance rule in 3, whose
+  delayed-label rows were in the served model's training data (in-sample, not counted as
+  evidence); the share and PSI rules never fired
+  ([docs/evidence/2026-11-13-drift-calibration/](docs/evidence/2026-11-13-drift-calibration/README.md)).
+  Retraining is gated by the bootstrap promotion check, so a fire costs a retrain, not a model
+  change. Since 2026-11-12 the trigger needs at least 1,000 rows in both the current and the
+  reference window (fixed a priori; below it the run is stored as "insufficient data" and never
+  retrains; docs/monitoring.md).
 - The served v2's MLflow run is tagged `git_dirty=true`, but it rebuilds identically: a fresh
   clone of main reproduced it byte for byte on 2026-10-28 (same model.json sha256, see Setup).
 - The threshold is chosen on a training holdout and applied to the refit model, so the alert

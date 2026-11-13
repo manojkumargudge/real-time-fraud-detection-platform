@@ -1,4 +1,4 @@
-"""Drift-trigger calibration on drift-free windows (M4; measurement only, changes no rule).
+"""Drift-trigger calibration on in-training-period windows (M4; measurement only, no rule change).
 
 Usage (repo root, IEEE-CIS data present; reads the served bundle for the recipe, writes nothing
 to any database or MLflow)::
@@ -185,14 +185,15 @@ def rule_of(reason: str) -> str:
 def render(results: list[WindowResult], meta: dict[str, Any]) -> str:
     fires = sum(r.fired for r in results)
     lines = [
-        "# Drift-trigger calibration on drift-free windows",
+        "# Drift-trigger calibration on in-training-period windows",
         "",
         f"Run {meta['finished']} from commit `{meta['git_commit']}` "
         f"(`python -m scripts.drift_calibration`), {meta['seconds']:.0f} s. Frozen rules "
         f"(`configs/drift.toml` sha256 `{meta['config_sha256'][:12]}…`), min_rows "
         f"{meta['min_rows']:,}. Windows fixed in code before the run (`plan_windows`).",
         "",
-        f"**False fires: {fires} of {len(results)} windows ({fires / len(results):.0%}).**",
+        f"**Fired on {fires} of {len(results)} in-training-period windows "
+        f"({fires / len(results):.0%}).**",
         "",
         "| Window (days, end excl.) | Current rows | Reference rows | Drifted share | PSI | "
         "Delayed PR-AUC / comparator | Drifted top-gain | Fired | Reasons |",
@@ -298,7 +299,12 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(payload, indent=2, default=float) + "\n", encoding="utf-8"
     )
     (args.out / "calibration.md").write_text(render(results, meta), encoding="utf-8")
-    logger.info("false fires %d of %d windows -> %s", meta["fires"], meta["windows"], args.out)
+    logger.info(
+        "fired on %d of %d in-training-period windows -> %s",
+        meta["fires"],
+        meta["windows"],
+        args.out,
+    )
     print(json.dumps({k: meta[k] for k in ("windows", "fires", "seconds", "git_commit")}))
     return 0
 

@@ -83,7 +83,7 @@ def test_report_counts_fires_and_rules() -> None:
             "seconds": 1.0,
         },
     )
-    assert "False fires: 1 of 2 windows (50%)" in md
+    assert "Fired on 1 of 2 in-training-period windows (50%)" in md
     assert "top-feature drift 1" in md
     assert "card3 2" in md
 
