@@ -1,0 +1,372 @@
+{
+  "meta": {
+    "git_commit": "74571721637f611a0317b06924889735853750ac",
+    "git_dirty": false,
+    "config_sha256": "bd47526f8eceb64de1a146e4bea5b4ed24909e7035b4501ad3caf0b76f2fc87f",
+    "min_rows": 1000,
+    "recipe": {
+      "seed": 42,
+      "imbalance": "none"
+    },
+    "champion_train_days": [
+      1.0,
+      141.12152777777777
+    ],
+    "windows": 11,
+    "fires": 5,
+    "seconds": 1772.8,
+    "finished": "2026-11-12T11:14:27+00:00"
+  },
+  "windows": [
+    {
+      "start_day": 61.0,
+      "end_day": 68.0,
+      "current_rows": 23476,
+      "reference_rows": 89399,
+      "sufficient": true,
+      "drifted_feature_share": 0.10714285714285714,
+      "drifted_features": [
+        "DeviceInfo",
+        "uid_prior_txn_count",
+        "uid_txn_count_30d"
+      ],
+      "prediction_psi": 0.023569991468358392,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "addr2",
+        "card6",
+        "ProductCD",
+        "R_emaildomain"
+      ],
+      "drifted_top_gain_features": [],
+      "delayed_rows": 23467,
+      "delayed_positives": 863,
+      "delayed_pr_auc": 0.319263128332181,
+      "comparator_pr_auc": 0.2231675601954728,
+      "fired": false,
+      "reasons": [],
+      "seconds": 89.3
+    },
+    {
+      "start_day": 68.0,
+      "end_day": 75.0,
+      "current_rows": 20638,
+      "reference_rows": 89408,
+      "sufficient": true,
+      "drifted_feature_share": 0.07142857142857142,
+      "drifted_features": [
+        "DeviceInfo",
+        "uid_prior_txn_count"
+      ],
+      "prediction_psi": 0.02329429039542273,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "addr2",
+        "card6",
+        "ProductCD",
+        "R_emaildomain"
+      ],
+      "drifted_top_gain_features": [],
+      "delayed_rows": 20710,
+      "delayed_positives": 821,
+      "delayed_pr_auc": 0.4063818551278075,
+      "comparator_pr_auc": 0.29942840282478284,
+      "fired": false,
+      "reasons": [],
+      "seconds": 84.3
+    },
+    {
+      "start_day": 75.0,
+      "end_day": 82.0,
+      "current_rows": 20437,
+      "reference_rows": 89336,
+      "sufficient": true,
+      "drifted_feature_share": 0.14285714285714285,
+      "drifted_features": [
+        "DeviceInfo",
+        "has_identity",
+        "uid_prior_txn_count",
+        "uid_seconds_since_prev_txn"
+      ],
+      "prediction_psi": 0.005759432505492476,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "addr2",
+        "card6",
+        "ProductCD",
+        "R_emaildomain"
+      ],
+      "drifted_top_gain_features": [],
+      "delayed_rows": 20333,
+      "delayed_positives": 867,
+      "delayed_pr_auc": 0.3555802118379326,
+      "comparator_pr_auc": 0.3481246314333158,
+      "fired": false,
+      "reasons": [],
+      "seconds": 77.8
+    },
+    {
+      "start_day": 82.0,
+      "end_day": 89.0,
+      "current_rows": 21059,
+      "reference_rows": 89439,
+      "sufficient": true,
+      "drifted_feature_share": 0.03571428571428571,
+      "drifted_features": [
+        "DeviceInfo"
+      ],
+      "prediction_psi": 0.004491058691221013,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "addr2",
+        "card6",
+        "ProductCD",
+        "R_emaildomain"
+      ],
+      "drifted_top_gain_features": [],
+      "delayed_rows": 19555,
+      "delayed_positives": 750,
+      "delayed_pr_auc": 0.37597279664269684,
+      "comparator_pr_auc": 0.3611753512196074,
+      "fired": false,
+      "reasons": [],
+      "seconds": 653.9
+    },
+    {
+      "start_day": 89.0,
+      "end_day": 96.0,
+      "current_rows": 28004,
+      "reference_rows": 90944,
+      "sufficient": true,
+      "drifted_feature_share": 0.14285714285714285,
+      "drifted_features": [
+        "DeviceInfo",
+        "has_identity",
+        "uid_txn_count_1h",
+        "uid_txn_count_24h"
+      ],
+      "prediction_psi": 0.005801447160165263,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "card6",
+        "ProductCD",
+        "R_emaildomain",
+        "addr2"
+      ],
+      "drifted_top_gain_features": [],
+      "delayed_rows": 23002,
+      "delayed_positives": 1132,
+      "delayed_pr_auc": 0.4289128724239924,
+      "comparator_pr_auc": 0.3248533401723818,
+      "fired": false,
+      "reasons": [],
+      "seconds": 147.3
+    },
+    {
+      "start_day": 96.0,
+      "end_day": 103.0,
+      "current_rows": 22030,
+      "reference_rows": 95945,
+      "sufficient": true,
+      "drifted_feature_share": 0.10714285714285714,
+      "drifted_features": [
+        "DeviceInfo",
+        "R_emaildomain",
+        "addr2"
+      ],
+      "prediction_psi": 0.008075197410764208,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "card6",
+        "addr2",
+        "ProductCD",
+        "R_emaildomain"
+      ],
+      "drifted_top_gain_features": [
+        "addr2",
+        "R_emaildomain"
+      ],
+      "delayed_rows": 21021,
+      "delayed_positives": 826,
+      "delayed_pr_auc": 0.4819688322994476,
+      "comparator_pr_auc": 0.34544804848735944,
+      "fired": true,
+      "reasons": [
+        "top-feature drift: addr2, R_emaildomain drifted (among the champion's top 5 features by gain)"
+      ],
+      "seconds": 149.1
+    },
+    {
+      "start_day": 103.0,
+      "end_day": 110.0,
+      "current_rows": 20718,
+      "reference_rows": 96956,
+      "sufficient": true,
+      "drifted_feature_share": 0.10714285714285714,
+      "drifted_features": [
+        "DeviceInfo",
+        "addr2",
+        "uid_prior_txn_count"
+      ],
+      "prediction_psi": 0.012052884729745335,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "card6",
+        "addr2",
+        "R_emaildomain",
+        "ProductCD"
+      ],
+      "drifted_top_gain_features": [
+        "addr2"
+      ],
+      "delayed_rows": 20796,
+      "delayed_positives": 847,
+      "delayed_pr_auc": 0.38643930225064993,
+      "comparator_pr_auc": 0.3512136984883807,
+      "fired": true,
+      "reasons": [
+        "top-feature drift: addr2 drifted (among the champion's top 5 features by gain)"
+      ],
+      "seconds": 100.1
+    },
+    {
+      "start_day": 110.0,
+      "end_day": 117.0,
+      "current_rows": 20980,
+      "reference_rows": 96878,
+      "sufficient": true,
+      "drifted_feature_share": 0.14285714285714285,
+      "drifted_features": [
+        "DeviceInfo",
+        "card3",
+        "has_identity",
+        "uid_prior_txn_count"
+      ],
+      "prediction_psi": 0.014853058792136695,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "card6",
+        "addr2",
+        "R_emaildomain",
+        "ProductCD"
+      ],
+      "drifted_top_gain_features": [
+        "card3"
+      ],
+      "delayed_rows": 20554,
+      "delayed_positives": 775,
+      "delayed_pr_auc": 0.3296721681712737,
+      "comparator_pr_auc": 0.4364763873735063,
+      "fired": true,
+      "reasons": [
+        "top-feature drift: card3 drifted (among the champion's top 5 features by gain)",
+        "performance: delayed-label PR-AUC 0.3297 < champion validation 0.4365 - 0.05"
+      ],
+      "seconds": 101.0
+    },
+    {
+      "start_day": 117.0,
+      "end_day": 124.0,
+      "current_rows": 22376,
+      "reference_rows": 97302,
+      "sufficient": true,
+      "drifted_feature_share": 0.21428571428571427,
+      "drifted_features": [
+        "DeviceInfo",
+        "card3",
+        "card_deviceinfo_changed",
+        "has_identity",
+        "uid_prior_txn_count",
+        "uid_txn_count_24h"
+      ],
+      "prediction_psi": 0.0182671608793935,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "addr2",
+        "card6",
+        "R_emaildomain",
+        "ProductCD"
+      ],
+      "drifted_top_gain_features": [
+        "card3"
+      ],
+      "delayed_rows": 26933,
+      "delayed_positives": 898,
+      "delayed_pr_auc": 0.23987605858231603,
+      "comparator_pr_auc": 0.37589103320109923,
+      "fired": true,
+      "reasons": [
+        "top-feature drift: card3 drifted (among the champion's top 5 features by gain)",
+        "performance: delayed-label PR-AUC 0.2399 < champion validation 0.3759 - 0.05"
+      ],
+      "seconds": 151.7
+    },
+    {
+      "start_day": 124.0,
+      "end_day": 131.0,
+      "current_rows": 21717,
+      "reference_rows": 92746,
+      "sufficient": true,
+      "drifted_feature_share": 0.03571428571428571,
+      "drifted_features": [
+        "DeviceInfo"
+      ],
+      "prediction_psi": 0.005752133942691782,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "card6",
+        "addr2",
+        "R_emaildomain",
+        "ProductCD"
+      ],
+      "drifted_top_gain_features": [],
+      "delayed_rows": 23006,
+      "delayed_positives": 791,
+      "delayed_pr_auc": 0.2303993480995244,
+      "comparator_pr_auc": 0.2851419093771594,
+      "fired": true,
+      "reasons": [
+        "performance: delayed-label PR-AUC 0.2304 < champion validation 0.2851 - 0.05"
+      ],
+      "seconds": 118.0
+    },
+    {
+      "start_day": 131.0,
+      "end_day": 138.0,
+      "current_rows": 18589,
+      "reference_rows": 91457,
+      "sufficient": true,
+      "drifted_feature_share": 0.03571428571428571,
+      "drifted_features": [
+        "DeviceInfo"
+      ],
+      "prediction_psi": 0.004631068917601706,
+      "prediction_drift_detected": false,
+      "top_gain_features": [
+        "card3",
+        "card6",
+        "R_emaildomain",
+        "addr2",
+        "ProductCD"
+      ],
+      "drifted_top_gain_features": [],
+      "delayed_rows": 20945,
+      "delayed_positives": 792,
+      "delayed_pr_auc": 0.3451092595612214,
+      "comparator_pr_auc": 0.2237882107396976,
+      "fired": false,
+      "reasons": [],
+      "seconds": 69.1
+    }
+  ]
+}
