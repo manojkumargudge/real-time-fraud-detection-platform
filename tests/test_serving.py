@@ -845,3 +845,129 @@ class TestPoolSize:
         monkeypatch.setenv("DB_POOL_SIZE", raw)
         with pytest.raises(ValueError, match="DB_POOL_SIZE"):
             pool_size_from_env()
+
+
+class TestConcurrentScore:
+    """S3: concurrent POST /score (unit level, no services) and a store without a global lock."""
+
+    def test_concurrent_score_requests_store_each_event_once(self, bundle: ModelBundle) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        events = [
+            event(TransactionID=i, TransactionDT=100_000 + 60 * i, card1=3000 + i)
+            for i in range(1, 61)
+        ]
+        expected = {
+            e["TransactionID"]: Scorer(bundle, InMemoryStore())
+            .score_event(TransactionEvent.model_validate(e))
+            .score
+            for e in events
+        }
+        store = InMemoryStore()
+        with (
+            TestClient(create_app(Scorer(bundle, store))) as client,
+            ThreadPoolExecutor(max_workers=16) as pool,
+        ):
+            responses = list(pool.map(lambda e: client.post("/score", json=e), events + events))
+        assert len(responses) == 120 and all(r.status_code == 200 for r in responses)
+        by_id: dict[int, list[dict[str, Any]]] = {}
+        for r in responses:
+            body = r.json()
+            by_id.setdefault(body["transaction_id"], []).append(body)
+        print(f"ids {len(by_id)}, stored {len(store)}")
+        assert len(by_id) == 60
+        for tid, bodies in by_id.items():
+            assert sorted(b["duplicate"] for b in bodies) == [False, True], tid  # no lost write
+            assert bodies[0]["score"] == bodies[1]["score"] == expected[tid]  # bit-identical
+        assert len(store) == 60  # no duplicate rows
+
+    def test_postgres_store_has_no_global_lock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Four threads hold pooled connections at the same time; a global lock (the old
+        single-connection store) would let only one in and the barrier would time out."""
+        import contextlib
+        from collections.abc import Iterator
+
+        import src.serving.store as store_mod
+
+        barrier = threading.Barrier(4, timeout=10)
+        opened: list[int] = []
+
+        class FakeConn:
+            def execute(self, *args: Any, **kwargs: Any) -> FakeConn:
+                return self
+
+            def fetchone(self) -> None:
+                return None
+
+            def transaction(self) -> contextlib.nullcontext[None]:
+                return contextlib.nullcontext()
+
+        class FakePool:
+            def __init__(self, conninfo: str, **kwargs: Any) -> None:
+                self.max_size = kwargs["max_size"]
+
+            def open(self, wait: bool = False, timeout: float = 0) -> None:
+                pass
+
+            @contextlib.contextmanager
+            def connection(self, timeout: float | None = None) -> Iterator[FakeConn]:
+                opened.append(1)
+                barrier.wait()  # all four must be inside at once
+                yield FakeConn()
+
+            def close(self) -> None:
+                pass
+
+            check_connection = staticmethod(lambda conn: None)
+
+        monkeypatch.setattr(store_mod, "ConnectionPool", FakePool)
+        store = store_mod.PostgresStore("postgresql://unused", init_schema=False, pool_size=4)
+        assert store.pool_size == 4
+        threads = [threading.Thread(target=store.get, args=(i,)) for i in range(4)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=15)
+        assert not barrier.broken and len(opened) == 4
+
+    def test_duplicate_save_reports_false_and_writes_no_alert(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Idempotent write path: ON CONFLICT DO NOTHING returns no row -> False, no alert."""
+        import contextlib
+        from collections.abc import Iterator
+
+        import src.serving.store as store_mod
+
+        statements: list[str] = []
+
+        class Result:
+            def fetchone(self) -> None:
+                return None  # conflict: nothing inserted
+
+        class FakeConn:
+            def execute(self, sql: str, params: Any = None) -> Result:
+                statements.append(sql)
+                return Result()
+
+            def transaction(self) -> contextlib.nullcontext[None]:
+                return contextlib.nullcontext()
+
+        class FakePool:
+            def __init__(self, conninfo: str, **kwargs: Any) -> None:
+                pass
+
+            def open(self, wait: bool = False, timeout: float = 0) -> None:
+                pass
+
+            @contextlib.contextmanager
+            def connection(self, timeout: float | None = None) -> Iterator[FakeConn]:
+                yield FakeConn()
+
+            check_connection = staticmethod(lambda conn: None)
+
+        monkeypatch.setattr(store_mod, "ConnectionPool", FakePool)
+        store = store_mod.PostgresStore("postgresql://unused", init_schema=False, pool_size=2)
+        rec = ScoredRecord(1, 100, "c", "c|u", {"TransactionID": 1}, 0.9, 0.5, True, "v")
+        assert store.save(rec) is False
+        assert len(statements) == 1 and "ON CONFLICT (transaction_id) DO NOTHING" in statements[0]
