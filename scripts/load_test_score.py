@@ -161,15 +161,26 @@ async def run_level(
     return result
 
 
-def load_events() -> list[dict[str, Any]]:
-    """The bench replay events, checked against setup.json and absent from fraud_bench."""
+def skip_events(events: list[dict[str, Any]], skip: int) -> list[dict[str, Any]]:
+    """Drop the first ``skip`` replay events (used by an earlier run), keeping time order."""
+    if not 0 <= skip < len(events):
+        raise SystemExit(f"--skip must be in [0, {len(events)}), got {skip}")
+    return events[skip:]
+
+
+def load_events(skip: int = 0) -> list[dict[str, Any]]:
+    """The bench replay events from index ``skip`` on, checked against setup.json and absent
+    from fraud_bench. ``--skip`` lets consecutive runs use disjoint, contiguous slices of the
+    replay events instead of resetting (deleting from) fraud_bench between runs."""
     state = json.loads(STATE.read_text(encoding="utf-8"))
-    replay_ids: list[int] = state["replay_ids"]
-    _, events = stream_events(
+    all_ids: list[int] = state["replay_ids"]
+    _, all_events = stream_events(
         str(DEFAULT_RAW_DIR), VALIDATION_EVENTS - state["replay"], state["replay"]
     )
-    if [int(e["TransactionID"]) for e in events] != replay_ids:
+    if [int(e["TransactionID"]) for e in all_events] != all_ids:
         raise SystemExit("raw events do not match the replay ids recorded at setup")
+    events = skip_events(all_events, skip)
+    replay_ids = [int(e["TransactionID"]) for e in events]
     assert BENCH_DB == "fraud_bench"  # noqa: S101 - only ever counts in the bench copy
     with psycopg.connect(dsn(BENCH_DB), options="-c default_transaction_read_only=on") as conn:
         name = conn.execute("SELECT current_database()").fetchone()
@@ -178,7 +189,8 @@ def load_events() -> list[dict[str, Any]]:
         ).fetchone()
         conn.rollback()
     print(
-        f"database {name[0] if name else '?'}: {len(replay_ids)} load-test events, "
+        f"database {name[0] if name else '?'}: {len(replay_ids)} load-test events "
+        f"(skipped {skip}), "
         f"{present[0] if present else '?'} already present (expect 0)"
     )
     if not present or present[0] != 0:
@@ -187,7 +199,7 @@ def load_events() -> list[dict[str, Any]]:
 
 
 async def main_async(args: argparse.Namespace) -> list[dict[str, Any]]:
-    events = load_events()
+    events = load_events(args.skip)
     cursor = Cursor(events)
     levels = [int(x) for x in args.levels.split(",")]
     summaries: list[dict[str, Any]] = []
@@ -274,6 +286,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--warmup", type=float, default=10.0)
     parser.add_argument("--duration", type=float, default=60.0)
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT))
+    parser.add_argument(
+        "--skip", type=int, default=0, help="replay events already used by earlier runs"
+    )
     args = parser.parse_args(argv)
     if args.url.rstrip("/").endswith(":18000"):
         raise SystemExit("18000 is the demo API (demo database): use the temporary bench API")
