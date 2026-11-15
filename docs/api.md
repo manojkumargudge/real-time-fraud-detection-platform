@@ -156,10 +156,13 @@ was not recorded for this event, so it is left out of the example; see "Latency"
 | Same, backlog of 1,000 events | 48 / 105 / 147 ms | [serving.md](serving.md) "Throughput benchmark" (line 479), 2026-10-25 |
 | Features + score only, Feast path, host process (before the 2026-10-25 speed-ups) | 107.5 / 179.0 / 283.2 ms | [feature_store.md](feature_store.md) "Latency" |
 
-`POST /score` runs the same `Scorer.score_event`. **Load test of `/score`** (2026-10-30, bench copy
-of the demo database, one laptop, not a production number): one client about 35 req/s, p50 25 ms,
-p95 39-50 ms; the knee is between 1 and 5 concurrent clients (at 5: about 22 req/s, p95 about
-330 ms), because the API's PostgreSQL store is one connection behind a lock; 0 errors in 3 runs
-at 1/5/10/20 clients ([evidence/2026-10-30-load-test/](evidence/2026-10-30-load-test/README.md)).
+`POST /score` runs the same `Scorer.score_event`. **Load test of `/score`** (2026-11-15, bench copy
+of the demo database, one laptop, not a production number, 3 runs): one client 15.0-27.9 req/s,
+p50 30-54 ms; 5 clients 7.6-13.8 req/s, p50 334-605 ms; 0 errors. The 5-client throughput did not
+change when the store's lock was replaced by a connection pool (2026-11-11, locked: 12.5-14.3
+req/s). The likely bottleneck is one uvicorn process doing CPU-bound scoring (a diagnosis, not
+proven). Laptop noise is large ([evidence/2026-11-15-api-pool/](evidence/2026-11-15-api-pool/README.md);
+the 2026-10-30 figures in [evidence/2026-10-30-load-test/](evidence/2026-10-30-load-test/README.md)
+did not reproduce).
 This is direct API calls on one API process, not the 46.83 events/s Kafka streaming figure
 (3 consumers, each with its own connection).

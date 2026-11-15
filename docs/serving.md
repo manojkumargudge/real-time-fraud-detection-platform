@@ -126,6 +126,32 @@ PostgreSQL tables:
 The score row and its alert row are written in one database transaction using
 `ON CONFLICT DO NOTHING`.
 
+**Connections:** each process holds a `psycopg_pool.ConnectionPool` (`DB_POOL_SIZE`, default
+10, range 1-100, `min_size` 1), with no lock around it. A connection is checked before it is
+handed out, so one the server closed is replaced. A consumer is one thread and holds one
+connection in practice; the API grows to `DB_POOL_SIZE` under concurrent requests.
+
+- **Load test (2026-11-15, bench copy, one laptop, 3 runs):**
+  - one client 15.0-27.9 req/s, p50 30-54 ms;
+  - 5 clients 7.6-13.8 req/s, p50 334-605 ms;
+  - 0 errors.
+  - The 5-client figure is unchanged against the single locked connection on 2026-11-11
+    (12.5-14.3 req/s). Removing the lock did not add throughput.
+  - Likely bottleneck (a diagnosis, not proven): `/score` runs in one uvicorn process. At 5
+    clients the API's scorer latency was p50 558 ms while the pool gave connections without
+    waiting, which points to CPU-bound scoring under the GIL.
+  - Laptop noise is large: one client fell from 27.9 to 15.0 req/s over three runs with no code
+    change. Evidence: [evidence/2026-11-15-api-pool/](evidence/2026-11-15-api-pool/README.md).
+    The 2026-10-30 figures (one client about 35 req/s) were not reproduced on 2026-11-11 or
+    2026-11-15.
+- **PostgreSQL restart (test stack, one trial each):**
+  - both the old single connection (main a867bea) and the pool recover without restarting the
+    API;
+  - the old code failed the first request after the restart (HTTP 500, then reconnected);
+  - the pool served it.
+- **Budget:** `max_connections` 100; configured worst case 42 (API 10 + 3 consumers x 10 +
+  dashboard + drift job), 82 with the throughput benchmark running too.
+
 **Delivery semantics:**
 
 - **At-least-once:** the consumer commits a Kafka offset only after the database write. If it
@@ -542,8 +568,13 @@ code).
     consumer ("Throughput benchmark", 2026-10-25). Not a production capacity figure.
   - The `FEATURE_SOURCE=store` path still reads the card's whole history per event, so its cost
     grows with card history (39 ms for the busiest card's query alone).
-- **Single connection:** each process uses one PostgreSQL connection behind a lock. There is no
-  connection pool, retry policy or migration tool; tables are created at startup.
+- **One API process:** each process has a connection pool (section 4), but the API is one
+  uvicorn process, and 5 concurrent clients get no more throughput than one does (2026-11-15).
+  - Next step: several uvicorn workers. Each worker has its own pool, so workers x
+    `DB_POOL_SIZE` must fit `max_connections` next to the consumers. Each worker also loads its
+    own copy of the model.
+  - There is no retry policy for failed database writes in the API, and no migration tool;
+    tables are created at startup.
 - **Security:** the API has no authentication. Kafka uses plaintext with no authentication or
   ACLs. Ports are bound to localhost only. The database password comes from `.env` (gitignored).
   Stored events contain card and address fields, which would need access controls and a
