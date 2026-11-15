@@ -53,6 +53,39 @@ production readiness without appropriate evidence.
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
 
+### 2026-11-15: S7 minimal auth (API key + dashboard sign-in)
+- `POST /score` (only write route) needs `X-API-Key`; key from env `API_KEY` only
+  (`src/serving/auth.py`, hmac.compare_digest, never logged).
+  - A placeholder (`change-me`) or a key under 16 characters stops the API at startup.
+  - No key set: every /score gets 401 (fail closed).
+  - `/health`, `/model`, `/docs`, `/openapi.json` stay open.
+- Dashboard sign-in on every page from env `DASHBOARD_USERS` (`name:<bcrypt hash>`,
+  comma-separated, single-quoted in .env); `python -m src.dashboard.auth hash NAME`.
+  - The signed-in user is the analyst; there is no free-text name field.
+  - The 6 old reviews keep "self-declared" names.
+- `/score` callers:
+  - consumers: none (they score in-process);
+  - `scripts/load_test_score.py`: sends the key from `API_KEY`;
+  - unit + integration tests: send the key;
+  - k8s: no committed caller; API reads Secret `fraud-auth`/`api-key`, dashboard reads
+    `fraud-auth`/`dashboard-users`.
+- **Minikube has no `fraud-auth` Secret yet**: the cluster was not redeployed (stopped); the API
+  and dashboard pods will not start until it is created (fix in M2; docs/kubernetes.md).
+- Demo deploy 2026-11-15 (images api c76a178b0e7b, consumer e8c1b82d4b69, dashboard
+  1c0f1c6d1f2f; rollback = retag `fraud-platform-*:pre-auth` (585e02c00550 / 9c282577c727 /
+  7621290406d0) + `docker compose up -d --no-deps api consumer dashboard`, restore
+  backups/env-2026-11-15-preauth.bak).
+  - Backups: backups/fraud-demo-2026-11-15-preauth.dump and the official mlflow copy
+    backups/mlflow-2026-11-15-preauth-bytes.db (dd198df9).
+  - Demo login in gitignored backups/demo-login.txt (user demo-analyst).
+  - Checks:
+    - secret hashes match in the containers;
+    - API: no key / wrong key 401, right key on a stored event 200 duplicate;
+    - dashboard AppTest in the container (view only) and the user's manual browser login;
+    - pg_stat before/after (backups/pgstat-{before,after}.txt): all 5 tables 0 deltas in rows
+      and n_tup_ins/upd/del.
+- Tests: integration 44 (43 + `test_without_sign_in_every_page_shows_only_the_form`).
+
 ### 2026-11-15: API connection pool (S3), merged as robustness, not performance
 - `PostgresStore` = `psycopg_pool.ConnectionPool` (`DB_POOL_SIZE`, default 10, min 1,
   `check_connection`), no lock; psycopg-pool==3.2.8. Writes unchanged (ON CONFLICT DO NOTHING).
@@ -194,7 +227,7 @@ matters (files, numbers, running services) before relying on it.
   - **Run:** `docker compose up -d --build dashboard`; on the host:
     `DATABASE_URL=... PYTHONPATH=. .venv/Scripts/streamlit run src/dashboard/app.py`.
   - **Known limitations:**
-    - no authentication (the analyst name is self-declared);
+    - no authentication (the analyst name is self-declared) -- superseded 2026-11-15 by S7 sign-in;
     - no connection pool (fine for a few analysts; add psycopg-pool before scaling);
     - single instance with a 15 s read cache;
     - no scoring latency or feature explanations (not stored);
@@ -440,7 +473,7 @@ matters (files, numbers, running services) before relying on it.
   fire. It is not calibrated on drift-free periods, and there is no minimum sample size (the
   2026-10-25 Kubernetes run fired on 30 rows). The default window did not fire on 2026-10-27
   (docs/evidence/2026-10-27-drift-trigger/).
-- Dashboard: no authentication (self-declared analyst name), no connection pool (add
+- Dashboard: minimal sign-in only (S7, no roles/lockout/TLS), no connection pool (add
   psycopg-pool before scaling), single instance with a 15 s read cache (docs/dashboard.md).
 - Served model verified byte-identical to MLflow registry v2 (run
   71c4f1bd820548c984341a06e51e33fc; model.json sha256 9fdad27ea3b0…, metadata.json sha256
