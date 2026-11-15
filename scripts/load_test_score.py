@@ -3,7 +3,8 @@
 Usage (after ``python -m scripts.bench_throughput setup --replay N`` and a temporary API that
 scores into ``fraud_bench``; docs/evidence/2026-10-30-load-test/README.md)::
 
-    python -m scripts.load_test_score --url http://127.0.0.1:18001 --run 1 [--levels 1,5,10,20]
+    API_KEY=<the temporary API's key> python -m scripts.load_test_score \
+        --url http://127.0.0.1:18001 --run 1 [--levels 1,5,10,20] [--skip N]
 
 * **Events:** the bench replay events recorded at setup (``reports/bench/setup.json``): real
   validation transactions, in (TransactionDT, TransactionID) order, built by the producer's
@@ -28,6 +29,7 @@ import asyncio
 import csv
 import json
 import math
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +40,7 @@ import psycopg
 
 from scripts.bench_throughput import BENCH_DB, STATE, VALIDATION_EVENTS, dsn
 from src.data.load import DEFAULT_RAW_DIR
+from src.serving.auth import API_KEY_HEADER
 from src.streaming.producer import stream_events
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -161,6 +164,15 @@ async def run_level(
     return result
 
 
+def api_key_from_env() -> str:
+    """The temporary bench API's key (``API_KEY``, the same variable the API reads). Never
+    printed; a 401 from the API stops the run like any other non-200 response would show."""
+    key = os.environ.get("API_KEY", "").strip()
+    if not key:
+        raise SystemExit("set API_KEY (the key of the API under test) before running")
+    return key
+
+
 def skip_events(events: list[dict[str, Any]], skip: int) -> list[dict[str, Any]]:
     """Drop the first ``skip`` replay events (used by an earlier run), keeping time order."""
     if not 0 <= skip < len(events):
@@ -205,7 +217,8 @@ async def main_async(args: argparse.Namespace) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     all_samples: list[Sample] = []
     limits = httpx.Limits(max_connections=max(levels), max_keepalive_connections=max(levels))
-    async with httpx.AsyncClient(timeout=30.0, limits=limits) as client:
+    headers = {API_KEY_HEADER: api_key_from_env()}
+    async with httpx.AsyncClient(timeout=30.0, limits=limits, headers=headers) as client:
         health = (await client.get(f"{args.url}/health")).json()
         print(f"API {args.url} health: {health}")
         for level in levels:

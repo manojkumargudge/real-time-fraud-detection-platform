@@ -170,8 +170,18 @@ model bundle in `artifacts/baseline/`.
 | `set FEAST_REDIS=localhost:16379` | `export FEAST_REDIS=localhost:16379` |
 | `.venv\Scripts\python ...` | `.venv/bin/python ...` |
 
+**`.env` (gitignored, never commit it):** replace every placeholder from `.env.example`.
+Compose refuses to start without `API_KEY` and `DASHBOARD_USERS`.
+
+- `POSTGRES_PASSWORD`: any value, local only.
+- `API_KEY`: the key for `POST /score` (header `X-API-Key`, at least 16 characters). Generate
+  one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+- `DASHBOARD_USERS`: one `name:<bcrypt hash>` entry per analyst, comma-separated and
+  **single-quoted** (the hashes contain `$`). `python -m src.dashboard.auth hash alice` prompts
+  for a password (at least 10 characters) and prints the entry; only the hash is stored.
+
 ```
-copy .env.example .env                       # then set POSTGRES_PASSWORD (any value, local only)
+copy .env.example .env                       # then replace the placeholders (next paragraph)
 docker compose up -d --build --wait          # kafka, postgres, redis, api, 3 consumers, dashboard
 docker compose stop api consumer
 set FEAST_REDIS=localhost:16379
@@ -184,8 +194,9 @@ curl http://127.0.0.1:18000/health           # API; dashboard: http://localhost:
 
 The materialize step loads the Feast state from the transactions before the validation
 cut-off, so streamed events get the same features as training
-([docs/feature_store.md](docs/feature_store.md)). The dashboard has no login; enter an
-**analyst name** in the sidebar before changing a case. Scoring details:
+([docs/feature_store.md](docs/feature_store.md)). The dashboard asks for a sign-in (a user
+from `DASHBOARD_USERS`). Every review records the signed-in name as the analyst. `POST /score`
+needs `-H "X-API-Key: <API_KEY>"`; `/health` does not. Scoring details:
 [docs/serving.md](docs/serving.md); dashboard: [docs/dashboard.md](docs/dashboard.md).
 
 - **Stop vs reset:** `docker compose stop` keeps everything; `docker compose down -v` **deletes
@@ -269,7 +280,7 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
   not used for retraining yet.
 - New drift checks (host job or Minikube CronJob) write only to PostgreSQL, not to MLflow; only
   `drift_reports` 1-9 were back-filled (see "Experiment tracking").
-- Local demo: single-node Kafka, no authentication or TLS, no secrets manager, local MLflow
+- Local demo: single-node Kafka, no TLS, no secrets manager, local MLflow
   (SQLite, no server).
 - Scheduled retraining (Task Scheduler, every 6 h) runs on the host only, and only while the
   laptop is on, awake and the user is logged on; a missed run starts when the laptop is back.
@@ -302,7 +313,13 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
   ranking shows no lift on the strict temporal check (docs/gnn.md "Ring ranking check").
 - Feast: late events are approximate, concurrent writes to one entity can lose an update, and
   a failed push is only logged ([docs/feature_store.md](docs/feature_store.md)).
-- Dashboard: no authentication, no connection pool, one replica.
+- Authentication is minimal (2026-11-15):
+  - one shared API key for `POST /score`, with no per-client keys, rotation or rate limit;
+  - dashboard sign-in from bcrypt hashes in `DASHBOARD_USERS`, with no roles, lockout or
+    session expiry beyond the browser session;
+  - no TLS; Kafka has no authentication.
+  - Reviews made before 2026-11-15 keep their self-declared analyst names.
+- Dashboard: no connection pool, one replica.
 - End-to-end latency is measured to the row's `scored_at`, the start of the database write, so it excludes the Feast state push (~14–16 ms p50) and the offset commit. HTTP `/score` latency was load-tested on a bench copy (Results, "Load test").
 - API concurrency: the API's store is a psycopg connection pool (`DB_POOL_SIZE`, default 10), but `/score` still runs in one uvicorn process. Throughput at 5 clients did not rise when the lock was removed (2026-11-15), which points to CPU-bound scoring in that process (not proven). More uvicorn workers are the next step. Each worker would have its own pool (workers x `DB_POOL_SIZE` connections) and its own copy of the model.
 - PostgreSQL connection budget: `max_connections` 100; configured worst case 42 (API 10 + 3 consumers x 10 + dashboard + drift job), 82 with the throughput benchmark running as well ([docs/evidence/2026-11-15-api-pool/](docs/evidence/2026-11-15-api-pool/README.md)).

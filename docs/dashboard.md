@@ -22,7 +22,19 @@ The Compose service:
 - healthcheck on `/_stcore/health`;
 - `reports/drift` mounted read-only for the Evidently reports.
 
-Type your analyst name in the sidebar once per session; writes are disabled until it is set.
+**Sign-in (2026-11-15, `src/dashboard/auth.py`):**
+
+- Every page shows only a sign-in form until a user from `DASHBOARD_USERS` signs in (comma-separated
+  `name:<bcrypt hash>` entries; `.env` for Compose, Secret `fraud-auth` / `dashboard-users` for
+  Kubernetes). Make an entry with `python -m src.dashboard.auth hash NAME`, which prompts for a
+  password and prints only the hash.
+- The signed-in name is the analyst recorded on every review; there is no free-text name field.
+- A wrong password and an unknown user get the same message and cost the same bcrypt check. The
+  password is cleared from the session after each attempt.
+- A failed attempt is logged without the typed name, since a password typed into the username
+  box would otherwise reach the log.
+- With `DASHBOARD_USERS` empty or malformed nobody can sign in (fail closed).
+- The 6 reviews made before sign-in existed keep their self-declared analyst name.
 `.streamlit/config.toml` (copied into the image) sets `client.toolbarMode = "viewer"`, which
 hides Streamlit's Deploy button and developer menu.
 
@@ -33,7 +45,8 @@ hides Streamlit's Deploy button and developer menu.
 | `workflow.py` | Status transitions and the feedback label: pure functions, no I/O |
 | `data.py` | **All SQL** (parameterised only). Every function takes a borrowed connection |
 | `db.py` | Connections: every read or write gets its own connection; none is shared between Streamlit sessions (threads) |
-| `ui.py` | Repository (one connection per call), read cache (`st.cache_data`, 15 s TTL, cleared after a write), analyst name, schema check, display labels |
+| `ui.py` | Repository (one connection per call), read cache (`st.cache_data`, 15 s TTL, cleared after a write), sign-in gate (signed-in analyst), schema check, display labels |
+| `auth.py` | `DASHBOARD_USERS` parsing, bcrypt verify, `hash` CLI for new entries |
 | `fmt.py` | Display formatting, pure: times in IST, whole numbers without ".0", "missing" for blank fields, "—" for no label, dollar amounts |
 | `explain.py` | Why flagged (read-only): per-feature contributions of the served v2 bundle (`pred_contribs`), the parity check against the stored score, and the `build` CLI that writes the point-in-time feature file (README "Dashboard") |
 | `app.py` | Entry point: `st.navigation` over the five pages |
@@ -75,7 +88,8 @@ hides Streamlit's Deploy button and developer menu.
   - the status-change form and the full review history:
     - the status dropdown offers the allowed next statuses only, and starts empty ("Choose a
       status");
-    - Save is disabled, with the reason shown, until an analyst name and a status are set;
+    - Save is disabled, with the reason shown, until a status is chosen (the analyst is the
+      signed-in user);
     - there is no `st.form`, so Enter and Ctrl+Enter never submit; Save submits only on a click.
 - **Fraud rings:** the stored rings with size and labelled fraud rate. The detail shows the
   member uids, their cards (the uid minus its last component), the shared devices and the
@@ -198,8 +212,12 @@ changed under an open form. Re-reading the version at submit time defeated the l
 
 ## Known limitations
 
-- **No authentication or authorisation:** the analyst name is self-declared, and anyone who
-  can reach the port can change cases.
+- **Minimal authentication, no authorisation:**
+  - a signed-in analyst can make any allowed status change; there are no roles;
+  - no lockout or rate limit on sign-in;
+  - the session lasts as long as the browser session;
+  - users are changed by editing `DASHBOARD_USERS` and restarting the dashboard;
+  - no TLS (localhost only).
 - **No scoring latency and no per-case feature explanations:** neither is stored by the scoring
   path.
 - **Rings** come from training-period batch data, so few live alerts link to them.

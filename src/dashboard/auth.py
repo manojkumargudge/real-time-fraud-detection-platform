@@ -1,16 +1,14 @@
-"""Dashboard sign-in: analysts from a secrets file of bcrypt hashes.
+"""Dashboard sign-in: analysts and their bcrypt password hashes from the environment.
 
-The users file (``DASHBOARD_USERS_FILE``, default ``secrets/dashboard-users.toml``, gitignored)
-is TOML::
+``DASHBOARD_USERS`` holds comma-separated ``name:<bcrypt hash>`` entries (Compose: the
+gitignored ``.env``, single-quoted so ``$`` in the hashes is not interpolated; Kubernetes:
+Secret ``fraud-auth``, key ``dashboard-users``). Only hashes are stored, never passwords.
 
-    [users]
-    alice = "$2b$12$..."
+Make an entry (prompts for the password; prints ``name:<hash>``, never the password)::
 
-Add or replace a user (prompts for the password; never stores or logs it)::
+    python -m src.dashboard.auth hash alice
 
-    python -m src.dashboard.auth add alice [--file secrets/dashboard-users.toml]
-
-The signed-in name is what every review records as ``analyst``. No users file, or an empty one,
+The signed-in name is what every review records as ``analyst``. No users, or an empty value,
 means nobody can sign in (fail closed). Existing ``case_reviews`` rows keep their names.
 """
 
@@ -21,48 +19,46 @@ import getpass
 import os
 import re
 import sys
-import tomllib
-from pathlib import Path
 
 import bcrypt
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_USERS_FILE = REPO_ROOT / "secrets" / "dashboard-users.toml"
+ENV_VAR = "DASHBOARD_USERS"
 NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 MIN_PASSWORD_LENGTH = 10
+_HASH = re.compile(r"^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$")
 
 
-class UsersFileError(ValueError):
-    """The users file is malformed."""
+class UsersConfigError(ValueError):
+    """``DASHBOARD_USERS`` is malformed (the message never contains a hash)."""
 
 
-def users_file() -> Path:
-    return Path(os.environ.get("DASHBOARD_USERS_FILE") or DEFAULT_USERS_FILE)
+def parse_users(raw: str) -> dict[str, str]:
+    """``{name: bcrypt hash}`` from ``name:hash[,name:hash...]``; empty for an empty value."""
+    users: dict[str, str] = {}
+    for i, entry in enumerate(e.strip() for e in raw.split(",")):
+        if not entry:
+            continue
+        name, sep, hashed = entry.partition(":")
+        name, hashed = name.strip(), hashed.strip()
+        if not sep or not NAME.match(name) or not _HASH.match(hashed):
+            raise UsersConfigError(
+                f"{ENV_VAR} entry {i + 1}: expected name:<bcrypt hash> "
+                "(python -m src.dashboard.auth hash NAME)"
+            )
+        if name in users:
+            raise UsersConfigError(f"{ENV_VAR}: user {name!r} appears twice")
+        users[name] = hashed
+    return users
 
 
-def load_users(path: Path | None = None) -> dict[str, str]:
-    """``{name: bcrypt hash}``; empty if the file does not exist."""
-    path = path or users_file()
-    if not path.is_file():
-        return {}
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
-        raise UsersFileError(f"{path}: {exc}") from exc
-    users = data.get("users", {})
-    if not isinstance(users, dict) or not all(
-        isinstance(k, str) and NAME.match(k) and isinstance(v, str) and v.startswith("$2")
-        for k, v in users.items()
-    ):
-        raise UsersFileError(f'{path}: expected [users] name = "<bcrypt hash>" entries')
-    return dict(users)
+def load_users() -> dict[str, str]:
+    return parse_users(os.environ.get(ENV_VAR, ""))
 
 
 def verify(users: dict[str, str], name: str, password: str) -> bool:
     """True only for a known user with the right password. Unknown users still pay one bcrypt
     check, so the response time does not reveal which names exist."""
-    name = name.strip()
-    stored = users.get(name)
+    stored = users.get(name.strip())
     candidate = password.encode("utf-8")
     if stored is None:
         bcrypt.checkpw(candidate, _DUMMY_HASH)
@@ -76,12 +72,11 @@ def hash_password(password: str, rounds: int = 12) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=rounds)).decode("ascii")
 
 
-def write_users(path: Path, users: dict[str, str]) -> None:
-    lines = ["# Dashboard users: bcrypt hashes only (python -m src.dashboard.auth add NAME).", ""]
-    lines.append("[users]")
-    lines += [f'{name} = "{h}"' for name, h in sorted(users.items())]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+def entry(name: str, password: str, rounds: int = 12) -> str:
+    """One ``DASHBOARD_USERS`` entry, ``name:<bcrypt hash>``."""
+    if not NAME.match(name):
+        raise ValueError("name: letters, digits, _ . - (start with a letter, at most 64)")
+    return f"{name}:{hash_password(password, rounds)}"
 
 
 _DUMMY_HASH = bcrypt.hashpw(b"not-a-user-password", bcrypt.gensalt(rounds=4))
@@ -92,27 +87,22 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
-    add = sub.add_parser("add", help="add or replace a user (prompts for the password)")
-    add.add_argument("name")
-    add.add_argument("--file", type=Path, default=None)
-    add.add_argument(
+    p_hash = sub.add_parser("hash", help="print a DASHBOARD_USERS entry (prompts for password)")
+    p_hash.add_argument("name")
+    p_hash.add_argument(
         "--password-stdin", action="store_true", help="read the password from stdin (scripts)"
     )
     args = parser.parse_args(argv)
-    if not NAME.match(args.name):
-        parser.error("name: letters, digits, _ . - (start with a letter, at most 64)")
-    path = args.file or users_file()
     if args.password_stdin:
         password = sys.stdin.readline().rstrip("\r\n")
     else:
         password = getpass.getpass(f"password for {args.name}: ")
         if getpass.getpass("again: ") != password:
             parser.error("passwords differ")
-    users = load_users(path)
-    existed = args.name in users
-    users[args.name] = hash_password(password)
-    write_users(path, users)
-    print(f"{'replaced' if existed else 'added'} {args.name} in {path}")
+    try:
+        print(entry(args.name, password))
+    except ValueError as exc:
+        parser.error(str(exc))
     return 0
 
 

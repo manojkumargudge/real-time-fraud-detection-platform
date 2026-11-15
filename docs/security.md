@@ -55,3 +55,26 @@ Accepted risks (reason and expiry in `security/pip-audit-ignore.txt` / `.trivyig
 | torch 2.8.0 (GNN, batch only) | 8 advisories | affected operators (`nan_to_num`, `linalg.lu`, `jit.script`, `lstm_cell`, ...) are not used and nothing is `torch.load`-ed; 2.10 fails to load on Windows. torch is imported only by the batch GNN (`src/graph/`), which nothing in `src/serving/` or `src/streaming/` imports; `requirements-serving.txt` does not install it and the built serving image contains no torch (checked with `pip list` in the container) |
 | zlib1g 1:1.2.13.dfsg-1 (Debian 12) | CVE-2023-45853 (CRITICAL) | Debian status `will_not_fix`: a rebuild will **not** fix it. The overflow is in minizip's `zipOpenNewFileInZip4_64`; in the serving image `libz.so.1` does not export that function and no minizip library is installed (checked 2026-10-24). Listed in `.trivyignore` |
 | Debian 12 OS packages | 62 more HIGH/CRITICAL without a fix (55 `affected`, 7 `fix_deferred`) | no fixed package exists yet; a rebuild picks up Debian fixes once they are released |
+
+## Authentication and secrets (2026-11-15)
+
+- **Sources:** secrets come from environment variables only.
+  - `POSTGRES_PASSWORD`, `API_KEY` and `DASHBOARD_USERS`: the gitignored `.env` for Compose
+    (`.env.example` has placeholders only); Secrets `fraud-postgres` and `fraud-auth` for
+    Kubernetes, created by command at deploy time (`k8s/secret-auth.example.yaml` has
+    placeholders and is not applied).
+- **API key** (`src/serving/auth.py`):
+  - compared with `hmac.compare_digest`;
+  - never logged or echoed in a response;
+  - placeholder values (`change-me`) and keys under 16 characters stop the API at startup;
+  - no key set means every `POST /score` gets 401.
+- **Dashboard passwords** (`src/dashboard/auth.py`):
+  - only bcrypt hashes (cost 12) are stored; the `hash` CLI never prints the password;
+  - an unknown user still costs one bcrypt check;
+  - failed sign-ins are logged without the typed name.
+- **Check before the S7 PR (2026-11-15):**
+  - grep of all tracked and new files: no bcrypt hash, no `.env`, and none of the real `.env`
+    values;
+  - bandit `-ll` on `src/`: no findings; at all severities on the changed files, 2 low: an
+    assert in `scripts/load_test_score.py`, and B105 on `ui.py` clearing the password field
+    (`= ""`, a false positive).

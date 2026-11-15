@@ -301,7 +301,8 @@ def _sign_in(users: dict[str, str]) -> None:
         logging.getLogger(__name__).info("dashboard sign-in user=%s", name)
     else:
         st.session_state["sign_in_error"] = "Unknown user or wrong password."
-        logging.getLogger(__name__).warning("dashboard sign-in failed user=%s", name)
+        # No typed name in the log: a password typed into the username box would end up there.
+        logging.getLogger(__name__).warning("dashboard sign-in failed")
     st.session_state["sign_in_password"] = ""  # never keep the password in the session
 
 
@@ -310,8 +311,8 @@ def _sign_out() -> None:
 
 
 def sign_in_gate() -> bool:
-    """Every page needs a signed-in analyst (bcrypt hashes in DASHBOARD_USERS_FILE). Returns
-    False after rendering the sign-in form; the caller stops the run."""
+    """Every page needs a signed-in analyst (bcrypt hashes in DASHBOARD_USERS). Returns False
+    after rendering the sign-in form; the caller stops the run."""
     from src.dashboard import auth
 
     if analyst_name():
@@ -322,13 +323,13 @@ def sign_in_gate() -> bool:
     st.title("Fraud analyst dashboard")
     try:
         users = auth.load_users()
-    except auth.UsersFileError as exc:
-        st.error(f"The dashboard users file is invalid: {exc}")
+    except auth.UsersConfigError as exc:
+        st.error(f"The dashboard users setting is invalid: {exc}")
         return False
     if not users:
         st.error(
-            f"No dashboard users are configured ({auth.users_file()}). Create one on the host: "
-            "python -m src.dashboard.auth add <name>."
+            f"No dashboard users are configured ({auth.ENV_VAR} is empty). Make an entry on the "
+            "host with python -m src.dashboard.auth hash <name> and add it to .env."
         )
         return False
     with st.form("sign_in"):

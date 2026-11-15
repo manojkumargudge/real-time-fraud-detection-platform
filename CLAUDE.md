@@ -31,6 +31,10 @@ and containerized deployment.
 - Ask before destructive operations or changes that may discard data.
 - Never drop, delete or overwrite a database, file, folder or registry entry without asking
   first, even copies or test data.
+- Demo Postgres/stack: one command per call, no chained commands. No CREATE / DROP / DELETE /
+  TRUNCATE / ALTER without the user's explicit OK. If a stray command runs anyway, stop and
+  report it (user rule 2026-11-15, after a stray `createdb` created the empty database
+  `fraud_verify_tmp_none`; it was dropped with approval).
 - Avoid unnecessary dependencies, repeated explanations, and large file dumps.
 
 ## Workflow

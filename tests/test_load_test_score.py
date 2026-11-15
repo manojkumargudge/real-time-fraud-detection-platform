@@ -6,7 +6,18 @@ from typing import Any
 
 import pytest
 
-from scripts.load_test_score import skip_events
+from scripts.load_test_score import api_key_from_env, skip_events
+
+
+def test_api_key_comes_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_KEY", " bench-key-0123456789 ")
+    assert api_key_from_env() == "bench-key-0123456789"
+
+
+def test_missing_api_key_stops_before_any_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("API_KEY", raising=False)
+    with pytest.raises(SystemExit, match="set API_KEY"):
+        api_key_from_env()
 
 
 def _events(n: int) -> list[dict[str, Any]]:

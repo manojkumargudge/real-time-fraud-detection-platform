@@ -26,19 +26,22 @@ APP = str(Path(__file__).resolve().parents[1] / "src" / "dashboard" / "app.py")
 TESTER, TESTER_PASSWORD = "tester", "correct-horse-battery"  # throwaway test credentials
 
 
+_TEST_USERS: str | None = None
+
+
 @pytest.fixture(autouse=True)
-def users_file(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """S7: every page needs a signed-in analyst; tests use a throwaway users file (bcrypt, low
-    cost factor) holding tester, alice and bob."""
+def dashboard_users(monkeypatch: pytest.MonkeyPatch) -> str:
+    """S7: every page needs a signed-in analyst; tests set DASHBOARD_USERS to throwaway bcrypt
+    entries (low cost factor) for tester, alice and bob."""
     from src.dashboard import auth
 
-    path = tmp_path_factory.mktemp("users") / "dashboard-users.toml"
-    auth.write_users(
-        path,
-        {name: auth.hash_password(TESTER_PASSWORD, rounds=4) for name in (TESTER, "alice", "bob")},
-    )
-    monkeypatch.setenv("DASHBOARD_USERS_FILE", str(path))
-    return path
+    global _TEST_USERS
+    if _TEST_USERS is None:
+        _TEST_USERS = ",".join(
+            auth.entry(name, TESTER_PASSWORD, rounds=4) for name in (TESTER, "alice", "bob")
+        )
+    monkeypatch.setenv(auth.ENV_VAR, _TEST_USERS)
+    return _TEST_USERS
 
 
 def sign_in(at: AppTest, user: str, password: str) -> AppTest:
@@ -316,14 +319,18 @@ def fake(tmp_path: Path) -> FakeRepository:
     return FakeRepository(tmp_path)
 
 
-def app(fake: FakeRepository, page: str | None = None, **state: Any) -> AppTest:
+def app(
+    fake: FakeRepository, page: str | None = None, *, user: str = TESTER, **state: Any
+) -> AppTest:
+    """Sign in through the form as ``user`` (never by setting ``analyst`` in session state)."""
+    assert "analyst" not in state, "sign in with user=..., do not inject the analyst"
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["repo"] = fake
     for key, value in state.items():
         at.session_state[key] = value
     at.run()
-    if "analyst" not in state:  # sign in through the form unless a test chose the user
-        sign_in(at, TESTER, TESTER_PASSWORD)
+    sign_in(at, user, TESTER_PASSWORD)
+    assert at.session_state["analyst"] == user
     if page is not None:
         at.switch_page(page)
         at.run()
@@ -483,15 +490,62 @@ def test_wrong_password_and_unknown_user_are_refused(fake: FakeRepository) -> No
     assert at.session_state["sign_in_password"] == ""  # the password is not kept
 
 
-def test_no_users_file_means_nobody_can_sign_in(
-    fake: FakeRepository, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("value", [None, "", " , "])
+def test_no_users_means_nobody_can_sign_in(
+    fake: FakeRepository, monkeypatch: pytest.MonkeyPatch, value: str | None
 ) -> None:
-    monkeypatch.setenv("DASHBOARD_USERS_FILE", str(tmp_path / "missing.toml"))
+    if value is None:
+        monkeypatch.delenv("DASHBOARD_USERS", raising=False)
+    else:
+        monkeypatch.setenv("DASHBOARD_USERS", value)
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["repo"] = fake
     at.run()
     assert "No dashboard users are configured" in texts(at)
     assert not any(b.label == "Sign in" for b in at.button)
+    assert not at.dataframe
+
+
+def test_malformed_users_setting_blocks_sign_in_without_echoing_it(
+    fake: FakeRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DASHBOARD_USERS", "alice:plain-text-password")
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["repo"] = fake
+    at.run()
+    assert "users setting is invalid" in texts(at)
+    assert "plain-text-password" not in texts(at)
+    assert not any(b.label == "Sign in" for b in at.button)
+
+
+@pytest.mark.parametrize(
+    "page",
+    ["views/overview.py", "views/alerts.py", "views/case.py", "views/rings.py", "views/drift.py"],
+)
+def test_every_page_needs_sign_in(fake: FakeRepository, page: str) -> None:
+    """S7: switching straight to any page without signing in shows only the sign-in form."""
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["repo"] = fake
+    at.run()
+    at.switch_page(page)
+    at.run()
+    assert not at.exception
+    assert any(b.label == "Sign in" for b in at.button)
+    assert not at.dataframe and not at.selectbox
+    assert "analyst" not in at.session_state
+
+
+def test_failed_sign_in_does_not_log_the_typed_name(
+    fake: FakeRepository, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A password typed into the username box must not reach the log."""
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["repo"] = fake
+    at.run()
+    with caplog.at_level(logging.INFO):
+        sign_in(at, "secret-typed-as-name", "x" * 12)
+    assert "secret-typed-as-name" not in caplog.text
+    assert "x" * 12 not in caplog.text
 
 
 def test_signed_in_user_is_the_analyst_across_opening_a_case(fake: FakeRepository) -> None:
@@ -524,7 +578,7 @@ def test_sign_out_returns_to_the_form(fake: FakeRepository) -> None:
 
 
 def test_case_status_change_is_saved_and_listed(fake: FakeRepository) -> None:
-    at = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    at = app(fake, "views/case.py", alert_id=1, user="alice")
     at.selectbox[0].set_value("confirmed_fraud")
     at.text_area[0].input("card testing pattern")
     at.run()  # choosing a status reruns the page and enables Save
@@ -542,7 +596,7 @@ def test_case_status_change_is_saved_and_listed(fake: FakeRepository) -> None:
 
 
 def test_optimistic_lock_conflict_is_rejected_with_a_clear_message(fake: FakeRepository) -> None:
-    at = app(fake, "views/case.py", alert_id=1, analyst="alice")  # alice sees version 1
+    at = app(fake, "views/case.py", alert_id=1, user="alice")  # alice sees version 1
     fake.change_status(1, 1, "investigating", "bob", "taking this")  # bob saves first
     at.selectbox[0].set_value("false_positive").run()
     next(b for b in at.button if b.label == "Save").click()
@@ -556,8 +610,8 @@ def test_conflict_between_two_ui_sessions_saves_nothing(fake: FakeRepository) ->
     """Regression (found on the live demo data): bob saves through the UI, which clears the
     shared read cache; alice's form, rendered at version 1, must still be checked against
     version 1 and must never save a status she did not choose."""
-    alice = app(fake, "views/case.py", alert_id=1, analyst="alice")
-    bob = app(fake, "views/case.py", alert_id=1, analyst="bob")
+    alice = app(fake, "views/case.py", alert_id=1, user="alice")
+    bob = app(fake, "views/case.py", alert_id=1, user="bob")
     bob.selectbox[0].set_value("investigating").run()
     next(b for b in bob.button if b.label == "Save").click()
     bob.run()
@@ -626,7 +680,7 @@ def stray_submit(at: AppTest) -> None:
 
 def test_a_second_submit_after_a_save_writes_nothing(fake: FakeRepository) -> None:
     """Incident pattern: after a save, a submit the analyst did not make flipped the label."""
-    at = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    at = app(fake, "views/case.py", alert_id=1, user="alice")
     save(at, "confirmed_fraud", "card testing")
     before = all_reviews(fake)
     stray_submit(at)
@@ -638,9 +692,9 @@ def test_a_second_submit_after_a_save_writes_nothing(fake: FakeRepository) -> No
 def test_a_save_with_a_stale_seen_version_is_rejected(fake: FakeRepository) -> None:
     """Alice chose a status while looking at version 1. Bob saves; alice's page reruns (any
     rerun, e.g. a reconnect) and shows version 2. Her save is checked against version 1."""
-    alice = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    alice = app(fake, "views/case.py", alert_id=1, user="alice")
     alice.selectbox[0].set_value("false_positive").run()
-    bob = app(fake, "views/case.py", alert_id=1, analyst="bob")
+    bob = app(fake, "views/case.py", alert_id=1, user="bob")
     save(bob, "investigating")
     alice.run()  # a rerun without a submit: the page now shows version 2
     before = all_reviews(fake)
@@ -654,7 +708,7 @@ def test_a_save_with_a_stale_seen_version_is_rejected(fake: FakeRepository) -> N
 
 
 def test_a_save_with_no_status_is_rejected(fake: FakeRepository) -> None:
-    at = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    at = app(fake, "views/case.py", alert_id=1, user="alice")
     save(at, "investigating")  # one deliberate review, so both snapshots are non-empty
     assert at.selectbox[0].value is None  # the dropdown starts empty again after a save
     before, calls = all_reviews(fake), fake.calls
@@ -675,7 +729,7 @@ def test_a_save_with_no_status_is_rejected(fake: FakeRepository) -> None:
 
 
 def test_changing_the_alert_id_after_a_save_writes_nothing(fake: FakeRepository) -> None:
-    at = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    at = app(fake, "views/case.py", alert_id=1, user="alice")
     save(at, "confirmed_fraud", "card testing")
     at.text_area[0].input("draft for alert 1, not saved").run()
     before = all_reviews(fake)
@@ -692,7 +746,7 @@ def test_changing_the_alert_id_after_a_save_writes_nothing(fake: FakeRepository)
 
 def test_save_is_disabled_until_a_status_is_set(fake: FakeRepository) -> None:
     """Signed in (the only way to see a case since S7), Save waits for a status."""
-    named = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    named = app(fake, "views/case.py", alert_id=1, user="alice")
     assert named.selectbox[0].value is None
     assert save_button(named).disabled and "Choose a new status" in texts(named)
     named.selectbox[0].set_value("investigating").run()
@@ -747,7 +801,7 @@ def test_a_new_alert_discards_the_old_token_and_its_form(fake: FakeRepository) -
 def test_case_page_has_no_form_so_enter_cannot_submit(fake: FakeRepository) -> None:
     """Enter in a form field (and Ctrl+Enter in a form's text area) submits an st.form. The case
     page has no form; committing the notes (Ctrl+Enter) only reruns the page."""
-    at = app(fake, "views/case.py", alert_id=1, analyst="alice")
+    at = app(fake, "views/case.py", alert_id=1, user="alice")
     assert at.get("form") == []
     save(at, "investigating")
     before = all_reviews(fake)

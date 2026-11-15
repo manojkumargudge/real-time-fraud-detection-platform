@@ -12,10 +12,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Security
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
 
 from src.serving.auth import API_KEY_HEADER, key_matches, load_api_key
 from src.serving.config import Settings
@@ -42,7 +43,10 @@ async def _validation_error(_request: Request, exc: RequestValidationError) -> J
     return JSONResponse({"detail": _json_safe(jsonable_encoder(exc.errors()))}, status_code=422)
 
 
-_FROM_ENV = object()  # sentinel: read the key from API_KEY / API_KEY_FILE
+_FROM_ENV = object()  # sentinel: read the key from API_KEY
+# auto_error=False: the dependency answers 401 itself (FastAPI's default would be 403); the
+# scheme makes /openapi.json document the header on POST /score.
+_API_KEY_SCHEME = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
 
 
 def create_app(
@@ -52,8 +56,8 @@ def create_app(
     configured, so every ``/score`` call gets 401)."""
     key: str | None = load_api_key() if api_key is _FROM_ENV else api_key  # type: ignore[assignment]
 
-    def require_api_key(request: Request) -> None:
-        if not key_matches(key, request.headers.get(API_KEY_HEADER)):
+    def require_api_key(given: str | None = Security(_API_KEY_SCHEME)) -> None:
+        if not key_matches(key, given):
             raise HTTPException(
                 status_code=401,
                 detail=f"missing or invalid {API_KEY_HEADER} header",
@@ -74,9 +78,7 @@ def create_app(
         else:
             app.state.scorer = scorer
         if key is None:
-            logger.error(
-                "no API key configured (API_KEY or API_KEY_FILE): every POST /score gets 401"
-            )
+            logger.error("no API key configured (API_KEY): every POST /score gets 401")
         logger.info(
             "api ready model=%s store=%s",
             app.state.scorer.bundle.model_version,
@@ -122,7 +124,12 @@ def create_app(
             "linked_at": link.linked_at if link else None,
         }
 
-    @app.post("/score", response_model=ScoreResponse, dependencies=[Depends(require_api_key)])
+    @app.post(
+        "/score",
+        response_model=ScoreResponse,
+        dependencies=[Security(require_api_key)],
+        responses={401: {"description": "Missing or invalid X-API-Key header"}},
+    )
     def score(event: TransactionEvent, request: Request) -> ScoreResponse:
         s: Scorer = request.app.state.scorer
         return s.score_event(event)

@@ -20,6 +20,7 @@ from src.data.load import DEFAULT_RAW_DIR, load_ieee_cis
 from src.features.history import HistoryConfig
 from src.models.compare import build_model_frame
 from src.serving.api import create_app
+from src.serving.auth import API_KEY_HEADER
 from src.serving.config import Settings
 from src.serving.model import ModelBundle, ModelBundleError
 from src.serving.online_features import (
@@ -363,9 +364,14 @@ class TestDuplicates:
         assert list(store.alerts) == [1]
 
 
+TEST_API_KEY = "unit-test-api-key-0123456789"  # throwaway, test-only
+
+
 class TestApi:
     def client(self, scorer: Scorer) -> TestClient:
-        return TestClient(create_app(scorer))
+        return TestClient(
+            create_app(scorer, api_key=TEST_API_KEY), headers={API_KEY_HEADER: TEST_API_KEY}
+        )
 
     def test_health(self, scorer: Scorer) -> None:
         with self.client(scorer) as c:
@@ -451,6 +457,98 @@ class TestApi:
         with self.client(scorer) as c:  # injected scorer: caller owns logging setup
             c.get("/health")
         assert len(calls) == 1
+
+
+class TestApiKey:
+    """S7: POST /score needs X-API-Key; /health, /model, /docs and /openapi.json stay open."""
+
+    def bare(self, scorer: Scorer, key: str | None = TEST_API_KEY) -> TestClient:
+        return TestClient(create_app(scorer, api_key=key))  # no default header
+
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            {},
+            {API_KEY_HEADER: ""},
+            {API_KEY_HEADER: "wrong-key-0123456789"},
+            {API_KEY_HEADER: TEST_API_KEY[:-1]},
+            {"Authorization": f"Bearer {TEST_API_KEY}"},
+        ],
+        ids=["missing", "empty", "wrong", "prefix", "other-header"],
+    )
+    def test_score_without_the_right_key_is_401_and_not_stored(
+        self, scorer: Scorer, headers: dict[str, str]
+    ) -> None:
+        with self.bare(scorer) as c:
+            r = c.post("/score", json=event(), headers=headers)
+        assert r.status_code == 401
+        assert r.headers["www-authenticate"] == API_KEY_HEADER
+        assert TEST_API_KEY not in r.text
+        assert len(memory_store(scorer)) == 0
+
+    def test_score_with_the_key_is_200(self, scorer: Scorer) -> None:
+        with self.bare(scorer) as c:
+            r = c.post("/score", json=event(), headers={API_KEY_HEADER: TEST_API_KEY})
+        assert r.status_code == 200 and r.json()["duplicate"] is False
+        assert len(memory_store(scorer)) == 1
+
+    def test_auth_runs_before_validation(self, scorer: Scorer) -> None:
+        """An invalid body without a key is 401, so callers learn nothing about the schema."""
+        with self.bare(scorer) as c:
+            assert c.post("/score", json={"x": 1}).status_code == 401
+
+    @pytest.mark.parametrize("path", ["/health", "/model", "/docs", "/openapi.json"])
+    def test_read_only_routes_stay_open(self, scorer: Scorer, path: str) -> None:
+        with self.bare(scorer) as c:
+            assert c.get(path).status_code == 200
+
+    def test_the_only_write_route_is_score_and_it_needs_the_key(self, scorer: Scorer) -> None:
+        app = create_app(scorer, api_key=TEST_API_KEY)
+        writes = {
+            (str(getattr(r, "path", "")), m)
+            for r in app.routes
+            for m in getattr(r, "methods", None) or set()
+            if m not in {"GET", "HEAD", "OPTIONS"}
+        }
+        assert writes == {("/score", "POST")}
+        spec = TestClient(app).get("/openapi.json").json()
+        assert spec["components"]["securitySchemes"]["APIKeyHeader"]["name"] == API_KEY_HEADER
+        assert spec["paths"]["/score"]["post"]["security"] == [{"APIKeyHeader": []}]
+
+    def test_no_key_configured_fails_closed(
+        self, scorer: Scorer, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.ERROR), self.bare(scorer, key=None) as c:
+            assert c.get("/health").status_code == 200
+            assert (
+                c.post("/score", json=event(), headers={API_KEY_HEADER: "x" * 20}).status_code
+                == 401
+            )
+        assert "no API key configured" in caplog.text
+
+    def test_key_from_env_and_never_logged(
+        self,
+        bundle_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("MODEL_DIR", str(bundle_dir))
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.setenv("API_KEY", TEST_API_KEY)
+        with caplog.at_level(logging.DEBUG), TestClient(create_app()) as c:
+            assert c.post("/score", json=event()).status_code == 401
+            ok = c.post("/score", json=event(), headers={API_KEY_HEADER: TEST_API_KEY})
+            assert ok.status_code == 200
+        assert TEST_API_KEY not in caplog.text
+
+    def test_too_short_env_key_refuses_to_start(
+        self, bundle_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.serving.auth import ApiKeyError
+
+        monkeypatch.setenv("API_KEY", "change-me")
+        with pytest.raises(ApiKeyError):
+            create_app()
 
 
 class TestEvents:
@@ -865,7 +963,10 @@ class TestConcurrentScore:
         }
         store = InMemoryStore()
         with (
-            TestClient(create_app(Scorer(bundle, store))) as client,
+            TestClient(
+                create_app(Scorer(bundle, store), api_key=TEST_API_KEY),
+                headers={API_KEY_HEADER: TEST_API_KEY},
+            ) as client,
             ThreadPoolExecutor(max_workers=16) as pool,
         ):
             responses = list(pool.map(lambda e: client.post("/score", json=e), events + events))

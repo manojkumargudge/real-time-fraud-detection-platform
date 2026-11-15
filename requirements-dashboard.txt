@@ -5,3 +5,4 @@
 -r requirements-serving.txt
 streamlit==1.66.1
 pillow==13.0.0
+bcrypt==4.3.0  # dashboard sign-in: bcrypt password hashes (src/dashboard/auth.py)

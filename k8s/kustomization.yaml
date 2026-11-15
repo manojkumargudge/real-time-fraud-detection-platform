@@ -1,4 +1,5 @@
-# kubectl apply -k k8s   (after creating the Secret fraud-postgres; docs/kubernetes.md)
+# kubectl apply -k k8s   (after creating the Secrets fraud-postgres and fraud-auth;
+# docs/kubernetes.md). secret-auth.example.yaml is NOT listed: it holds placeholders only.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: fraud-k8s

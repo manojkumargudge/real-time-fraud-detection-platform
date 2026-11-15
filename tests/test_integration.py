@@ -210,6 +210,7 @@ def test_concurrent_score_requests_on_the_pool(bundle_dir: Path, pg_dsn: str) ->
     from fastapi.testclient import TestClient
 
     from src.serving.api import create_app
+    from src.serving.auth import API_KEY_HEADER
 
     bundle = ModelBundle.load(bundle_dir)
     events = [
@@ -228,8 +229,11 @@ def test_concurrent_score_requests_on_the_pool(bundle_dir: Path, pg_dsn: str) ->
         for e in events
     }
     store = PostgresStore(pg_dsn, pool_size=10)
+    key = "integration-test-api-key-01234"  # throwaway, test-only
     with (
-        TestClient(create_app(Scorer(bundle, store))) as client,
+        TestClient(
+            create_app(Scorer(bundle, store), api_key=key), headers={API_KEY_HEADER: key}
+        ) as client,
         ThreadPoolExecutor(max_workers=20) as pool,
     ):
         responses = list(pool.map(lambda e: client.post("/score", json=e), events + events))
@@ -1202,7 +1206,19 @@ DASHBOARD_PAGES = (
 )
 
 
-def _render(dsn: str, reports_dir: Path, page: str, alert_id: int) -> Any:
+DASH_USER, DASH_PASSWORD = "integration-analyst", "integration-only-pw"  # throwaway, test-only
+
+
+@pytest.fixture
+def dashboard_users(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S7: every dashboard page needs a sign-in; one throwaway bcrypt user (low cost factor)."""
+    pytest.importorskip("bcrypt")
+    from src.dashboard import auth
+
+    monkeypatch.setenv(auth.ENV_VAR, auth.entry(DASH_USER, DASH_PASSWORD, rounds=4))
+
+
+def _app(dsn: str, reports_dir: Path, alert_id: int) -> Any:
     pytest.importorskip("streamlit")
     from streamlit.testing.v1 import AppTest
 
@@ -1214,6 +1230,17 @@ def _render(dsn: str, reports_dir: Path, page: str, alert_id: int) -> Any:
     at.session_state["repo"] = Repository(Database(dsn), reports_dir)
     at.session_state["alert_id"] = alert_id
     at.run()
+    return at
+
+
+def _render(dsn: str, reports_dir: Path, page: str, alert_id: int) -> Any:
+    """Sign in through the form (the real path), then go to ``page``."""
+    at = _app(dsn, reports_dir, alert_id)
+    at.text_input(key="sign_in_user").input(DASH_USER)
+    at.text_input(key="sign_in_password").input(DASH_PASSWORD)
+    next(b for b in at.button if b.label == "Sign in").click()
+    at.run()
+    assert at.session_state["analyst"] == DASH_USER
     if page != "views/overview.py":
         at.switch_page(page)
         at.run()
@@ -1255,7 +1282,23 @@ def _drift_row(report_path: str) -> Any:
 
 
 @needs_db
+@pytest.mark.usefixtures("dashboard_users")
 class TestDashboardPages:
+    def test_without_sign_in_every_page_shows_only_the_form(
+        self, dash: psycopg.Connection[Any], pg_dsn: str, tmp_path: Path
+    ) -> None:
+        """S7: on a real database with alerts, no page shows data before sign-in."""
+        alert_id = _alert_ids(dash)[9_001]
+        for page in DASHBOARD_PAGES:
+            at = _app(pg_dsn, tmp_path, alert_id)
+            if page != "views/overview.py":
+                at.switch_page(page)
+                at.run()
+            assert not at.exception, page
+            assert any(b.label == "Sign in" for b in at.button), page
+            assert at.dataframe == [] and at.metric == [] and at.selectbox == [], page
+            assert "analyst" not in at.session_state, page
+
     def test_core_tables_only_every_page_renders_and_says_what_has_not_run(
         self, pg_dsn: str, pg_store: PostgresStore, tmp_path: Path
     ) -> None:

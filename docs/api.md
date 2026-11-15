@@ -5,7 +5,22 @@ FastAPI app `src/serving/api.py` (`uvicorn src.serving.api:app`; Compose service
 to [openapi.json](openapi.json) (`app.openapi()`; regenerate after changing the schema).
 
 The same scorer, `Scorer.score_event`, serves `POST /score` and the Kafka consumers
-([serving.md](serving.md), [data.md](data.md)). No authentication (local demo).
+([serving.md](serving.md), [data.md](data.md)).
+
+**Authentication (2026-11-15):** `POST /score`, the only write route, needs the header
+`X-API-Key: <key>`. The key is read from the environment variable `API_KEY` only: Compose takes
+it from the gitignored `.env` (see `.env.example`), Kubernetes from Secret `fraud-auth`, key
+`api-key`. It is compared in constant time (`hmac.compare_digest`) and never logged. A key
+shorter than 16 characters, or one that still contains the `change-me` placeholder, stops the
+API at startup. With no key set the API starts, logs an ERROR, and refuses every `POST /score`
+(fail closed). `GET /health`, `GET /model`, `/docs` and `/openapi.json` stay open (read-only).
+The consumers score in-process and do not call the API, so they need no key. This is one shared
+key: there are no per-client keys, no rotation and no rate limit, and there is no TLS
+(localhost only).
+
+```
+curl -s -X POST http://127.0.0.1:18000/score -H "Content-Type: application/json"   -H "X-API-Key: $API_KEY" -d @event.json
+```
 
 ## GET /health
 
@@ -135,6 +150,9 @@ was not recorded for this event, so it is left out of the example; see "Latency"
 
 **Errors:**
 
+- **401** `{"detail": "missing or invalid X-API-Key header"}` (header `WWW-Authenticate:
+  X-API-Key`) when the key is missing, empty or wrong, or when the API has no key configured.
+  The key is checked before the body, so an invalid body without a key is also 401.
 - **422** for any invalid body: unknown field, out-of-range value, `NaN`/`Infinity`, NUL in a
   text field, device fields without `has_identity`. A custom handler keeps the body valid JSON
   even when the rejected input was `NaN`. Real examples:

@@ -95,7 +95,11 @@ services:
 
   api:
     build: .
-    environment: *app-env
+    environment:
+      <<: *app-env
+      # POST /score needs this key in the X-API-Key header (src/serving/auth.py); set it in the
+      # gitignored .env (see .env.example). The consumers score in-process and need no key.
+      API_KEY: ${API_KEY:?set API_KEY in .env (at least 16 characters)}
     volumes:
       - ./artifacts/baseline:/app/artifacts/baseline:ro
     ports:
@@ -159,6 +163,9 @@ services:
       DATABASE_URL: postgresql://fraud:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/fraud
       DASHBOARD_REPORTS_DIR: /app/reports/drift
       PYTHONPATH: /app
+      # Sign-in: comma-separated name:<bcrypt hash> entries (python -m src.dashboard.auth hash
+      # NAME), single-quoted in .env. Empty = nobody can sign in.
+      DASHBOARD_USERS: ${DASHBOARD_USERS:?set DASHBOARD_USERS in .env}
       # Why-flagged panel (src/dashboard/explain.py): the served bundle and the feature file
       # built on the host (python -m src.dashboard.explain build); both read-only.
       EXPLAIN_MODEL_DIR: /app/artifacts/baseline
