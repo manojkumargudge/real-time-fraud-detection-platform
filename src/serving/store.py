@@ -4,8 +4,9 @@
 returns ``False``. The stored events also serve as the online feature history.
 
 * ``InMemoryStore``  -- tests and a dependency-free local API run (not durable).
-* ``PostgresStore``  -- one connection guarded by a lock; adequate for a local demo, not a
-  tuned production pool.
+* ``PostgresStore``  -- a psycopg connection pool (``DB_POOL_SIZE`` connections at most,
+  default 10; since 2026-11-12, replacing one connection behind a lock). Writes stay
+  idempotent: ``INSERT ... ON CONFLICT DO NOTHING`` on ``TransactionID``, in one transaction.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from typing import Any, Protocol
 
 import psycopg
 from psycopg.rows import DictRow, dict_row
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from src.features.history import TIME
 
@@ -199,95 +201,104 @@ if (
     raise RuntimeError("store.DDL is out of step with ALERT_STATUSES / SCHEMA_LOCK_KEY")
 
 
+DEFAULT_POOL_SIZE = 10
+
+
+def pool_size_from_env() -> int:
+    """``DB_POOL_SIZE`` (maximum connections per process), default 10."""
+    import os
+
+    raw = os.environ.get("DB_POOL_SIZE", str(DEFAULT_POOL_SIZE))
+    try:
+        size = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"DB_POOL_SIZE must be an integer, got {raw!r}") from exc
+    if not 1 <= size <= 100:
+        raise ValueError(f"DB_POOL_SIZE must be between 1 and 100, got {size}")
+    return size
+
+
 class PostgresStore:
     name = "postgres"
 
-    def __init__(self, dsn: str, *, init_schema: bool = True) -> None:
+    def __init__(self, dsn: str, *, init_schema: bool = True, pool_size: int | None = None) -> None:
         self._dsn = dsn
-        self._lock = threading.Lock()
-        self._conn: psycopg.Connection[DictRow] = self._connect()
+        self.pool_size = pool_size if pool_size is not None else pool_size_from_env()
+        # min_size 1: a consumer (one thread) keeps one connection; the API grows to pool_size
+        # under concurrent requests. check_connection replaces connections the server closed.
+        self._pool: ConnectionPool[psycopg.Connection[DictRow]] = ConnectionPool(
+            dsn,
+            min_size=1,
+            max_size=self.pool_size,
+            kwargs={"row_factory": dict_row, "autocommit": True},
+            check=ConnectionPool.check_connection,
+            open=False,
+            name="fraud-store",
+        )
+        self._pool.open(wait=True, timeout=30)
         if init_schema:
-            with self._lock, self._conn.transaction():
-                self._conn.execute(DDL)
-
-    def _connect(self) -> psycopg.Connection[DictRow]:
-        return psycopg.connect(self._dsn, row_factory=dict_row, autocommit=True)
-
-    def _cursor_conn(self) -> psycopg.Connection[DictRow]:
-        if self._conn.closed:
-            logger.warning("postgres connection closed; reconnecting")
-            self._conn = self._connect()
-        return self._conn
+            with self._pool.connection() as conn, conn.transaction():
+                conn.execute(DDL)
 
     def get(self, transaction_id: int) -> ScoredRecord | None:
-        with self._lock:
-            row = (
-                self._cursor_conn()
-                .execute(
-                    "SELECT transaction_id, transaction_dt, card_id, uid, event, score, "
-                    "threshold, is_alert, model_version FROM scored_transactions "
-                    "WHERE transaction_id = %s",
-                    (transaction_id,),
-                )
-                .fetchone()
-            )
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT transaction_id, transaction_dt, card_id, uid, event, score, "
+                "threshold, is_alert, model_version FROM scored_transactions "
+                "WHERE transaction_id = %s",
+                (transaction_id,),
+            ).fetchone()
         return None if row is None else ScoredRecord(**row)
 
     def card_history(self, card_id: str, before_dt: int) -> list[dict[str, Any]]:
-        with self._lock:
-            rows = (
-                self._cursor_conn()
-                .execute(
-                    "SELECT event FROM scored_transactions "
-                    "WHERE card_id = %s AND transaction_dt < %s ORDER BY transaction_dt, "
-                    "transaction_id",
-                    (card_id, before_dt),
-                )
-                .fetchall()
-            )
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT event FROM scored_transactions "
+                "WHERE card_id = %s AND transaction_dt < %s ORDER BY transaction_dt, "
+                "transaction_id",
+                (card_id, before_dt),
+            ).fetchall()
         return [r["event"] for r in rows]
 
     def save(self, record: ScoredRecord) -> bool:
-        with self._lock:
-            conn = self._cursor_conn()
-            with conn.transaction():
-                inserted = conn.execute(
-                    "INSERT INTO scored_transactions (transaction_id, transaction_dt, card_id, "
-                    "uid, event, score, threshold, is_alert, model_version) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                    "ON CONFLICT (transaction_id) DO NOTHING RETURNING transaction_id",
-                    (
-                        record.transaction_id,
-                        record.transaction_dt,
-                        record.card_id,
-                        record.uid,
-                        json.dumps(record.event),
-                        record.score,
-                        record.threshold,
-                        record.is_alert,
-                        record.model_version,
-                    ),
-                ).fetchone()
-                if inserted and record.is_alert:
-                    conn.execute(
-                        "INSERT INTO alerts (transaction_id, score) VALUES (%s, %s) "
-                        "ON CONFLICT (transaction_id) DO NOTHING",
-                        (record.transaction_id, record.score),
-                    )
+        # One transaction: the scored row and its alert, or neither.
+        with self._pool.connection() as conn, conn.transaction():
+            inserted = conn.execute(
+                "INSERT INTO scored_transactions (transaction_id, transaction_dt, card_id, "
+                "uid, event, score, threshold, is_alert, model_version) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (transaction_id) DO NOTHING RETURNING transaction_id",
+                (
+                    record.transaction_id,
+                    record.transaction_dt,
+                    record.card_id,
+                    record.uid,
+                    json.dumps(record.event),
+                    record.score,
+                    record.threshold,
+                    record.is_alert,
+                    record.model_version,
+                ),
+            ).fetchone()
+            if inserted and record.is_alert:
+                conn.execute(
+                    "INSERT INTO alerts (transaction_id, score) VALUES (%s, %s) "
+                    "ON CONFLICT (transaction_id) DO NOTHING",
+                    (record.transaction_id, record.score),
+                )
         return inserted is not None
 
     def ping(self) -> bool:
         try:
-            with self._lock:
-                self._cursor_conn().execute("SELECT 1").fetchone()
+            with self._pool.connection(timeout=5) as conn:
+                conn.execute("SELECT 1").fetchone()
             return True
-        except psycopg.Error:
+        except (psycopg.Error, PoolTimeout):
             logger.exception("postgres ping failed")
             return False
 
     def counts(self) -> dict[str, int]:
-        with self._lock:
-            conn = self._cursor_conn()
+        with self._pool.connection() as conn:
             txn = conn.execute("SELECT count(*) AS n FROM scored_transactions").fetchone()
             alerts = conn.execute("SELECT count(*) AS n FROM alerts").fetchone()
         if txn is None or alerts is None:  # count(*) always returns exactly one row
@@ -295,4 +306,4 @@ class PostgresStore:
         return {"scored_transactions": int(txn["n"]), "alerts": int(alerts["n"])}
 
     def close(self) -> None:
-        self._conn.close()
+        self._pool.close()

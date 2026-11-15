@@ -49,7 +49,24 @@ production readiness without appropriate evidence.
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
 
-### 2026-11-02: missing-addr1 ring exclusion (read this first)
+### 2026-11-15: API connection pool (S3), merged as robustness, not performance
+- `PostgresStore` = `psycopg_pool.ConnectionPool` (`DB_POOL_SIZE`, default 10, min 1,
+  `check_connection`), no lock; psycopg-pool==3.2.8. Writes unchanged (ON CONFLICT DO NOTHING).
+- Load test on fraud_bench, 3 runs (docs/evidence/2026-11-15-api-pool/):
+  - one client 15.0-27.9 req/s, p50 30-54 ms; 5 clients 7.6-13.8 req/s;
+  - 2026-11-11 (locked connection): 5 clients 12.5-14.3 -> **no throughput gain**;
+  - likely bottleneck = one uvicorn process doing CPU-bound scoring (diagnosis, not proven);
+  - heavy laptop noise.
+  - User decision: no uvicorn workers in S3; workers are the next step (per-worker pool x
+    connection budget, one model copy per worker).
+- Restart check (test stack, one trial each): old code (a867bea) and pool both recover without
+  an API restart; old code returned one HTTP 500 first, the pool none. Recovery is not new.
+- Replay 200 into fraud_bench: identical to the demo DB (200/200 rows, 6/6 alerts), 0 dupes, DLQ 0.
+- Connection budget: max_connections 100; worst case 42 configured, 82 with the bench.
+- `scripts/load_test_score.py --skip N`: consecutive runs use disjoint replay slices, so there is
+  no bench reset (DELETE) between runs.
+
+### 2026-11-02: missing-addr1 ring exclusion
 - PR #33: uids ending in `|<NA>` no longer link rings (`EXCLUDE_MISSING_ADDR1_UIDS`,
   src/graph/rings.py). Regenerated from the existing GNN scores; no retraining. Only table
   `fraud_rings` changed in the demo DB (still 20 rows). No more changes to ring rules,
@@ -82,8 +99,8 @@ matters (files, numbers, running services) before relying on it.
   read-only). Minikube dashboard image rebuilt 2026-10-30 from 4b811c8; it has the panel but no feature file.
 - **Load test** (PR #31, docs/evidence/2026-10-30-load-test/): `POST /score` writes for new
   transactions, so it ran on the fraud_bench copy with a temporary API (127.0.0.1:18001).
-  One client ~35 req/s, p50 25 ms; knee between 1 and 5 clients (store = one connection behind
-  a lock, `src/serving/store.py`); unexplained multi-second stalls at c=20 in 2 of 3 runs.
+  2026-10-30 figures (one client ~35 req/s) were NOT reproduced later; see "2026-11-15" at the
+  top for the current numbers. Unexplained multi-second stalls at c=20 in 2 of 3 runs.
   Not comparable to the 46.83 events/s Kafka figure. Raw output in gitignored reports/load_test/.
 - Tests then: 606 unit passed + 1 skipped (opt-in) locally with the GNN extras; CI 581 passed +
   11 skipped, 41 integration (PR #30 run #77).
@@ -397,6 +414,8 @@ matters (files, numbers, running services) before relying on it.
 - The laptop's Modern Standby suspends long runs (apparent hangs).
 
 ### Known limitations
+- API: one uvicorn process; 5 concurrent clients get no more throughput than one (2026-11-15,
+  after the pool). Next step: several workers, with workers x DB_POOL_SIZE within max_connections.
 - Threshold chosen on the stage-1 holdout but applied to the refit model; alert rate can
   drift. Fix: alert-budget threshold checked on post-deployment data.
 - Feast: late events are approximate; concurrent writes to one entity can lose an update (fix:

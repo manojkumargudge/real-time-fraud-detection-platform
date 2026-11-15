@@ -20,7 +20,7 @@ is not deployed to real traffic.
 | GNN alone | validation PR-AUC 0.2021 (loses to XGBoost) | [reports/gnn_stacking.md](reports/gnn_stacking.md) |
 | GNN + XGBoost blend | worse than XGBoost for both variants (95% CI [-0.0346, -0.0137] and [-0.0263, -0.0118]); not served | [reports/gnn_blend.md](reports/gnn_blend.md) |
 | GNN with an account (uid) node | no gain: GNN alone 0.2008; blends still worse than XGBoost (transaction -0.0245 [-0.0354, -0.0140], entity -0.0144 [-0.0205, -0.0081]); not served | [docs/gnn.md](docs/gnn.md) "Account node", [reports/gnn_blend_account.md](reports/gnn_blend_account.md) |
-| Load test, `POST /score` (bench copy, one laptop) | one client: about **35 req/s**, p50 **25 ms**, p95 39-50 ms; knee between 1 and 5 concurrent clients (at 5: about 22 req/s, p95 about 330 ms) because the API's store is one database connection behind a lock; 0 errors at 1/5/10/20 clients over 3 runs. Direct API calls on one API process, not comparable to the 46.83 events/s Kafka streaming figure below (3 consumers, each with its own connection) | [docs/evidence/2026-10-30-load-test/](docs/evidence/2026-10-30-load-test/README.md) |
+| Load test, `POST /score` (bench copy, one laptop) | 2026-11-15, connection pool (3 runs): one client **15.0-27.9 req/s**, p50 **30-54 ms**; 5 clients 7.6-13.8 req/s, p50 334-605 ms; 0 errors. Unchanged at 5 clients against the single locked connection on 2026-11-11 (12.5-14.3 req/s): removing the lock did not add throughput. Likely bottleneck (diagnosis, not proven): one uvicorn process doing CPU-bound scoring. Laptop noise is large (one client fell from 27.9 to 15.0 req/s over three runs with no code change). Direct API calls on one API process, not comparable to the 46.83 events/s Kafka streaming figure below | [docs/evidence/2026-11-15-api-pool/](docs/evidence/2026-11-15-api-pool/README.md) |
 | Throughput | **46.83 events/s** on 3 consumers (unthrottled, 1,000-event backlog; scorer p50 48 ms in that run); scorer p50 **41 ms** at a steady 5 events/s | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
 | Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
 | Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
@@ -303,7 +303,9 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
 - Feast: late events are approximate, concurrent writes to one entity can lose an update, and
   a failed push is only logged ([docs/feature_store.md](docs/feature_store.md)).
 - Dashboard: no authentication, no connection pool, one replica.
-- End-to-end latency is measured to the row's `scored_at`, the start of the database write, so it excludes the Feast state push (~14–16 ms p50) and the offset commit. HTTP `/score` latency was load-tested on a bench copy on 2026-10-30 (Results, "Load test"); the API serialises database access on one connection, so it does not scale with concurrent clients.
+- End-to-end latency is measured to the row's `scored_at`, the start of the database write, so it excludes the Feast state push (~14–16 ms p50) and the offset commit. HTTP `/score` latency was load-tested on a bench copy (Results, "Load test").
+- API concurrency: the API's store is a psycopg connection pool (`DB_POOL_SIZE`, default 10), but `/score` still runs in one uvicorn process. Throughput at 5 clients did not rise when the lock was removed (2026-11-15), which points to CPU-bound scoring in that process (not proven). More uvicorn workers are the next step. Each worker would have its own pool (workers x `DB_POOL_SIZE` connections) and its own copy of the model.
+- PostgreSQL connection budget: `max_connections` 100; configured worst case 42 (API 10 + 3 consumers x 10 + dashboard + drift job), 82 with the throughput benchmark running as well ([docs/evidence/2026-11-15-api-pool/](docs/evidence/2026-11-15-api-pool/README.md)).
 - Security scan results and accepted risks: [docs/security.md](docs/security.md). Accepted
   pip-audit risks (expire 2027-01-31) include three feast 0.47.0 RCE advisories:
   CVE-2025-11157 (Kubernetes materializer job, not used) and, added 2026-11-11, CVE-2026-18948
@@ -320,6 +322,7 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
   on the dashboard tile.
 - An MLflow server with a shared artifact store, so retraining can run in the cluster.
 - Rank drift features by their impact on the score instead of by gain.
+- API throughput: run several uvicorn workers and re-measure at 5 clients. Size `DB_POOL_SIZE` so that workers x pool size fits the connection budget, and account for one model copy per worker.
 - Next optimization: `entity_keys` (~17 ms) and `feast_push` (~16 ms) are about two-thirds of scoring time; `predict` is ~3 ms (docs/serving.md "Throughput benchmark", backlog run).
 
 ## How this project was built
