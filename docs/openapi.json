@@ -315,6 +315,13 @@
         "title": "ValidationError",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "in": "header",
+        "name": "X-API-Key",
+        "type": "apiKey"
+      }
     }
   },
   "info": {
@@ -384,6 +391,9 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Missing or invalid X-API-Key header"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -395,6 +405,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "summary": "Score"
       }
     }

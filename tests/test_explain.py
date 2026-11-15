@@ -19,6 +19,9 @@ from src.features.history import HistoryConfig
 from src.models.compare import build_model_frame, feature_columns
 from src.serving.model import ModelBundle
 from tests.test_dashboard import FakeRepository, app, make_case, texts
+from tests.test_dashboard import dashboard_users as dashboard_users  # S7: sign-in users
+
+pytestmark = pytest.mark.usefixtures("dashboard_users")
 
 
 @pytest.fixture(scope="module")

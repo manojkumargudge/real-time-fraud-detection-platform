@@ -54,6 +54,11 @@ spec:
                 secretKeyRef: {name: fraud-postgres, key: password}
             - name: DATABASE_URL
               value: postgresql://fraud:$(POSTGRES_PASSWORD)@postgres:5432/fraud
+            # POST /score needs it in X-API-Key (src/serving/auth.py); Secret fraud-auth,
+            # created at deploy time (docs/kubernetes.md, k8s/secret-auth.example.yaml).
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef: {name: fraud-auth, key: api-key}
           # /health is 503 while PostgreSQL is unreachable: readiness takes the pod out of the
           # Service; liveness allows 60 s before a restart.
           readinessProbe:

@@ -7,4 +7,5 @@ mypy==1.15.0
 # the only image that installs Streamlit (never the API/consumer image).
 streamlit==1.66.1
 pillow==13.0.0
+bcrypt==4.3.0  # dashboard sign-in: bcrypt password hashes (src/dashboard/auth.py)
 pandas-stubs==2.2.3.250308

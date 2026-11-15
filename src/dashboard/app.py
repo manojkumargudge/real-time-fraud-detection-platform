@@ -12,7 +12,8 @@ from src.dashboard import ui
 
 st.set_page_config(page_title="Fraud analyst dashboard", layout="wide")
 ui.configure_logging()
-ui.sidebar()
+if not ui.sign_in_gate():
+    st.stop()
 st.navigation(
     [
         st.Page("views/overview.py", title="Overview", default=True),

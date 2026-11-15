@@ -52,6 +52,14 @@ stays gitignored.
 never written to a file. `DATABASE_URL` is assembled from it in the pod spec
 (`$(POSTGRES_PASSWORD)`).
 
+**Secret `fraud-auth`** (2026-11-15): key `api-key` becomes the API's `API_KEY` (`POST /score`
+needs it in `X-API-Key`), and key `dashboard-users` becomes the dashboard's `DASHBOARD_USERS`
+(bcrypt entries). Like `fraud-postgres`, it is created by a command at deploy time. The repo has
+only `k8s/secret-auth.example.yaml` with placeholders, and it is not in `kustomization.yaml`.
+The API refuses a key that contains `change-me`, and the dashboard refuses a non-bcrypt entry.
+Without the Secret the API and dashboard pods do not start (`CreateContainerConfigError`). The
+Minikube cluster has not been redeployed with it yet.
+
 **Details that matter:**
 - **`enableServiceLinks: false`** on every pod. Otherwise Kubernetes injects variables such
   as `KAFKA_PORT=tcp://...` for the `kafka` Service, and the apache/kafka image turns every
@@ -161,6 +169,8 @@ minikube ssh -- "sudo chmod 0555 /data/fraud-raw && sudo chmod 0444 /data/fraud-
 
 kubectl apply -f k8s/namespace.yaml
 kubectl -n fraud-k8s create secret generic fraud-postgres --from-literal=password="$(openssl rand -hex 24)"
+# API key (POST /score) and dashboard users (bcrypt entries); placeholders: k8s/secret-auth.example.yaml
+kubectl -n fraud-k8s create secret generic fraud-auth   --from-literal=api-key="$(openssl rand -hex 24)"   --from-literal=dashboard-users="$(python -m src.dashboard.auth hash alice)"
 kubectl apply -n fraud-k8s -f k8s/app-config.yaml -f k8s/postgres.yaml -f k8s/kafka.yaml -f k8s/redis.yaml
 kubectl apply -f k8s/jobs/feast-materialize.yaml
 kubectl -n fraud-k8s wait --for=condition=complete job/feast-materialize --timeout=15m
@@ -269,7 +279,7 @@ suspend. The liveness test (14:20:54-14:22:49) ran before it.
 - **Storage:** Minikube hostPath volumes, local to the node.
 - **No Ingress / TLS:** the API is reached with `kubectl port-forward`. No authentication on
   Kafka, PostgreSQL or Redis inside the cluster.
-- **No secrets manager:** the PostgreSQL password is a Kubernetes Secret created by hand (base64
+- **No secrets manager:** the PostgreSQL password and `fraud-auth` are Kubernetes Secrets created by hand (base64
   in etcd, not encrypted at rest here, no rotation). Production needs an external secret store
   or sealed secrets.
 - **Retraining on the host:** the drift job only checks drift. Retraining and champion

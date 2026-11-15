@@ -195,10 +195,15 @@ def test_missing_link_file_serves_with_a_warning_and_null_registry(
 
 
 def test_present_link_file_logs_no_warning(
-    bundle_dir: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    bundle_dir: Path,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import logging
 
+    # A fully configured API: with no API_KEY the API logs its fail-closed ERROR (S7).
+    monkeypatch.setenv("API_KEY", "registry-link-test-key-0123")
     d = copy_bundle(bundle_dir, tmp_path)
     (d / REGISTRY_FILE).write_text(json.dumps(link_record(served_sha(d))), encoding="utf-8")
     with caplog.at_level(logging.WARNING, logger="src.serving.model"):

@@ -60,6 +60,10 @@ spec:
               value: postgresql://fraud:$(POSTGRES_PASSWORD)@postgres:5432/fraud
             - {name: DASHBOARD_REPORTS_DIR, value: /app/reports/drift}
             - {name: PYTHONPATH, value: /app}
+            # Sign-in users: name:<bcrypt hash> entries (src/dashboard/auth.py), Secret fraud-auth.
+            - name: DASHBOARD_USERS
+              valueFrom:
+                secretKeyRef: {name: fraud-auth, key: dashboard-users}
           readinessProbe:
             httpGet: {path: /_stcore/health, port: 8501}
             initialDelaySeconds: 5
