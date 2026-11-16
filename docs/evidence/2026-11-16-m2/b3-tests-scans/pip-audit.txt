@@ -1,0 +1,41 @@
+== requirements.txt
+WARNING:venv:Actual environment location may have moved due to redirects, links or junctions.
+  Requested location: "<home>\AppData\Local\Temp\tmp7c67k03a\Scripts\python.exe"
+  Actual location:    "<home>\AppData\Local\Temp\tmp7c67k03a\Scripts\python.exe"
+No known vulnerabilities found, 6 ignored
+== requirements-serving.txt
+WARNING:venv:Actual environment location may have moved due to redirects, links or junctions.
+  Requested location: "<home>\AppData\Local\Temp\tmp8i3vzyjd\Scripts\python.exe"
+  Actual location:    "<home>\AppData\Local\Temp\tmp8i3vzyjd\Scripts\python.exe"
+No known vulnerabilities found, 6 ignored
+== requirements-monitoring.txt
+WARNING:venv:Actual environment location may have moved due to redirects, links or junctions.
+  Requested location: "<home>\AppData\Local\Temp\tmpyjl402fa\Scripts\python.exe"
+  Actual location:    "<home>\AppData\Local\Temp\tmpyjl402fa\Scripts\python.exe"
+No known vulnerabilities found, 6 ignored
+== requirements-dashboard.txt
+WARNING:venv:Actual environment location may have moved due to redirects, links or junctions.
+  Requested location: "<home>\AppData\Local\Temp\tmp53gtom0j\Scripts\python.exe"
+  Actual location:    "<home>\AppData\Local\Temp\tmp53gtom0j\Scripts\python.exe"
+No known vulnerabilities found, 6 ignored
+== requirements-dev.txt
+WARNING:venv:Actual environment location may have moved due to redirects, links or junctions.
+  Requested location: "<home>\AppData\Local\Temp\tmp7hs_5rik\Scripts\python.exe"
+  Actual location:    "<home>\AppData\Local\Temp\tmp7hs_5rik\Scripts\python.exe"
+No known vulnerabilities found, 6 ignored
+== requirements-gnn.txt
+WARNING:venv:Actual environment location may have moved due to redirects, links or junctions.
+  Requested location: "<home>\AppData\Local\Temp\tmph0ika3w9\Scripts\python.exe"
+  Actual location:    "<home>\AppData\Local\Temp\tmph0ika3w9\Scripts\python.exe"
+No known vulnerabilities found, 6 ignored
+Name    Skip Reason
+------- ------------------------------------------------------------------------------
+torch   Dependency not found on PyPI and could not be audited: torch (2.8.0+cpu)
+pyg-lib Dependency not found on PyPI and could not be audited: pyg-lib (0.4.0+pt28cpu)
+== gnn-equivalents
+WARNING:pip_audit._cli:--no-deps is supported, but users are encouraged to fully hash their pinned dependencies
+WARNING:pip_audit._cli:Consider using a tool like `pip-compile`: https://pip-tools.readthedocs.io/en/latest/#using-hashes
+WARNING:venv:Actual environment location may have moved due to redirects, links or junctions.
+  Requested location: "<home>\AppData\Local\Temp\tmpq1rqoh6v\Scripts\python.exe"
+  Actual location:    "<home>\AppData\Local\Temp\tmpq1rqoh6v\Scripts\python.exe"
+No known vulnerabilities found, 9 ignored

@@ -1,0 +1,3 @@
+  current database: fraud_bench
+13:37:07 DROP DATABASE fraud_bench
+13:37:07 removed: topics ['bench-transactions', 'bench-transactions.dlq'], group bench-scorer, fraud_bench, bench Redis

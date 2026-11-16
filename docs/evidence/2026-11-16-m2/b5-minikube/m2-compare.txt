@@ -1,0 +1,4 @@
+cluster rows 20, demo rows 20, same ids True
+scores identical 20/20, max |diff| 0.0
+is_alert equal 20/20; alerts cluster 1, demo 1
+model_version ['baseline-9fdad27ea3b0'] vs ['baseline-9fdad27ea3b0']

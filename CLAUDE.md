@@ -57,6 +57,21 @@ production readiness without appropriate evidence.
 Read this first in a new session; details are in README.md and docs/. Verify anything that
 matters (files, numbers, running services) before relying on it.
 
+### 2026-11-16: M2 evidence pass (docs/evidence/2026-11-16-m2/)
+- All runs on main b62c29b, on copies only; the demo DB was only read (pg_stat 0 deltas) and
+  mlflow.db is unchanged (dd198df9).
+- B1 bench: 200-event replay identical to the demo (200/200 scores, 6/6 alerts, 0 duplicates,
+  DLQ 0, lag 0), 200/200 consumer lines and 33/33 API lines with `features=feast`.
+- B2 drift on copies (`fraud_m2s6` on the test stack plus an mlflow.db copy; days 170-181,
+  pandas, no force): fired on R_emaildomain; challenger v8 in the copy only (model 5dfeb952,
+  as on 11-11); promotion NO; 163 s.
+- B3: unit 726 + 1 skipped, integration 44, lint/types and scanners clean. Trivy needed a
+  `--no-cache` build (a stale local apt/libssl layer).
+- B4: fresh clone 709 + 3 skipped, v2 rebuilt byte for byte.
+- B5: Minikube redeployed (see "Kubernetes").
+- S8 (k8s hardening) dropped from scope (user decision 2026-11-16); it is a known limitation.
+- Demo walkthrough with sign-in: docs/demo.md.
+
 ### 2026-11-15: S7 minimal auth (API key + dashboard sign-in)
 - `POST /score` (only write route) needs `X-API-Key`; key from env `API_KEY` only
   (`src/serving/auth.py`, hmac.compare_digest, never logged).
@@ -73,8 +88,8 @@ matters (files, numbers, running services) before relying on it.
   - unit + integration tests: send the key;
   - k8s: no committed caller; API reads Secret `fraud-auth`/`api-key`, dashboard reads
     `fraud-auth`/`dashboard-users`.
-- **Minikube has no `fraud-auth` Secret yet**: the cluster was not redeployed (stopped); the API
-  and dashboard pods will not start until it is created (fix in M2; docs/kubernetes.md).
+- Minikube got Secret `fraud-auth` on 2026-11-16 (M2): a random api-key and a bcrypt entry for
+  demo-analyst (same password as the demo login). See "Kubernetes" below.
 - Demo deploy 2026-11-15 (images api c76a178b0e7b, consumer e8c1b82d4b69, dashboard
   1c0f1c6d1f2f; rollback = retag `fraud-platform-*:pre-auth` (585e02c00550 / 9c282577c727 /
   7621290406d0) + `docker compose up -d --no-deps api consumer dashboard`, restore
@@ -255,9 +270,19 @@ matters (files, numbers, running services) before relying on it.
   2026-10-25; no restream since, row counts unchanged (118,108 / 5,093 / 9 / 20).
 - Kubernetes: Minikube 1.39.0 (Docker driver, 4 CPUs / 4 GB, Kubernetes 1.37.0).
   - The Docker VM has 10 GB via `%UserProfile%\.wslconfig`.
-  - The cluster is stopped and kept; namespace `fraud-k8s` deleted (manifests in `k8s/`).
+  - Namespace `fraud-k8s` **exists** (checked 2026-11-16; an earlier note here said it was
+    deleted). Redeployed 2026-11-16 from main b62c29b, with Secrets `fraud-postgres` and
+    `fraud-auth`.
+    - The cluster database had 40 scored rows; 20 M2 events made it 60.
+    - The `drift` CronJob is active (not suspended; every 6 h while the cluster runs) but has
+      never run, so there is no `drift_reports` table yet. Do not suspend it without asking.
+    - The cluster is stopped between sessions (manifests in `k8s/`).
+    - Evidence: docs/evidence/2026-11-16-m2/ B5.
   - The node keeps the raw-data copy at `/data/fraud-raw` (on the `minikube` volume).
-  - Images `fraud-serving:k8s-local` and `fraud-monitoring:k8s-local` are local only.
+  - Images `fraud-serving:k8s-local`, `fraud-monitoring:k8s-local` and
+    `fraud-dashboard:k8s-local` are local only.
+  - k8s manifests are not hardened: S8 was dropped from scope on 2026-11-16 (a known limitation
+    in README and docs/kubernetes.md).
   - Docker Desktop's built-in Kubernetes cannot be enabled from the CLI, so it was not used.
 - Other projects' containers (kasparro, healthcare-crm) were stopped for memory and left
   stopped; kasparro has restart policy `always`, so it comes back with every Docker start.
@@ -424,15 +449,15 @@ matters (files, numbers, running services) before relying on it.
 
 ### Commands
 - Unit tests (no services; conftest blocks live services and forces `FEATURE_SOURCE=store`):
-  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **607 passed, 1 skipped**
-  with the GNN stack installed (2026-11-02; 606 on 2026-10-30). Without it (CI's unit job),
+  `.venv/Scripts/python -m pytest --ignore=tests/test_integration.py` -- **726 passed, 1 skipped**
+  with the GNN stack installed (2026-11-16; 607 on 2026-11-02). Without it (CI's unit job),
   `tests/test_graph.py` skips because torch_geometric is missing; the ring tests need no torch.
 - Integration tests run **only** against the separate stack `docker-compose.test.yml`
   (project `fraud-platform-test`, ports 25432/29092/26379, test-only password `test-only`):
   `docker compose -f docker-compose.test.yml up -d --wait`, then
   `TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud
   TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 python -m pytest
-  tests/test_integration.py` -- 41 passed (CI run #83, 2026-11-02; 30 on 2026-10-26). Never point them at the demo stack.
+  tests/test_integration.py` -- 44 passed (local and CI run #116, 2026-11-16; 41 on 2026-11-02). Never point them at the demo stack.
 - GNN: `python -m src.graph.train`, `python -m src.graph.stack --degree-limit 1000 --epochs 7`,
   `DATABASE_URL=... python -m src.graph.rings` (needs requirements-gnn.txt; 10-45 min on CPU).
 - Lint/types: `ruff check .`, `ruff format --check .`, `python -m mypy` (strict; src, tests, scripts).

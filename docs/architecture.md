@@ -18,11 +18,13 @@ flowchart LR
     PRODUCER["Kafka producer<br/>(validation events, time order)"]
     KAFKA[["Kafka topic transactions"]]
     CONSUMERS["Consumers x3"]
-    API["FastAPI POST /score"]
+    API["FastAPI POST /score<br/>X-API-Key required"]
     SCORER["Scorer.score_event<br/>Feast read + XGBoost v2"]
     REDIS[("Feast online store<br/>Redis: per-entity state")]
     PG[("PostgreSQL<br/>scores, alerts, case_reviews,<br/>fraud_rings, drift_reports")]
-    DASH["Streamlit dashboard<br/>alert queue, case reviews"]
+    DASH["Streamlit dashboard<br/>sign-in (bcrypt users)<br/>alert queue, case reviews"]
+    CLIENT(["API client"])
+    ANALYST(["Analyst"])
     DRIFT["Evidently drift job<br/>(checks only in containers)"]
   end
 
@@ -30,9 +32,10 @@ flowchart LR
   OFFLINE -- "materialize (cold start)" --> REDIS
   MLFLOW -- "v2 bundle (artifacts/baseline)" --> SCORER
   PRODUCER --> KAFKA --> CONSUMERS --> SCORER
-  API --> SCORER
+  CLIENT -- "X-API-Key" --> API --> SCORER
+  ANALYST -- "sign-in" --> DASH
   SCORER <-- "read state / push update" --> REDIS
-  SCORER --> PG
+  SCORER -- "connection pool" --> PG
   PG <--> DASH
   DASH -- "case reviews -> labels" --> PG
   DATA --> GNN -- "fraud_rings table" --> PG
@@ -51,8 +54,17 @@ flowchart LR
 - **Docker Compose** (`docker-compose.yml`, the full demo: 118,108 streamed events): Kafka,
   PostgreSQL, Redis, API, 3 consumers, dashboard, and a one-shot drift service (checks only).
   The producer and the Feast materialize step run from the host.
-- **Minikube** (`k8s/`, namespace `fraud-k8s`, a 20-event replay): the same services, plus a
+- **Minikube** (`k8s/`, namespace `fraud-k8s`, a 60-event replay): the same services, plus a
   materialize Job, a producer Job and a drift CronJob every 6 h (`--no-retrain`, checks only).
+- **Access (2026-11-15):**
+  - `POST /score` needs one shared `X-API-Key` (env `API_KEY`; k8s Secret `fraud-auth`);
+    `/health`, `/model` and `/docs` are open.
+  - The dashboard asks every session to sign in against bcrypt hashes in `DASHBOARD_USERS`, and
+    the signed-in name is the analyst on each review.
+  - No roles, TLS or key rotation ([security.md](security.md)).
+- **Database access:** the scorer's store (API and consumers) uses a psycopg connection pool
+  (`DB_POOL_SIZE`, default 10), with insert-only, idempotent writes. The dashboard opens one
+  connection per call (no pool).
 - Features: Feast stores per-entity state; training (offline store) and serving (Redis) compute
   the features from it with the same function, `entity_state.history_features`
   ([feature_store.md](feature_store.md)).

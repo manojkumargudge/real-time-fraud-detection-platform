@@ -1,0 +1,4 @@
+bench rows 200, demo rows 200, same ids True
+scores bit-identical (text repr) 200/200, max |diff| 0.0
+is_alert equal 200/200; alerts bench 6, demo 6
+model_version bench ['baseline-9fdad27ea3b0'], demo ['baseline-9fdad27ea3b0']

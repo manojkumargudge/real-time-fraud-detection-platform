@@ -1,0 +1,40 @@
+{
+  "run": 3,
+  "url": "http://127.0.0.1:18001",
+  "warmup_s": 10.0,
+  "duration_s": 60.0,
+  "levels": [
+    {
+      "concurrency": 1,
+      "requests": 1708,
+      "ok": 1708,
+      "errors": 0,
+      "error_rate": 0.0,
+      "duplicates": 0,
+      "throughput_rps": 28.466666666666665,
+      "p50_ms": 31.323200000770157,
+      "p95_ms": 60.2154000007431,
+      "p99_ms": 86.19300000282237,
+      "max_ms": 435.75269999928423,
+      "events_used": 1958,
+      "ran_out_of_events_after_s": null,
+      "warmup_requests": 250
+    },
+    {
+      "concurrency": 5,
+      "requests": 751,
+      "ok": 751,
+      "errors": 0,
+      "error_rate": 0.0,
+      "duplicates": 0,
+      "throughput_rps": 12.516666666666667,
+      "p50_ms": 352.2564000013517,
+      "p95_ms": 755.7640999984869,
+      "p99_ms": 1365.131599999586,
+      "max_ms": 1617.9016999994928,
+      "events_used": 892,
+      "ran_out_of_events_after_s": null,
+      "warmup_requests": 141
+    }
+  ]
+}

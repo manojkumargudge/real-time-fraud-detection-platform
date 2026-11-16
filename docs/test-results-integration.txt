@@ -8,12 +8,12 @@ volumes; test-only credentials).
 Command (Git Bash, repo root):
   env -u DATABASE_URL -u KAFKA_BOOTSTRAP_SERVERS TEST_DATABASE_URL=postgresql://fraud:test-only@localhost:25432/fraud TEST_KAFKA_BOOTSTRAP=localhost:29092 TEST_REDIS=localhost:26379 .venv/Scripts/python -m pytest tests/test_integration.py -q -p no:cacheprovider -rfEs
 
-Date:          2026-11-02 (IST), 12:51-13:01
-Commit tested: c00cdce (main; final-docs changes docs only)
+Date:          2026-11-16 (IST), 13:56-14:06
+Commit tested: b62c29b (main)
 Python:        Python 3.11.9 (pytest 9.1.1, win32); evidently 0.7.23, mlflow 3.17.2
 
 Summary:
-  41 passed, 12 warnings in 592.83s (0:09:52)
+  44 passed, 20 warnings in 565.02s (0:09:25) (CI run #116: 44 passed)
   Skipped: none. Failed: none.
 
-Previous runs: 41 passed on 4b811c8 (2026-10-30); 41 passed on 915ffdb (2026-10-28); 17 passed on consumer-throughput (2026-10-25); 17 passed on consumer-crash-fix (2026-10-25); 17 passed on drift-rules (2026-10-24); 16 passed on main bd282be (2026-10-24); 15 passed on main 2fe7b70 (2026-10-24); 15 passed on 304ae06 with mlflow 3.16.1 (2026-10-24); 15 passed on d375de9 (2026-10-23); 15 passed on 9994458 against the demo stack (before the separate test stack existed).
+Previous runs: 41 passed on c00cdce (2026-11-02); 41 passed on 4b811c8 (2026-10-30); 41 passed on 915ffdb (2026-10-28); 17 passed on consumer-throughput (2026-10-25); 17 passed on consumer-crash-fix (2026-10-25); 17 passed on drift-rules (2026-10-24); 16 passed on main bd282be (2026-10-24); 15 passed on main 2fe7b70 (2026-10-24); 15 passed on 304ae06 with mlflow 3.16.1 (2026-10-24); 15 passed on d375de9 (2026-10-23); 15 passed on 9994458 against the demo stack (before the separate test stack existed).

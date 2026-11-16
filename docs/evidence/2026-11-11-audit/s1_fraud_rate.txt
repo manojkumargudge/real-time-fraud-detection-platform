@@ -1,0 +1,5 @@
+command: load_ieee_cis(DEFAULT_RAW_DIR) -> 590,540 transactions, 20,663 fraud
+overall fraud rate: 3.4990%
+training  (TransactionDT < 12,192,900): 472,432 rows, fraud rate 3.5135%
+validation (TransactionDT >= 12,192,900): 118,108 rows, fraud rate 3.4409%
+daily fraud rate: min 1.10%, max 6.99% over 182 days
