@@ -215,7 +215,9 @@ changed under an open form. Re-reading the version at submit time defeated the l
 - **Minimal authentication, no authorisation:**
   - a signed-in analyst can make any allowed status change; there are no roles;
   - no lockout or rate limit on sign-in;
-  - the session lasts as long as the browser session;
+  - the sign-in lasts as long as the page's Streamlit server session: a reload, a new tab or
+    sign-out ends it; a network drop shorter than 120 s does not. There is no idle timeout.
+    See README, Dashboard, "Sessions";
   - users are changed by editing `DASHBOARD_USERS` and restarting the dashboard;
   - no TLS (localhost only).
 - **No scoring latency and no per-case feature explanations:** neither is stored by the scoring
