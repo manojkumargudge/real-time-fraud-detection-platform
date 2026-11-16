@@ -58,7 +58,7 @@ needs it in `X-API-Key`), and key `dashboard-users` becomes the dashboard's `DAS
 only `k8s/secret-auth.example.yaml` with placeholders, and it is not in `kustomization.yaml`.
 The API refuses a key that contains `change-me`, and the dashboard refuses a non-bcrypt entry.
 Without the Secret the API and dashboard pods do not start (`CreateContainerConfigError`). The
-Minikube cluster has not been redeployed with it yet.
+cluster was redeployed with it on 2026-11-16 ("Results" below).
 
 **Details that matter:**
 - **`enableServiceLinks: false`** on every pod. Otherwise Kubernetes injects variables such
@@ -131,9 +131,11 @@ The Job runs `python -m src.features.feast_store materialize --before validation
 
 ## What the cluster's data shows
 
-- **The cluster database is a 20-event replay**, not the demo database: the current deployment
-  (redeployed 2026-10-27 with the dashboard, PR #6) holds 20 `scored_transactions`, 1 alert
-  and 0 `case_reviews` (checked read-only on 2026-10-28).
+- **The cluster database is a small replay**, not the demo database. Its history:
+  - 2026-10-27: deployed with the dashboard (PR #6), 20 `scored_transactions`, 1 alert,
+    0 `case_reviews` (checked read-only on 2026-10-28);
+  - 2026-11-16: 40 scored transactions (validation events 0-39) before the redeploy, then 20
+    more (events 40-59), so 60 rows.
 - **The drift CronJob checks only** (`--no-retrain`); retraining stays on the host.
 - **Evidence of an in-cluster drift run:** 2026-10-25, "Results" → "Full deployment" below: a
   run created from the CronJob (`drift-manual`) wrote `drift_reports` row 1 (30 rows, share
@@ -215,6 +217,26 @@ minikube ssh -- sudo rm -rf /data/fraud-raw   # (cluster running) remove the raw
 
 ## Results
 
+### Redeploy with sign-in and the API key (2026-11-16, main b62c29b)
+
+Evidence: [evidence/2026-11-16-m2/](evidence/2026-11-16-m2/README.md) B5.
+
+- **Images and Secret:** images rebuilt from main (`k8s/build-image.sh` plus the dashboard
+  image) and loaded. Secret `fraud-auth` created by a command (random `api-key`, one bcrypt
+  `dashboard-users` entry). Then `kubectl apply -k k8s` and `rollout restart` of api, consumer
+  and dashboard. All pods 1/1 Running.
+- **API:**
+  - `/health` ok, `/model` linked to v2;
+  - `POST /score` without a key or with a wrong key: 401;
+  - with the key on a stored event: 200, duplicate, the demo's score.
+- **Scoring:** 20 new events (TransactionID 3459472-3459491), all `features=feast`; scores
+  identical to the demo database 20/20; lag 0, DLQ empty. The cluster database now holds 60
+  scored transactions.
+- **Dashboard** (Streamlit AppTest in the pod, view only): the sign-in form comes first; signed
+  in as the Secret's user, all 5 pages render without an exception.
+- **Drift CronJob:** active, not suspended, but it has never run in this namespace. On 60 rows a
+  run would store "insufficient data" (minimum 1,000 rows).
+
 ### Full deployment (2026-10-25, branch `k8s-full`, Minikube 1.39.0, Kubernetes 1.37.0)
 
 **Feast state:** the materialize Job finished in 72 s inside the cluster: before=12,192,900,
@@ -273,6 +295,13 @@ suspend. The liveness test (14:20:54-14:22:49) ran before it.
 
 ## Not production
 
+- **Manifests not hardened** (dropped from scope on 2026-11-16):
+  - consumers have no readiness probe (liveness only);
+  - images use the mutable tag `:k8s-local`, not a git SHA or digest;
+  - the Kafka and drift init containers run as root;
+  - no NetworkPolicy or PodDisruptionBudget.
+
+  Resource requests and limits are set on every workload.
 - **Single node, single replicas, no replication:** one Kafka broker (RF=1), one PostgreSQL
   without backups or failover, one Redis. A node or pod loss means downtime, and a lost volume
   means lost data.

@@ -20,12 +20,12 @@ is not deployed to real traffic.
 | GNN alone | validation PR-AUC 0.2021 (loses to XGBoost) | [reports/gnn_stacking.md](reports/gnn_stacking.md) |
 | GNN + XGBoost blend | worse than XGBoost for both variants (95% CI [-0.0346, -0.0137] and [-0.0263, -0.0118]); not served | [reports/gnn_blend.md](reports/gnn_blend.md) |
 | GNN with an account (uid) node | no gain: GNN alone 0.2008; blends still worse than XGBoost (transaction -0.0245 [-0.0354, -0.0140], entity -0.0144 [-0.0205, -0.0081]); not served | [docs/gnn.md](docs/gnn.md) "Account node", [reports/gnn_blend_account.md](reports/gnn_blend_account.md) |
-| Load test, `POST /score` (bench copy, one laptop) | 2026-11-15, connection pool (3 runs): one client **15.0-27.9 req/s**, p50 **30-54 ms**; 5 clients 7.6-13.8 req/s, p50 334-605 ms; 0 errors. Unchanged at 5 clients against the single locked connection on 2026-11-11 (12.5-14.3 req/s): removing the lock did not add throughput. Likely bottleneck (diagnosis, not proven): one uvicorn process doing CPU-bound scoring. Laptop noise is large (one client fell from 27.9 to 15.0 req/s over three runs with no code change). Direct API calls on one API process, not comparable to the 46.83 events/s Kafka streaming figure below | [docs/evidence/2026-11-15-api-pool/](docs/evidence/2026-11-15-api-pool/README.md) |
-| Throughput | **46.83 events/s** on 3 consumers (unthrottled, 1,000-event backlog; scorer p50 48 ms in that run); scorer p50 **41 ms** at a steady 5 events/s | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
+| Load test, `POST /score` (bench copy, one laptop) | 2026-11-15, connection pool (3 runs): one client **15.0-27.9 req/s**, p50 **30-54 ms**; 5 clients 7.6-13.8 req/s, p50 334-605 ms; 0 errors. Unchanged at 5 clients against the single locked connection on 2026-11-11 (12.5-14.3 req/s, [docs/evidence/2026-11-11-load-test/](docs/evidence/2026-11-11-load-test/README.md)): removing the lock did not add throughput. Likely bottleneck (diagnosis, not proven): one uvicorn process doing CPU-bound scoring. Laptop noise is large (one client fell from 27.9 to 15.0 req/s over three runs with no code change). Direct API calls on one API process, not comparable to the 46.83 events/s Kafka streaming figure below | [docs/evidence/2026-11-15-api-pool/](docs/evidence/2026-11-15-api-pool/README.md) |
+| Throughput | **46.83 events/s** on 3 consumers (unthrottled, 1,000-event backlog; scorer p50 48 ms in that run); scorer p50 **41 ms** at a steady 5 events/s. Measured 2026-10-25 on ca57b2c (`consumer-throughput`); not re-measured after the producer idempotence (M1) and connection-pool (S3) changes. A 200-event replay on main b62c29b (2026-11-16) scored bit-identically to the demo ([docs/evidence/2026-11-16-m2/](docs/evidence/2026-11-16-m2/README.md) B1) | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
 | Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
 | Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
 | Fraud rings (exploratory) | GNN-ranked top-20 rings: 17.23% labelled fraud per transaction vs 3.50% overall as reported, but that reuses labels within a ring; with a strict temporal check (rank on training blocks, rate on validation rows only) 2.22% vs 2.35% in the same rings, on 8 frauds (account graph: 1.42%, 5 frauds), so the ranking shows no lift. Uids with a missing address are excluded, see Known limitations | [docs/gnn.md](docs/gnn.md) "Ring ranking check" |
-| Tests | 607 unit passed + 1 skipped (an opt-in demo-DB test) with the GNN extras (local, 2026-11-02); 582 passed + 11 skipped without them and 41 integration passed (CI run #83, PR #33) | CI run #83; full logs: [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) (2026-11-02). CI differs from local because its unit job has no GNN stack and no IEEE-CIS dataset, so those tests skip there. |
+| Tests | 726 unit passed + 1 skipped (an opt-in demo-DB test) with the GNN extras and 44 integration passed (local, main b62c29b, 2026-11-16); 709 passed + 3 skipped in a fresh clone without the GNN extras; CI run #116: 701 passed + 11 skipped, 44 integration passed | CI run #116; full logs: [docs/test-results-unit.txt](docs/test-results-unit.txt), [docs/test-results-integration.txt](docs/test-results-integration.txt) (2026-11-16). CI differs from local because its unit job has no GNN stack and no IEEE-CIS dataset, so those tests skip there. |
 
 On one laptop with 3 consumer containers, the scoring pipeline processed **46.8 events/s** unthrottled. At a steady 5 events/s, scoring one event (Feast state read, features, XGBoost, PostgreSQL write, Feast state push) took **41 ms p50 / 109 ms p99**, and an event was in the database **31 ms p50 / 74 ms p99** after it was produced (1,000 replayed validation events; docs/serving.md "Throughput benchmark").
 
@@ -78,8 +78,8 @@ plus "(anonymised)". Contributions explain the model's score, not the cause of f
   = the stored score within 1e-6; otherwise the panel shows a warning instead of bars. All
   5,093 demo alerts pass (max |score difference| 7.0e-8, max |sum - margin| 5.4e-6).
 - Screenshot: [case 1502, why flagged](docs/screenshots/case-why-flagged.png).
-- Minikube: the dashboard image was rebuilt on 2026-10-30 from 4b811c8 (main has since changed only src/graph/rings.py, which the dashboard does not import), but the cluster
-  has no feature file, so the panel shows "No explanation data in this deployment".
+- Minikube: the dashboard image was rebuilt on 2026-11-16 from main b62c29b (with sign-in), but
+  the cluster has no feature file, so the panel shows "No explanation data in this deployment".
 
 **Sessions** (sign-in from 2026-11-15; checked 2026-11-15 in Edge with Playwright, headless
 and visible, view only):
@@ -99,9 +99,16 @@ and visible, view only):
 
 ## Setup from a fresh clone
 
-> **Verified 2026-10-28 from a fresh clone** (data copied; Kaggle download not tested).
-> On Windows 11 (Git Bash), steps 1-3 and the Quickstart ran without an error; integration
-> tests, lint/types and the GNN extras were not re-run in that clone.
+> **Verified 2026-11-16 from a fresh clone of main b62c29b** (data copied; Kaggle download not
+> tested; [docs/evidence/2026-11-16-m2/](docs/evidence/2026-11-16-m2/README.md) B4). On
+> Windows 11 (Git Bash):
+> - the install, step 1 (590,540 rows, 3.4990%) and step 2 (v2 rebuilt byte for byte) ran
+>   without an error;
+> - step 3 gave 709 passed, 3 skipped.
+>
+> The Quickstart was last run from a clone on 2026-10-28, before the API key and dashboard
+> sign-in. Integration tests, lint/types and the GNN extras were not re-run in a clone (they ran
+> in the working checkout on the same day).
 
 Needs Python 3.11 and Docker Desktop; the loaded data alone takes about 1.5 GB of RAM. Windows
 `cmd` first, macOS/Linux second.
@@ -161,8 +168,9 @@ streamlit, xgboost); it has not hung.
      start: they log a WARNING "no registry.json ... not linked" and `/model` returns
      `linked: false` with null registry fields.
 3. **Unit tests** (no services needed): `.venv\Scripts\python -m pytest
-   --ignore=tests/test_integration.py`. Expect **582 passed, 11 skipped** without the GNN extras
-   (607 passed, 1 skipped with `requirements-gnn.txt` installed), about 8-18 minutes.
+   --ignore=tests/test_integration.py`. Expect **709 passed, 3 skipped** without the GNN extras
+   (726 passed, 1 skipped with `requirements-gnn.txt` installed; 2026-11-16), about 9-18 minutes
+   on an idle laptop.
 4. **Integration tests** use a separate Compose project that never touches the demo stack:
    ```
    docker compose -f docker-compose.test.yml up -d --wait
@@ -227,7 +235,14 @@ needs `-H "X-API-Key: <API_KEY>"`; `/health` does not. Scoring details:
 The same services run in Minikube (namespace `fraud-k8s`) with a Feast materialize Job, a
 producer Job, consumer liveness checks and a drift CronJob (checks only). The cluster uses a
 small replay, not the full demo database. Build, deploy and verify steps, and results:
-[docs/kubernetes.md](docs/kubernetes.md).
+[docs/kubernetes.md](docs/kubernetes.md). Last redeployed 2026-11-16 from main b62c29b, with
+Secret `fraud-auth`:
+- all pods Ready;
+- `POST /score` 401 without the key;
+- 20 new events scored identically to the demo database;
+- dashboard sign-in and all pages ok.
+
+Evidence: [docs/evidence/2026-11-16-m2/](docs/evidence/2026-11-16-m2/README.md) B5.
 
 ```
 minikube start --driver=docker --cpus=4 --memory=4g
@@ -298,6 +313,20 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
   `drift_reports` 1-9 were back-filled (see "Experiment tracking").
 - Local demo: single-node Kafka, no TLS, no secrets manager, local MLflow
   (SQLite, no server).
+- Kubernetes manifests are not hardened (hardening was dropped from scope on 2026-11-16):
+  - the consumers have a liveness probe but no readiness probe;
+  - images use the mutable tag `:k8s-local`, not a git SHA or digest;
+  - the Kafka and drift init containers run as root;
+  - no NetworkPolicy, PodDisruptionBudget, Ingress or TLS;
+  - one replica except the consumers (3).
+
+  Resource requests and limits are set on every workload ([docs/kubernetes.md](docs/kubernetes.md)
+  "Not production").
+- Demo Kafka topic: 118,109 offsets vs 118,108 stored rows. The offsets were already 118,109 on
+  2026-10-24, and the messages are gone (retention), so the cause cannot be proven. The likely
+  cause: a send retried by the event producer, which was not idempotent before 2026-11-12 (M1);
+  the consumer dropped the duplicate by its `TransactionID` key. No row is missing or doubled
+  ([docs/serving.md](docs/serving.md)).
 - Scheduled retraining (Task Scheduler, every 6 h) runs on the host only, and only while the
   laptop is on, awake and the user is logged on; a missed run starts when the laptop is back.
   The Minikube CronJob still runs drift checks only (`--no-retrain`): in-cluster retraining
