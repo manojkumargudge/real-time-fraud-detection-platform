@@ -81,6 +81,22 @@ plus "(anonymised)". Contributions explain the model's score, not the cause of f
 - Minikube: the dashboard image was rebuilt on 2026-10-30 from 4b811c8 (main has since changed only src/graph/rings.py, which the dashboard does not import), but the cluster
   has no feature file, so the panel shows "No explanation data in this deployment".
 
+**Sessions** (sign-in from 2026-11-15; checked 2026-11-15 in Edge with Playwright, headless
+and visible, view only):
+
+- The signed-in name is kept in the Streamlit server's memory, in the session of one open
+  page. It is not in the URL, a cookie or browser storage. The only cookie is Streamlit's
+  `_streamlit_xsrf`.
+- The page holds the random session id in JavaScript memory only. A reload (F5 or the reload
+  button), a new tab or a fresh browser profile opens a new session, which shows the sign-in
+  form. Copying the URL does not carry the sign-in.
+- A short network drop without a reload reconnects to the same session, so the user stays
+  signed in. Streamlit keeps a disconnected session for 120 s (`server.disconnectedSessionTTL`).
+- Sign-out removes the name on the server. Neither a reconnect nor a reload afterwards
+  brings it back.
+- Restarting the dashboard container signs everyone out. Sessions live only in memory, so this
+  follows from the design; it was not tested separately.
+
 ## Setup from a fresh clone
 
 > **Verified 2026-10-28 from a fresh clone** (data copied; Kaggle download not tested).
@@ -315,8 +331,9 @@ PostgreSQL; they are not in MLflow (the back-fill covers ids 1-9).
   a failed push is only logged ([docs/feature_store.md](docs/feature_store.md)).
 - Authentication is minimal (2026-11-15):
   - one shared API key for `POST /score`, with no per-client keys, rotation or rate limit;
-  - dashboard sign-in from bcrypt hashes in `DASHBOARD_USERS`, with no roles, lockout or
-    session expiry beyond the browser session;
+  - dashboard sign-in from bcrypt hashes in `DASHBOARD_USERS`, with no roles or lockout;
+  - no idle timeout: a dashboard tab that stays open and connected stays signed in until
+    sign-out, a reload or a dashboard restart (see Dashboard, "Sessions");
   - no TLS; Kafka has no authentication.
   - Reviews made before 2026-11-15 keep their self-declared analyst names.
 - Dashboard: no connection pool, one replica.
