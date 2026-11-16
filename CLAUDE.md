@@ -23,6 +23,10 @@ and containerized deployment.
 - Prevent target leakage and use appropriate validation for transaction data.
 - Keep training and serving feature definitions consistent.
 - Add meaningful tests for each feature and run them before reporting completion.
+- Run the FULL unit suite (`python -m pytest --ignore=tests/test_integration.py -rfEs`, the CI
+  command) locally before every push to a PR, not only the "related" test files (user rule
+  2026-11-16, after CI #112 failed on test_explain.py / test_registry_link.py that a related-only
+  run had skipped). Report the pass/fail counts.
 - Dashboard tests must drive the real user path (type into widgets, navigate via
   open_case/switch_page), not inject session_state.
 - Every comparison check (backup vs live, before vs after, A vs B) must assert both sides are
