@@ -43,6 +43,12 @@ The knee is unchanged: going from 1 to 5 clients lowers throughput and multiplie
 10, because the API's store is one PostgreSQL connection behind a lock
 (`src/serving/store.py`) and the endpoint runs in one uvicorn process.
 
+> **Superseded (2026-11-15):** the lock was not the cause. With a connection pool instead of
+> the lock, 5 clients got 7.6-13.8 req/s, no more than here
+> ([../2026-11-15-api-pool/](../2026-11-15-api-pool/README.md)). The likely bottleneck is
+> one uvicorn process doing CPU-bound scoring (a diagnosis, not proven). The numbers above
+> stand as the "before" measurement.
+
 **Not explained.** Differences between the two days that could matter, none tested in isolation:
 a later and larger replay slice (bench copy 112,108 vs 88,108 rows, so longer per-customer
 history and larger tables), the laptop's background load (not controlled), and Docker Desktop

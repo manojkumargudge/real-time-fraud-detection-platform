@@ -9,10 +9,20 @@ and the real `mlflow.db` (opened with SQLite `mode=ro`; sha256 `dd198df9…` unc
 | S2 train/serve parity | `s2_parity_tests.txt` | `pytest -v` on the Feast parity tests (`test_feast_store.py`, `test_entity_state.py`, `test_feast_training.py`) | **16 passed** |
 | S3 MLflow runs | `s3_mlflow_runs.txt` | every run per experiment from `mlflow.db` | 44 active runs (fraud-xgboost 16, fraud-gnn 11, fraud-evaluation 8, fraud-drift 9); class weights vs none: `scale_pos_weight` mean valid PR-AUC **0.2517** vs `none` **0.2935** over 3 seeds; W1 0.2212 vs 0.2349, W2 0.2528 vs 0.2958 |
 | S4 graph + blend | `s4_graph_nodes.txt` | `build_graph` + `to_hetero` (PyG 2.8.1) on the real data, default and `--graph account` | node types tx, card (14,816), device (1,781), p_email, r_email, addr1, and account (40,392) in the account graph; 4 blend runs in MLflow, all worse than XGBoost v2 (CI below zero) |
-| S5 streaming on the bench copy | not in this commit | | see "Remaining" |
+| S5 streaming on the bench copy | [../2026-11-16-m2/](../2026-11-16-m2/README.md) B1 | 200 events through producer -> Kafka -> 3 consumers on `fraud_bench` (main b62c29b) | 200 stored, scores bit-identical to the demo 200/200, 6/6 alerts, 0 duplicates, DLQ 0, lag 0 |
 | Load test | [../2026-11-11-load-test/](../2026-11-11-load-test/README.md) | 3 runs, c=1 and c=5, 60 s | c=1 24-29 req/s, p50 31-34 ms; c=5 12.5-14.3 req/s; README's 2026-10-30 figures not reproduced |
 
-## Remaining (not yet captured in this folder)
+## Remaining (as written on 2026-11-11)
+
+**Closed on 2026-11-16** in [../2026-11-16-m2/](../2026-11-16-m2/README.md):
+- S2 live evidence (consumer and API logs): B1.
+- S5: B1.
+- S6: B2, a copy run on main.
+- S7 dashboard + Minikube: B5.
+- Tests and scanners: B3.
+- The 118,109-offset note: README "Known limitations".
+
+The list below is kept as written then.
 
 - S2 live evidence: consumer log lines with `features=feast` (captured 2026-11-11 in the
   gitignored `reports/bench/s5-2026-11-11.consumer-*.log`, 200 of 200 events); an API-side live
