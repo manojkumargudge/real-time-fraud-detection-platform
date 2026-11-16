@@ -1,0 +1,13 @@
+13:30:52 cloning demo database fraud -> fraud_bench (pg_dump | pg_restore, demo only read)
+13:31:06 loading the validation events from the raw data
+13:32:02 deleting the last 30000 events (TransactionDT >= 14849492) from fraud_bench
+  current database: fraud_bench
+  current database: fraud_bench
+  current database: fraud_bench
+  current database: fraud_bench
+13:32:05 fraud_bench: {'scored_transactions': 88108, 'alerts': 3830, 'drift_reports': 9, 'fraud_rings': 20}, deleted alerts=1263; history ids == raw ids before the cut
+13:32:05 starting bench Redis and building the Feast state (batch transactions before the cut)
+13:32:59 materialized in 48 s; bench Redis keys=56830
+13:32:59 building the consumer image from this checkout and starting 3 bench consumers
+13:33:17 3 bench consumers joined the group
+13:33:17 setup done

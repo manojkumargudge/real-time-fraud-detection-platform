@@ -1,0 +1,2 @@
+bandit 1.9.4: bandit -r src -ll -q
+exit 0, no output (no medium or high findings in src/)
