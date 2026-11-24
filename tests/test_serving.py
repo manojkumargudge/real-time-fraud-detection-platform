@@ -60,7 +60,8 @@ def test_production_api_protects_metadata_and_limits_concurrent_scores(
         assert client.post("/score", json=event()).status_code == 401
 
         def score(tid: int) -> int:
-            return client.post("/score", json=event(TransactionID=tid), headers=headers).status_code
+            response = client.post("/score", json=event(TransactionID=tid), headers=headers)
+            return int(response.status_code)
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             assert sorted(pool.map(score, range(10, 14))) == [200, 429, 429, 429]

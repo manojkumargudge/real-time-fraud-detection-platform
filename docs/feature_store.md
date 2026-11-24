@@ -140,10 +140,12 @@ changing device/address; SQLite and Redis) and live data (700 real events read b
    across the feature read, score persistence and Feast update. Every UID belongs to one card,
    so the lock covers both state views across API and consumer processes. Maintenance jobs
    that write Feast state must run with live writers stopped.
-4. **Failed pushes.** Known limitation: a push that fails after the event is saved is only
-   logged (`feast update failed ...`) and the state stays stale. Recovery needs an
-   automatic catch-up (record the last applied `TransactionID` per entity and replay the
-   missed events from `scored_transactions` or the Kafka topic).
+4. **Failed pushes.** PostgreSQL commits the score, alert and pending Feast update together.
+   A retry, duplicate or next event for the card replays the pending update under the same
+   lock. It uses the saved previous state and the same write timestamps for idempotent replay
+   even when only one state view was written. A failing update blocks further scoring for
+   that card and the Kafka retry holds the partition. The production Redis uses synchronous AOF
+   persistence. Complete loss of the Redis volume still requires coordinated recovery.
 5. **Float rounding**: amount sums are accumulated incrementally instead of with the batch
    prefix sums; differences are at float64 rounding level and disappear in the float32 model
    input (tests use `rtol=1e-6`).

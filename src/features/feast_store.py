@@ -494,10 +494,9 @@ class FeastFeatures:
     ) -> None:
         """Apply ``event`` to the state read with it and write both entities back.
 
-        Known limitation: read-modify-write, so concurrent events for one entity can lose an
-        update; fix would be an atomic per-entity update (Redis Lua/``WATCH``) or a single writer.
-        Known limitation: a failed push is only logged by the caller; fix would be a catch-up that
-        replays missed events from ``scored_transactions`` per entity.
+        Callers must serialize concurrent writers for a card. With the same input state, a
+        retry writes the same values and timestamps to both views. The PostgreSQL scorer
+        uses that property to recover after a partial push.
         """
         if uid is None or card is None:
             return

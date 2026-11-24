@@ -36,6 +36,10 @@ class LateEventError(ValueError):
     """The online state has advanced past the input event timestamp."""
 
 
+class PendingFeastUpdateError(ConnectionError):
+    """A committed score has a pending feature update that must be retried."""
+
+
 @dataclass
 class Scorer:
     bundle: ModelBundle
@@ -74,14 +78,25 @@ class Scorer:
         with stage("dedupe_get"):
             existing = self.store.get(event.TransactionID)
         if existing is not None:
+            if (
+                existing.card_id is not None
+                and self.feast
+                and isinstance(self.store, PostgresStore)
+            ):
+                with self.store.serialize_card(existing.card_id):
+                    self._recover_feast(self.store, existing.card_id)
             return self._duplicate(existing, ev, started)
 
         with stage("entity_keys"):
             frame = events_to_frame([ev])  # once per event: keys and the model row
             card_id, uid = entity_keys_from_frame(frame)
-        if card_id is not None and self.feast is not None and isinstance(self.store, PostgresStore):
+        if card_id is not None and self.feast and isinstance(self.store, PostgresStore):
             with self.store.serialize_card(card_id):
-                return self._score_new(event, ev, frame, card_id, uid, started)
+                self._recover_feast(self.store, card_id)
+                existing = self.store.get(event.TransactionID)
+                if existing is not None:
+                    return self._duplicate(existing, ev, started)
+                return self._score_new(event, ev, frame, card_id, uid, started, self.store)
         return self._score_new(event, ev, frame, card_id, uid, started)
 
     def _score_new(
@@ -92,6 +107,7 @@ class Scorer:
         card_id: str | None,
         uid: str | None,
         started: float,
+        durable: PostgresStore | None = None,
     ) -> ScoreResponse:
         config = self.bundle.history_config
         online: dict[str, Any] | None = None
@@ -101,6 +117,10 @@ class Scorer:
                 online.get(field) is not None and online[field] > event.TransactionDT
                 for field in ("uid_last_ts", "card_last_ts")
             ):
+                # A parallel delivery may have committed while this request waited for the lock.
+                existing = self.store.get(event.TransactionID)
+                if existing is not None:
+                    return self._duplicate(existing, ev, started)
                 raise LateEventError("Transaction timestamp predates online feature state")
             with stage("model_frame"):
                 row = model_row_from_features(frame, feats, config)
@@ -126,7 +146,13 @@ class Scorer:
             model_version=self.bundle.model_version,
         )
         with stage("pg_save"):
-            saved = self.store.save(record)
+            if durable is not None and card_id is not None and uid is not None:
+                assert self.feast is not None
+                if online is None:
+                    _, online = self.feast.read(ev, card_id, uid)
+                saved = durable.save(record, feast_online=online)
+            else:
+                saved = self.store.save(record)
         if not saved:  # lost a race with a concurrent duplicate
             stored = self.store.get(event.TransactionID)
             if stored is None:
@@ -134,7 +160,11 @@ class Scorer:
             return self._duplicate(stored, ev, started)
         if self.feast is not None:
             with stage("feast_push"):
-                self._update_feast(ev, card_id, uid, online)
+                if durable is not None and card_id is not None and uid is not None:
+                    assert online is not None
+                    self._push_pending(durable, card_id, uid, ev, online)
+                else:
+                    self._update_feast(ev, card_id, uid, online)
 
         latency_ms = (time.perf_counter() - started) * 1000
         logger.info(
@@ -154,6 +184,28 @@ class Scorer:
             latency_ms=latency_ms,
             history_features=history_feature_values(row, config),
         )
+
+    def _recover_feast(self, store: PostgresStore, card_id: str) -> None:
+        pending = store.pending_feast(card_id)
+        if pending is not None:
+            self._push_pending(store, card_id, pending["uid"], pending["event"], pending["online"])
+
+    def _push_pending(
+        self,
+        store: PostgresStore,
+        card_id: str,
+        uid: str,
+        event: dict[str, Any],
+        online: dict[str, Any],
+    ) -> None:
+        assert self.feast is not None
+        try:
+            # The saved pre-update state yields the same values and write timestamps on retry.
+            self.feast.push(event, card_id, uid, online)
+        except Exception as exc:
+            logger.warning("feast update pending error=%s", type(exc).__name__)
+            raise PendingFeastUpdateError("Feature-state update pending") from None
+        store.finish_feast(card_id, int(event["TransactionID"]))
 
     def _update_feast(
         self,

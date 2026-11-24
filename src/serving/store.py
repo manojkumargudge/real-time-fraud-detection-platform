@@ -126,6 +126,11 @@ CREATE TABLE IF NOT EXISTS scored_transactions (
     scored_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_scored_card_dt ON scored_transactions (card_id, transaction_dt);
+CREATE TABLE IF NOT EXISTS pending_feast_updates (
+    card_id TEXT PRIMARY KEY,
+    transaction_id BIGINT NOT NULL REFERENCES scored_transactions (transaction_id),
+    online JSONB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS alerts (
     alert_id BIGSERIAL PRIMARY KEY,
     transaction_id BIGINT NOT NULL UNIQUE REFERENCES scored_transactions (transaction_id),
@@ -296,8 +301,8 @@ class PostgresStore:
             ).fetchall()
         return [r["event"] for r in rows]
 
-    def save(self, record: ScoredRecord) -> bool:
-        # One transaction: the scored row and its alert, or neither.
+    def save(self, record: ScoredRecord, *, feast_online: dict[str, Any] | None = None) -> bool:
+        # The score, alert and optional feature recovery record commit together.
         with self._connection() as conn, conn.transaction():
             inserted = conn.execute(
                 "INSERT INTO scored_transactions (transaction_id, transaction_dt, card_id, "
@@ -322,7 +327,29 @@ class PostgresStore:
                     "ON CONFLICT (transaction_id) DO NOTHING",
                     (record.transaction_id, record.score),
                 )
+            if inserted and feast_online is not None:
+                conn.execute(
+                    "INSERT INTO pending_feast_updates (card_id, transaction_id, online) "
+                    "VALUES (%s, %s, %s)",
+                    (record.card_id, record.transaction_id, json.dumps(feast_online)),
+                )
         return inserted is not None
+
+    def pending_feast(self, card_id: str) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            return conn.execute(
+                "SELECT uid, event, online, transaction_id FROM pending_feast_updates "
+                "JOIN scored_transactions USING (transaction_id) "
+                "WHERE pending_feast_updates.card_id = %s",
+                (card_id,),
+            ).fetchone()
+
+    def finish_feast(self, card_id: str, transaction_id: int) -> None:
+        with self._connection() as conn:
+            conn.execute(
+                "DELETE FROM pending_feast_updates WHERE card_id = %s AND transaction_id = %s",
+                (card_id, transaction_id),
+            )
 
     def ping(self) -> bool:
         try:

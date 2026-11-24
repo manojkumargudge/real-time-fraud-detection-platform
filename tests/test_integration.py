@@ -660,6 +660,56 @@ def test_concurrent_feast_scoring_preserves_same_timestamp_updates(
 
 
 @needs_db
+@needs_redis
+def test_feast_update_resumes_after_partial_write(
+    bundle_dir: Path, tmp_path: Path, pg_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.features import feast_store as fs
+    from src.serving.scorer import PendingFeastUpdateError
+
+    assert REDIS
+    bundle = ModelBundle.load(bundle_dir)
+    project = f"test_{uuid.uuid4().hex[:8]}"
+    redis_store = fs.open_store(
+        tmp_path, redis=REDIS, config=bundle.history_config, project=project
+    )
+    feast = fs.FeastFeatures(redis_store, bundle.history_config)
+    provider = redis_store._get_provider()
+    ingest = provider.ingest_df
+    interrupted = False
+
+    def fail_second_write(view: Any, frame: pd.DataFrame) -> None:
+        nonlocal interrupted
+        if view.name == fs.CARD_VIEW and not interrupted:
+            interrupted = True
+            raise ConnectionError("injected Redis write failure after UID update")
+        ingest(view, frame)
+
+    monkeypatch.setattr(provider, "ingest_df", fail_second_write)
+    first = TransactionEvent.model_validate(event(TransactionID=1, TransactionDT=100))
+    pg = PostgresStore(pg_dsn, pool_size=1)
+    retry = PostgresStore(pg_dsn, pool_size=1)
+    try:
+        with pytest.raises(PendingFeastUpdateError):
+            Scorer(bundle, pg, feast, read_from_feast=True).score_event(first)
+        saved = pg.get(1)
+        assert saved is not None and saved.card_id is not None
+        assert pg.pending_feast(saved.card_id) is not None
+        restarted = Scorer(bundle, retry, feast, read_from_feast=True)
+        assert restarted.score_event(first).duplicate is True
+        assert retry.pending_feast(saved.card_id) is None
+        later = TransactionEvent.model_validate(event(TransactionID=2, TransactionDT=101))
+        result = restarted.score_event(later)
+        assert result.history_rows == 1
+        assert result.history_features["card_addr1_changed"] == 0
+        assert retry.counts()["scored_transactions"] == 2
+    finally:
+        retry.close()
+        pg.close()
+        redis_store.teardown()
+
+
+@needs_db
 @pytest.mark.parametrize("mode", ["fired", "forced"])
 def test_drift_job_end_to_end_writes_drift_reports(
     mode: str,
