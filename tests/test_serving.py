@@ -6,6 +6,7 @@ import shutil
 import signal
 import threading
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, cast
 
@@ -42,6 +43,37 @@ from tests.kafka_fakes import NO_WAIT, FakeConsumer, FakeDeadLetterSink, FakeErr
 NAMES = HistoryConfig().feature_names()
 PARITY_EVENTS = 800
 REAL_PARITY_EVENTS = 300
+
+
+def test_production_api_protects_metadata_and_limits_concurrent_scores(
+    scorer: Scorer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("API_REQUESTS_PER_MINUTE", "1")
+    key = "test-only-production-key-at-least-32-characters"
+    headers = {API_KEY_HEADER: key}
+    with TestClient(create_app(scorer, api_key=key, production=True)) as client:
+        assert client.get("/health").json() == {"status": "ok"}
+        assert client.get("/openapi.json").status_code == 404
+        assert client.get("/docs").status_code == 404
+        assert client.get("/model").status_code == 401
+        assert client.get("/model", headers=headers).status_code == 200
+        assert client.post("/score", json=event()).status_code == 401
+
+        def score(tid: int) -> int:
+            return client.post("/score", json=event(TransactionID=tid), headers=headers).status_code
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            assert sorted(pool.map(score, range(10, 14))) == [200, 429, 429, 429]
+
+
+def test_production_api_redacts_validation_input(scorer: Scorer) -> None:
+    key = "test-only-production-key-at-least-32-characters"
+    with TestClient(create_app(scorer, api_key=key, production=True)) as client:
+        response = client.post(
+            "/score", json=event(TransactionAmt=-333333), headers={API_KEY_HEADER: key}
+        )
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Invalid transaction"}
 
 
 def event(**overrides: Any) -> dict[str, Any]:
@@ -675,7 +707,7 @@ class TestConsumerLoop:
             assert {"poll", "process", "commit", "dedupe_get", "entity_keys", "predict"} <= set(
                 stages
             )
-            assert lines[0].startswith("stages id=1 status=scored ")
+            assert lines[0].startswith("stages status=scored ")
 
     def test_idle_timeout_stops(self, scorer: Scorer) -> None:
         counts = consumer_mod.run(

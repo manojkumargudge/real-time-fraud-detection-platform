@@ -79,5 +79,9 @@ class Settings:
             )
             feast = FeastFeatures(store, bundle.history_config)
         return Scorer(
-            bundle, self.build_store(), feast=feast, read_from_feast=self.feature_source == "feast"
+            bundle,
+            self.build_store(),
+            feast=feast,
+            read_from_feast=self.feature_source == "feast",
+            reject_late=os.getenv("FRAUD_PRODUCTION") == "1",
         )

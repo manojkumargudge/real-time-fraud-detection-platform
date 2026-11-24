@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -608,6 +609,54 @@ def test_feast_redis_replay_matches_the_store_path(bundle_dir: Path, tmp_path: P
             assert b.score == pytest.approx(a.score, abs=1e-6)
     finally:
         store.teardown()  # deletes this project's keys from Redis
+
+
+@needs_db
+@needs_redis
+def test_concurrent_feast_scoring_preserves_same_timestamp_updates(
+    bundle_dir: Path, tmp_path: Path, pg_dsn: str
+) -> None:
+    from src.features import feast_store as fs
+    from src.serving.scorer import LateEventError
+
+    assert REDIS
+    bundle = ModelBundle.load(bundle_dir)
+    project = f"test_{uuid.uuid4().hex[:8]}"
+    redis_store = fs.open_store(
+        tmp_path, redis=REDIS, config=bundle.history_config, project=project
+    )
+    stores = [PostgresStore(pg_dsn, pool_size=1) for _ in range(4)]
+    scorers = [
+        Scorer(
+            bundle,
+            store,
+            feast=fs.FeastFeatures(redis_store, bundle.history_config),
+            read_from_feast=True,
+            reject_late=True,
+        )
+        for store in stores
+    ]
+    batch = (1, 2, 3, 1)
+
+    def score(index: int) -> ScoreResponse:
+        txn = TransactionEvent.model_validate(event(TransactionID=batch[index], TransactionDT=100))
+        return scorers[index].score_event(txn)
+
+    try:
+        with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+            results = list(pool.map(score, range(len(batch))))
+        assert sum(result.duplicate for result in results) == 1
+        assert all(result.history_rows == 0 for result in results)
+        later = TransactionEvent.model_validate(event(TransactionID=4, TransactionDT=101))
+        assert scorers[0].score_event(later).history_rows == 3
+        late = TransactionEvent.model_validate(event(TransactionID=5, TransactionDT=100))
+        with pytest.raises(LateEventError):
+            scorers[1].score_event(late)
+        assert stores[0].get(5) is None
+    finally:
+        for store in stores:
+            store.close()
+        redis_store.teardown()
 
 
 @needs_db

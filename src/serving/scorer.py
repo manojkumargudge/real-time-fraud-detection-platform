@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
+
 from src.serving.model import ModelBundle
 from src.serving.online_features import (
     entity_keys_from_frame,
@@ -21,7 +23,7 @@ from src.serving.online_features import (
     online_model_row,
 )
 from src.serving.schema import ScoreResponse, TransactionEvent
-from src.serving.store import ScoredRecord, TransactionStore
+from src.serving.store import PostgresStore, ScoredRecord, TransactionStore
 from src.timing import stage
 
 if TYPE_CHECKING:
@@ -30,12 +32,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class LateEventError(ValueError):
+    """The online state has advanced past the input event timestamp."""
+
+
 @dataclass
 class Scorer:
     bundle: ModelBundle
     store: TransactionStore
     feast: FeastFeatures | None = None
     read_from_feast: bool = False
+    reject_late: bool = False
 
     def __post_init__(self) -> None:
         if self.read_from_feast and self.feast is None:
@@ -49,10 +56,7 @@ class Scorer:
         self, record: ScoredRecord, event: dict[str, Any], started: float
     ) -> ScoreResponse:
         if record.event != event:
-            logger.warning(
-                "duplicate transaction_id with different payload id=%d; returning stored score",
-                record.transaction_id,
-            )
+            logger.warning("duplicate transaction_id with different payload")
         return ScoreResponse(
             transaction_id=record.transaction_id,
             score=record.score,
@@ -75,10 +79,29 @@ class Scorer:
         with stage("entity_keys"):
             frame = events_to_frame([ev])  # once per event: keys and the model row
             card_id, uid = entity_keys_from_frame(frame)
+        if card_id is not None and self.feast is not None and isinstance(self.store, PostgresStore):
+            with self.store.serialize_card(card_id):
+                return self._score_new(event, ev, frame, card_id, uid, started)
+        return self._score_new(event, ev, frame, card_id, uid, started)
+
+    def _score_new(
+        self,
+        event: TransactionEvent,
+        ev: dict[str, Any],
+        frame: pd.DataFrame,
+        card_id: str | None,
+        uid: str | None,
+        started: float,
+    ) -> ScoreResponse:
         config = self.bundle.history_config
         online: dict[str, Any] | None = None
         if self.read_from_feast and self.feast is not None:
             feats, online = self.feast.read(ev, card_id, uid)
+            if self.reject_late and any(
+                online.get(field) is not None and online[field] > event.TransactionDT
+                for field in ("uid_last_ts", "card_last_ts")
+            ):
+                raise LateEventError("Transaction timestamp predates online feature state")
             with stage("model_frame"):
                 row = model_row_from_features(frame, feats, config)
             prior = feats["uid_prior_txn_count"]
@@ -107,7 +130,7 @@ class Scorer:
         if not saved:  # lost a race with a concurrent duplicate
             stored = self.store.get(event.TransactionID)
             if stored is None:
-                raise RuntimeError(f"save reported a duplicate but id {event.TransactionID} absent")
+                raise RuntimeError("save reported a duplicate but the record is absent")
             return self._duplicate(stored, ev, started)
         if self.feast is not None:
             with stage("feast_push"):
@@ -115,10 +138,7 @@ class Scorer:
 
         latency_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            "scored id=%d score=%.4f alert=%s history_rows=%d features=%s latency_ms=%.1f",
-            record.transaction_id,
-            score,
-            record.is_alert,
+            "scored history_rows=%d features=%s latency_ms=%.1f",
             history_rows,
             self.feature_source,
             latency_ms,
@@ -149,7 +169,5 @@ class Scorer:
             if online is None:
                 _, online = self.feast.read(ev, card_id, uid)
             self.feast.push(ev, card_id, uid, online)
-        except Exception:
-            logger.exception(
-                "feast state update failed id=%s; rerun materialize", ev.get("TransactionID")
-            )
+        except Exception as exc:
+            logger.error("feast update failed error=%s; rerun materialize", type(exc).__name__)

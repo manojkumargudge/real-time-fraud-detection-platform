@@ -176,7 +176,7 @@ class _Worker:
             if outcome.status == "invalid":
                 self._dead_letter(msg, "invalid", attempt, outcome.cause)
             elif outcome.status == "duplicate":
-                logger.info("duplicate id=%s skipped %s", outcome.transaction_id, _where(msg))
+                logger.info("duplicate skipped %s", _where(msg))
             return outcome
 
     def _dead_letter(
@@ -187,9 +187,9 @@ class _Worker:
         while True:
             try:
                 self.dead_letters.send(letter)
-            except DeadLetterError as err:  # DLQ unavailable: retry, never commit before it
+            except DeadLetterError:  # DLQ unavailable: retry, never commit before it
                 failures += 1
-                logger.error("DLQ write failed attempt=%d: %s %s", failures, err, _where(msg))
+                logger.error("DLQ write failed attempt=%d %s", failures, _where(msg))
                 self._backoff(self.policy.delay(failures), msg)
                 continue
             self.counts["dead_lettered"] += 1
@@ -398,8 +398,7 @@ def run(
                 stages["poll"] = poll_ms
                 stages["commit"] = (time.perf_counter() - committed_at) * 1000
                 logger.info(
-                    "stages id=%s status=%s %s",
-                    outcome.transaction_id,
+                    "stages status=%s %s",
                     outcome.status,
                     json.dumps({k: round(v, 3) for k, v in stages.items()}),
                 )

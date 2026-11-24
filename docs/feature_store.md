@@ -134,14 +134,14 @@ changing device/address; SQLite and Redis) and live data (700 real events read b
 2. **Late events** (`TransactionDT` older than the entity's latest timestamp). The history path
    still sees exactly the strictly earlier events. The state cannot: the count and amount mean
    include events that came after it, `seconds_since_prev` can be missing, card flags compare
-   with values seen after it, and its own update is approximate. `test_late_event_is_approximate`
-   pins this behaviour.
-3. **Concurrent writes.** Known limitation: the API and the consumer each read-modify-write the
-   whole state, so two events for one entity at the same moment can lose one update; fix would
-   be an atomic per-entity update (a Redis Lua script or `WATCH`/`MULTI` transaction keyed by
-   entity, or routing every write through the consumer, which handles a partition serially).
+   with values seen after it, and its own update is approximate in the demo configuration.
+   With `FRAUD_PRODUCTION=1`, the scorer rejects late events before prediction or persistence.
+3. **Concurrent writes.** PostgreSQL-backed scorers take a per-card advisory session lock
+   across the feature read, score persistence and Feast update. Every UID belongs to one card,
+   so the lock covers both state views across API and consumer processes. Maintenance jobs
+   that write Feast state must run with live writers stopped.
 4. **Failed pushes.** Known limitation: a push that fails after the event is saved is only
-   logged (`feast state update failed ...`) and the state stays stale; fix would be an
+   logged (`feast update failed ...`) and the state stays stale. Recovery needs an
    automatic catch-up (record the last applied `TransactionID` per entity and replay the
    missed events from `scored_transactions` or the Kafka topic).
 5. **Float rounding**: amount sums are accumulated incrementally instead of with the batch

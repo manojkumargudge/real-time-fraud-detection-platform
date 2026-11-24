@@ -772,10 +772,8 @@ def test_a_used_token_is_never_saved_again_and_each_save_is_logged(
     assert kind == "error" and "no longer current" in text and fake.calls == calls
     lines = [r.getMessage() for r in caplog.records if r.name == "src.dashboard.case_form"]
     assert lines == [
-        f"case save ok: alert=1 from=open to=confirmed_fraud analyst='alice' "
-        f"token={form.token} version=1->2",
-        f"case save rejected: alert=1 from=open to=false_positive analyst='alice' "
-        f"token={form.token} version=1->None reason={text!r}",
+        "case save status=success",
+        "case save status=error",
     ]
     # the database is the backstop: the same token reaching it again writes nothing
     with pytest.raises(data.DuplicateSubmitError):

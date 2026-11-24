@@ -15,6 +15,9 @@ import json
 import logging
 import re
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -223,6 +226,9 @@ class PostgresStore:
 
     def __init__(self, dsn: str, *, init_schema: bool = True, pool_size: int | None = None) -> None:
         self._dsn = dsn
+        self._scoring_connection: ContextVar[psycopg.Connection[DictRow] | None] = ContextVar(
+            "scoring_connection", default=None
+        )
         self.pool_size = pool_size if pool_size is not None else pool_size_from_env()
         # min_size 1: a consumer (one thread) keeps one connection; the API grows to pool_size
         # under concurrent requests. check_connection replaces connections the server closed.
@@ -240,8 +246,38 @@ class PostgresStore:
             with self._pool.connection() as conn, conn.transaction():
                 conn.execute(DDL)
 
-    def get(self, transaction_id: int) -> ScoredRecord | None:
+    @contextmanager
+    def serialize_card(self, card_id: str) -> Iterator[None]:
+        """Hold one database session lock across scoring, commit, and the Feast write."""
         with self._pool.connection() as conn:
+            try:
+                conn.execute("SELECT pg_advisory_lock(74912, hashtext(%s))", (card_id,))
+            except BaseException:
+                conn.close()
+                raise
+            token = self._scoring_connection.set(conn)
+            try:
+                yield
+            finally:
+                self._scoring_connection.reset(token)
+                try:
+                    conn.execute("SELECT pg_advisory_unlock(74912, hashtext(%s))", (card_id,))
+                except psycopg.Error:
+                    # A connection returned to the pool must never retain a session lock.
+                    conn.close()
+                    raise
+
+    @contextmanager
+    def _connection(self) -> Iterator[psycopg.Connection[DictRow]]:
+        locked = self._scoring_connection.get()
+        if locked is not None:
+            yield locked
+        else:
+            with self._pool.connection() as conn:
+                yield conn
+
+    def get(self, transaction_id: int) -> ScoredRecord | None:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT transaction_id, transaction_dt, card_id, uid, event, score, "
                 "threshold, is_alert, model_version FROM scored_transactions "
@@ -251,7 +287,7 @@ class PostgresStore:
         return None if row is None else ScoredRecord(**row)
 
     def card_history(self, card_id: str, before_dt: int) -> list[dict[str, Any]]:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT event FROM scored_transactions "
                 "WHERE card_id = %s AND transaction_dt < %s ORDER BY transaction_dt, "
@@ -262,7 +298,7 @@ class PostgresStore:
 
     def save(self, record: ScoredRecord) -> bool:
         # One transaction: the scored row and its alert, or neither.
-        with self._pool.connection() as conn, conn.transaction():
+        with self._connection() as conn, conn.transaction():
             inserted = conn.execute(
                 "INSERT INTO scored_transactions (transaction_id, transaction_dt, card_id, "
                 "uid, event, score, threshold, is_alert, model_version) "
@@ -294,7 +330,7 @@ class PostgresStore:
                 conn.execute("SELECT 1").fetchone()
             return True
         except (psycopg.Error, PoolTimeout):
-            logger.exception("postgres ping failed")
+            logger.warning("postgres ping failed")
             return False
 
     def counts(self) -> dict[str, int]:

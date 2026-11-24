@@ -424,7 +424,7 @@ class TestCommitter:
         with caplog.at_level("INFO", logger="src.streaming.consumer"):
             counts = run(fake, Scorer(bundle, InMemoryStore()), dlq)
         assert counts["duplicate"] == 1
-        assert "duplicate id=3 skipped topic=t partition=0 offset=1" in caplog.text
+        assert "duplicate skipped topic=t partition=0 offset=1" in caplog.text
 
     def test_duplicates_and_conflicting_ids_never_add_or_overwrite_records(
         self, bundle: ModelBundle
