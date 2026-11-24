@@ -704,11 +704,12 @@ class TestConsumerLoop:
         lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("stages ")]
         assert len(lines) == (2 if enabled else 0)
         if enabled:
-            stages = json.loads(lines[0].split(" ", 3)[3])
+            prefix = "stages status=scored "
+            assert lines[0].startswith(prefix)
+            stages = json.loads(lines[0].removeprefix(prefix))
             assert {"poll", "process", "commit", "dedupe_get", "entity_keys", "predict"} <= set(
                 stages
             )
-            assert lines[0].startswith("stages status=scored ")
 
     def test_idle_timeout_stops(self, scorer: Scorer) -> None:
         counts = consumer_mod.run(

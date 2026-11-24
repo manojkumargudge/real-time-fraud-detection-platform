@@ -18,6 +18,7 @@
 
 ## Local evidence
 
+- Fetched main passed 726 local unit tests with one skip. The corrected candidate integration suite passed all 46 tests against isolated PostgreSQL, Kafka and Redis. Coverage included train/serve parity, replay idempotency, late-event handling, drift reporting and promotion safeguards.
 - The recovery regression injected a Redis failure after the UID write. A replay through a separate PostgreSQL scorer finished the card write, returned the original score, cleared the journal and counted the event once for later scoring. The concurrent same-timestamp and late-event regression passed against the isolated PostgreSQL and Redis containers.
 - The first Compose rehearsal verified TLS using Caddy's local CA, an authenticated score and duplicate, HTTP 401 without credentials, and HTTP 404 for API docs and model metadata at ingress. Kafka delivered three synthetic events, including a duplicate, and persisted two scores. The dashboard data layer read the expected model version and one alert.
 - The PostgreSQL scripts restored three scored rows from a three-row source into a separate empty project. The private MLflow server imported `baseline-9fdad27ea3b0` as registry version 1 and verified the downloaded model and metadata byte for byte. This rehearsal used fresh Compose volumes.
@@ -121,6 +122,8 @@ sudo bash deploy/verify.sh API_HOSTNAME DASHBOARD_HOSTNAME
 
 Use the materialization command only for the private IEEE-CIS validation replay, with authorized local files and a compatible stream cutoff. Use a separate empty deployment for synthetic demonstration transactions. The [competition rules](https://www.kaggle.com/c/ieee-fraud-detection/rules) restrict redistribution of competition data. Keep raw data, identifiers and transaction-derived analyst views inaccessible to public visitors. The API initializes the application schema under a PostgreSQL advisory transaction lock. A model artifact change requires restarting the API and consumers with the verified bundle.
 
+When upgrading an existing stack, pause producers and stop the API and consumers together before switching revisions. Bring them back together so every Feast writer uses the same locking and recovery protocol. A previously stale Redis volume needs a verified rebuild from its original baseline and subsequent events.
+
 ## Monitoring and model operations
 
 Monitor consumer lag and outstanding Feast updates from the private network.
@@ -153,7 +156,7 @@ sudo bash deploy/compose.sh --profile registry run --rm --no-deps \
   mlflow python /app/import_champion.py
 ```
 
-The drift timer runs drift-only checks. The explicit retraining job requires a clean Git checkout, authorized labels, and the migrated champion. Run it with the same host lock so it cannot overlap the timer. Promotion still uses the existing sample gates and out-of-sample comparison. Registry promotion and replacement of the deployed serving bundle are separate operator actions. Analyst feedback remains append-only and is excluded from automatic training. GraphSAGE remains a batch workflow and the dashboard reads persisted fraud-ring output.
+The drift timer runs drift-only checks. The explicit retraining job requires a clean Git checkout, authorized labels, and the migrated champion. Run it with the same host lock so it cannot overlap the timer. Promotion still uses the existing sample gates and out-of-sample comparison. Registry promotion and replacement of the deployed serving bundle are separate operator actions. Analyst feedback remains append-only and is excluded from automatic training. The dashboard reads persisted fraud-ring output from the [batch GraphSAGE workflow](gnn.md).
 
 ```bash
 sudo bash deploy/compose.sh --profile registry --profile retraining build retrain
