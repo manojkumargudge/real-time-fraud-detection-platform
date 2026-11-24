@@ -3,7 +3,10 @@ name: fraud-production
 
 services:
   kafka:
-    image: apache/kafka:3.9.2
+    image: fraud-kafka:3.9.2-alpine-patched
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.kafka
     ports: !reset []
     healthcheck:
       timeout: 30s
@@ -96,7 +99,7 @@ services:
         condition: service_healthy
     security_opt: ["no-new-privileges:true"]
   proxy:
-    image: caddy:2.10-alpine
+    image: caddy:2.11.9-alpine
     environment:
       API_HOSTNAME: ${API_HOSTNAME:?set API_HOSTNAME}
       DASHBOARD_HOSTNAME: ${DASHBOARD_HOSTNAME:?set DASHBOARD_HOSTNAME}
