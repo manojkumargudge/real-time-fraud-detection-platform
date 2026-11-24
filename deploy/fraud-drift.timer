@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the fraud drift report each day
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

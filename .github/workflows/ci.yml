@@ -146,7 +146,7 @@ jobs:
       - name: pip-audit (all requirements files)
         run: |
           flags=$(python security/check_ignores.py pip-audit-flags security/pip-audit-ignore.txt)
-          for f in requirements.txt requirements-serving.txt requirements-monitoring.txt requirements-dashboard.txt requirements-dev.txt requirements-gnn.txt; do
+          for f in requirements.txt requirements-serving.txt requirements-monitoring.txt requirements-dashboard.txt requirements-registry.txt requirements-retrain.txt requirements-dev.txt requirements-gnn.txt; do
             echo "::group::pip-audit $f"
             pip-audit -r "$f" $flags --progress-spinner off
             echo "::endgroup::"
@@ -156,8 +156,8 @@ jobs:
           python security/check_ignores.py gnn-equivalents requirements-gnn.txt > gnn-equivalents.txt
           pip-audit -r gnn-equivalents.txt --no-deps $flags --progress-spinner off
 
-      - name: bandit (src/, medium severity and above)
-        run: bandit -r src -ll -q
+      - name: bandit (application and deployment code, medium severity and above)
+        run: bandit -r src deploy -ll -q
 
       - name: Build serving and dashboard images for scanning
         run: |

@@ -26,7 +26,13 @@ COPY src/ src/
 COPY configs/drift.toml configs/drift.toml
 # Dashboard settings (toolbar in viewer mode); unused by the API and consumers.
 COPY .streamlit/config.toml .streamlit/config.toml
-RUN useradd --create-home --uid 10001 app
+ARG EXTRA_APT_PACKAGES=""
+RUN if [ -n "${EXTRA_APT_PACKAGES}" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends ${EXTRA_APT_PACKAGES} \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi \
+    && useradd --create-home --uid 10001 app \
+    && install -d -o app -g app /app/state
 USER app
 
 # Model artifacts are mounted at runtime (never baked into the image or committed).

@@ -58,6 +58,9 @@ Accepted risks (reason and expiry in `security/pip-audit-ignore.txt` / `.trivyig
 
 ## Authentication and secrets (2026-11-15)
 
+The [Compute Engine runbook](production-readiness.md) describes the additional production
+settings for API access, analyst sessions, HTTPS and secret delivery.
+
 - **Sources:** secrets come from environment variables only.
   - `POSTGRES_PASSWORD`, `API_KEY` and `DASHBOARD_USERS`: the gitignored `.env` for Compose
     (`.env.example` has placeholders only); Secrets `fraud-postgres` and `fraud-auth` for

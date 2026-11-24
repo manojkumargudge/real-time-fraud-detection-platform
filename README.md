@@ -10,6 +10,9 @@ trigger retraining. It uses production-style engineering (CI, tests, security sc
 and a dead-letter queue, Kubernetes) but runs as a local demo on Docker Compose and Minikube; it
 is not deployed to real traffic.
 
+The [Compute Engine release checklist and runbook](docs/production-readiness.md) covers
+the Linux Compose deployment, service exposure, model and registry setup, and release gates.
+
 ## Results
 
 | What | Result | Source |

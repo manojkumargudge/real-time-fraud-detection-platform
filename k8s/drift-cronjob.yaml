@@ -33,6 +33,9 @@ spec:
         spec:
           restartPolicy: Never
           enableServiceLinks: false
+          automountServiceAccountToken: false
+          securityContext:
+            seccompProfile: {type: RuntimeDefault}
           initContainers:
             # Minikube's hostPath volumes ignore fsGroup: hand the reports dir to the image user.
             - name: reports-owner

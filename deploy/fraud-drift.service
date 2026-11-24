@@ -1,0 +1,9 @@
+[Unit]
+Description=Fraud platform drift report
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/fraud
+ExecStart=/usr/bin/flock -n /run/lock/fraud-drift.lock /usr/bin/docker compose --env-file /etc/fraud/production.env -f docker-compose.yml -f docker-compose.production.yml --profile monitoring run --rm --no-deps drift

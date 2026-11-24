@@ -16,6 +16,11 @@ spec:
       labels: {app: consumer}
     spec:
       enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
       terminationGracePeriodSeconds: 30  # SIGTERM: finish + commit the in-flight message
       initContainers:
         - name: wait-for-dependencies

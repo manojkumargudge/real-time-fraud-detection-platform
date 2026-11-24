@@ -5,6 +5,7 @@ artifacts
 mlruns
 notebooks
 reports
+tmp
 tests
 **/__pycache__
 .pytest_cache

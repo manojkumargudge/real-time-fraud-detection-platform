@@ -1,0 +1,18 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_HOSTNAME} {
+	@allowed path /score /health
+	handle @allowed {
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy api:8000
+	}
+	respond 404
+}
+
+{$DASHBOARD_HOSTNAME} {
+	reverse_proxy dashboard:8501
+}
