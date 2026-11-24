@@ -159,7 +159,7 @@ BEGIN
         CHECK (status IN ('open', 'investigating', 'confirmed_fraud', 'false_positive', 'closed'));
     END IF;
 END $$;
--- Analyst decisions, append-only (feeds retraining: latest labelled review per transaction).
+-- Analyst decisions, append-only. The current retraining path uses dataset labels.
 CREATE TABLE IF NOT EXISTS case_reviews (
     id BIGSERIAL PRIMARY KEY,
     alert_id BIGINT NOT NULL REFERENCES alerts (alert_id),

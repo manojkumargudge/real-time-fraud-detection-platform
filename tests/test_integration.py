@@ -1407,7 +1407,12 @@ class TestDashboardPages:
             assert pg_store.save(record(8_000 + i, (100 + i) * 86_400, alert=True))
         with psycopg.connect(pg_dsn, autocommit=True) as conn:
             before = _tables(conn)
-            assert before == ["alerts", "case_reviews", "scored_transactions"]
+            assert before == [
+                "alerts",
+                "case_reviews",
+                "pending_feast_updates",
+                "scored_transactions",
+            ]
             state = data.schema_state(conn)
             alert_id = _alert_ids(conn)[8_000]
         assert state.missing == () and state.absent == {"fraud_rings", "drift_reports"}

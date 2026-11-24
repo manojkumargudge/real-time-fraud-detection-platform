@@ -5,6 +5,9 @@ services:
   kafka:
     image: apache/kafka:3.9.2
     ports: !reset []
+    healthcheck:
+      timeout: 30s
+      start_period: 60s
   postgres:
     image: postgres:16.16-alpine3.24
     ports: !reset []
@@ -20,7 +23,9 @@ services:
       API_REQUESTS_PER_MINUTE: ${API_REQUESTS_PER_MINUTE:-600}
     security_opt: ["no-new-privileges:true"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      timeout: 8s
+      start_period: 60s
   consumer:
     environment:
       FRAUD_PRODUCTION: "1"
@@ -44,6 +49,8 @@ services:
       - 0.0.0.0
       - --port
       - "5000"
+      - --workers
+      - "1"
       - --allowed-hosts
       - mlflow:5000,localhost:5000
       - --backend-store-uri
@@ -58,6 +65,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 8
+      start_period: 60s
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
   retrain:
