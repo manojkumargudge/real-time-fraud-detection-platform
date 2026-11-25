@@ -428,7 +428,8 @@ class FeastFeatures:
     # rebuild every feature view from the registry on each call (~22 FeatureView.from_proto with
     # runtime type checks, ~30 ms per read); same keys, values and store (tested equal).
     direct_online: bool = True
-    serialize_online_rows: bool = False
+    # Use Feast's value conversion and Redis writer without a one-row DataFrame.
+    serialize_online_rows: bool = True
     _views: dict[str, Any] | None = field(default=None, init=False, repr=False)
 
     def _state_views(self) -> dict[str, Any]:
