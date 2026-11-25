@@ -7,5 +7,7 @@ RUN apk add --no-cache --upgrade 'libxml2>=2.13.9-r3'
 # drop helper at that path so the old statically linked Go executable is absent.
 RUN apk add --no-cache su-exec \
     && test -x /sbin/su-exec \
-    && ln -sf /sbin/su-exec /usr/local/bin/gosu \
+    && rm /usr/local/bin/gosu \
+    && cp /sbin/su-exec /usr/local/bin/gosu \
+    && cmp /sbin/su-exec /usr/local/bin/gosu \
     && test "$(gosu postgres id -un)" = postgres
