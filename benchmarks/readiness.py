@@ -78,6 +78,8 @@ REDIS = redis.Redis.from_url("redis://" + os.environ["TEST_REDIS"])
 KEY = "benchmark-only-api-key-at-least-32-characters"
 BUNDLE = ModelBundle.load(Path(os.environ["BENCH_BUNDLE"]).resolve())
 CANDIDATE = sys.argv[2] != "baseline"
+WARMUP_REQUESTS = 32
+MEASURED_REQUESTS = 256
 
 
 timing = local()
@@ -164,7 +166,13 @@ def run_load(clients):
     scope = f"bench_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(DB, autocommit=True) as conn:
         conn.execute(f"CREATE SCHEMA {scope}")
-    pg = PostgresStore(make_conninfo(DB, options=f"-c search_path={scope}"))
+    pg = PostgresStore(
+        make_conninfo(
+            DB,
+            options=f"-c search_path={scope}",
+            application_name=f"readiness_{sys.argv[2]}_{clients}",
+        )
+    )
     with TemporaryDirectory() as temp:
         fs = open_store(Path(temp), redis=os.environ["TEST_REDIS"], project=scope)
         opts = {"reject_late": True} if CANDIDATE else {}
@@ -217,22 +225,23 @@ def run_load(clients):
                 )
 
             outcomes = {}
-            for index in range(16):
+            for index in range(WARMUP_REQUESTS):
                 assert send(index, 100_000)[1] == 200
             REDIS.execute_command("LATENCY", "RESET", "aof-fsync-always")
             started = time.perf_counter()
             cpu_started = time.process_time()
+            measured_indices = range(WARMUP_REQUESTS, WARMUP_REQUESTS + MEASURED_REQUESTS)
             with ThreadPoolExecutor(max_workers=clients) as pool:
-                results = list(pool.map(send, range(16, 16 + 96)))
+                results = list(pool.map(send, measured_indices))
             elapsed = time.perf_counter() - started
             successful = [
                 latency for latency, status, duplicate in results if status == 200 and not duplicate
             ]
             assert len(successful) == len(results), results
-            assert all(outcomes[index][2] >= 1 for index in range(16, 112)), (
+            assert all(outcomes[index][2] >= 1 for index in measured_indices), (
                 "Warmup state was not visible"
             )
-            measured = [profiles[index + 1] for index in range(16, 112)]
+            measured = [profiles[index + 1] for index in measured_indices]
             stages = {
                 stage: round(float(np.median([row.get(stage, 0) for row in measured])), 2)
                 for stage in measured[0]

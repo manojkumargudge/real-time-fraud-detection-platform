@@ -60,6 +60,11 @@ jobs:
       - name: Compare revisions sequentially
         run: |
           set -o pipefail
+          pg() { docker compose -p readiness-bench -f docker-compose.test.yml exec -T postgres psql -U fraud -d fraud -v ON_ERROR_STOP=1 "$@"; }
+          pg -c "ALTER SYSTEM SET log_lock_waits = on"
+          pg -c "ALTER SYSTEM SET deadlock_timeout = '1ms'"
+          pg -c "ALTER SYSTEM SET log_line_prefix = '%a [%p] '"
+          pg -c "SELECT pg_reload_conf()"
           export BENCH_BUNDLE="$RUNNER_TEMP/benchmark-bundle"
           mkdir "$RUNNER_TEMP/benchmark-main"
           git fetch --depth=1 origin 6f1a39f018e4c8f5bb11f9c4b051ba73d6467094
@@ -71,8 +76,33 @@ jobs:
             if [[ $revision == baseline ]]; then code="$RUNNER_TEMP/benchmark-main"; fi
             python benchmarks/readiness.py "$code" "$revision" | tee -a "$RUNNER_TEMP/readiness.jsonl"
           done
+          docker compose -p readiness-bench -f docker-compose.test.yml logs --no-color postgres |
+            awk '/readiness_.*advisory lock/ {print}' | tee "$RUNNER_TEMP/advisory-lock-waits.txt"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from statistics import median
+
+          rows = [json.loads(line) for line in
+                  (Path(os.environ['RUNNER_TEMP']) / 'readiness.jsonl').read_text().splitlines()]
+          assert len(rows) == 18 and len({r['score_digest'] for r in rows}) == 1
+          assert all(r['errors'] == r['timeouts'] == 0 for r in rows)
+
+          def metric(revision, clients, name):
+              return median(r[name] for r in rows
+                            if r['revision'] == revision and r['clients'] == clients)
+
+          for clients in (1, 8):
+              assert metric('direct', clients, 'throughput') >= (
+                  0.95 * metric('baseline', clients, 'throughput')
+              ), f'Throughput gate failed at {clients} clients'
+          assert metric('direct', 1, 'p95_ms') <= 1.10 * metric('baseline', 1, 'p95_ms')
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: readiness-metrics
-          path: ${{ runner.temp }}/readiness.jsonl
+          path: |
+            ${{ runner.temp }}/readiness.jsonl
+            ${{ runner.temp }}/advisory-lock-waits.txt
