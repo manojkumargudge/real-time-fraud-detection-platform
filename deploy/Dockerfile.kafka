@@ -1,4 +1,5 @@
-FROM apache/kafka:3.9.2
+ARG KAFKA_BASE=apache/kafka:3.9.2
+FROM ${KAFKA_BASE}
 USER root
 RUN apk upgrade --no-cache
 USER appuser
