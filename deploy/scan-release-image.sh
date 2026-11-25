@@ -15,8 +15,7 @@ case "$kind" in
   mlflow) requirements=requirements-registry.txt ;;
   drift) requirements=requirements-monitoring.txt ;;
   retrain) requirements=requirements-retrain.txt; extra=(--build-arg EXTRA_APT_PACKAGES=git) ;;
-  kafka) ;;
-  postgres) source_ref=postgres:16.16-alpine3.24 ;;
+  kafka|postgres) ;;
   redis) source_ref=redis:7.4.12-alpine3.22 ;;
   caddy) source_ref=caddy:2.11.9-alpine ;;
   *) exit 2 ;;
@@ -29,8 +28,8 @@ if [[ -n $source_ref ]]; then
   docker pull --platform linux/amd64 "$ref"
 else
   docker run -d --name release-inventory-registry -p 127.0.0.1:5500:5000 registry:2 >/dev/null
-  if [[ $kind == kafka ]]; then
-    docker build --platform linux/amd64 --pull -f deploy/Dockerfile.kafka -t "$local_ref" .
+  if [[ $kind == kafka || $kind == postgres ]]; then
+    docker build --platform linux/amd64 --pull -f "deploy/Dockerfile.$kind" -t "$local_ref" .
   else
     docker build --platform linux/amd64 --pull --build-arg "REQUIREMENTS=$requirements" "${extra[@]}" -t "$local_ref" .
   fi

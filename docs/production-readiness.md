@@ -226,3 +226,101 @@ The target is `fraud-detection-platform-2026`. The read-only project check retur
 - **Cost.** Iowa on-demand estimate at 730 hours/month is about **$209/month** for `e2-standard-8`, 100 GB balanced disk and one in-use external IPv4, or **$111/month** with `e2-standard-4` if testing qualifies it. An illustrative 100 GB of billed standard snapshot storage adds about $6.50/month. Registry storage, backup objects, logs, egress, DNS, taxes and any billable secret versions are usage-dependent. Before approval, price the chosen region and usage in the calculator. Propose a $250 project-scoped budget for the eight-vCPU option with 50%, 80% and 100% actual-spend alerts and a 100% forecast alert. Budget alerts do not cap spend. [VM pricing](https://cloud.google.com/products/compute/pricing/general-purpose) [Disk and snapshot pricing](https://cloud.google.com/products/block-storage) [IPv4 pricing](https://cloud.google.com/vpc/network-pricing) [Cloud Billing budgets](https://docs.cloud.google.com/billing/docs/how-to/budgets)
 
 Release is gated on the throughput protocol, exact-image scans and Feast exception review, the coordinated restore drill, external TLS and authenticated access verification, and operational alert delivery. Automated retraining requires separate authorized-data verification. Provisioning requires explicit approval of the deployment and estimate.
+
+## Release validation follow-up
+
+The current release inventory includes serving (API and the three consumers share it), dashboard, patched Kafka, patched PostgreSQL, Redis, MLflow, Caddy, drift and the optional retraining image. `deploy/scan-release-image.sh` builds the application images for `linux/amd64`, resolves external images to the architecture-specific manifest, and inventories packages and all vulnerability severities without applying ignores. It uses a loopback-only registry for locally built images. The hosted artifact records the manifest reference and scanner database result for each image. The build uses upstream package repositories, so rebuilding the same commit can produce a different digest. Scan the exact bytes retained for publication and compare the destination digest before using the image. Treat scans as evidence for a separate applicability decision. In particular, the current Feast exceptions cover only the documented embedded, trusted-registry use. Review new findings, the pinned PyArrow dependency, gosu and Caddy libraries, and use the completed Kafka Java inventory for the release review. Assign an owner, mitigation and expiry to a reviewed exception in the existing expiry-gated inventories.
+
+### Sustained Linux rehearsal
+
+The Windows workstation had approximately 466 MiB available. WSL shares that host and no dedicated Linux VM was found in the target GCP project or in the configured SSH hosts. The sizing gate therefore requires a dedicated, already authorized Linux x86-64 machine. Hosted CI and the synthetic restore exercise do not qualify it.
+
+On that machine, use Ubuntu 24.04, the production Compose overlay, full durable AOF and PostgreSQL settings, representative approved artifacts, and fresh project names and volumes. Give the API one worker and the Kafka consumer three replicas. Keep Caddy on `127.0.0.1:18443`, use `api.localhost` and `dashboard.localhost`, and set the same test API key and limiter of 30,000 requests/minute for both revisions. This keeps the limiter outside the stress measurement. Also run a separate 600/minute configuration check for the deployed ingress. Run the reviewed main baseline `6f1a39f` and release candidate sequentially, two repeats in alternating order, with only the API/consumer image switched for main. Keep the dashboard, Kafka, Redis, Caddy and PostgreSQL images, model, initial state, disk tier, and configuration identical. Main lacks the candidate late-event and recovery behavior, so use monotonically nondecreasing timestamps for the controlled comparison, and run the production safety suite separately. Provision configurations equivalent to four vCPUs/16 GiB and eight vCPUs/32 GiB on the dedicated host. Track the Docker overhead and the difference between local and Compute Engine disk performance.
+
+Use the same Compose arguments for all commands below. Select a fresh rehearsal project, use explicit test-only credentials, use the loopback override from `deploy/rehearse-recovery.sh`, and bring up all services including `--profile registry`. Copy the local CA with `exec -T proxy cat /data/caddy/pki/authorities/local/root.crt`, and set `API_KEY` to the matching synthetic key in the load process. Install `requirements-dev.txt` in the Linux venv. Set `stack` as a Bash array containing the complete Compose command and its overlay paths, for example `stack=(docker compose -p "$REHEARSAL_PROJECT" --env-file "$REHEARSAL_ENV" -f docker-compose.yml -f docker-compose.production.yml -f "$LOOPBACK_OVERLAY" --profile registry)`. Validate loopback binding before load. Use a dedicated evidence directory per repeat.
+
+```bash
+"${stack[@]}" config --quiet
+"${stack[@]}" up -d --no-build --wait
+"${stack[@]}" exec -T proxy cat /data/caddy/pki/authorities/local/root.crt > "$EVIDENCE/ca.crt"
+"${stack[@]}" exec -T redis redis-cli CONFIG SET latency-monitor-threshold 1
+bash deploy/sample-release-load.sh "${stack[@]}" > "$EVIDENCE/resources.log" &
+sampler=$!
+trap 'kill "$sampler" 2>/dev/null || true' EXIT
+for clients in 1 4 8; do
+  python -m benchmarks.sustained --ca "$EVIDENCE/ca.crt" --clients "$clients" \
+    --cards 1024 --first-id "$((100000000 + clients * 1000000))" \
+    --output "$EVIDENCE/spread-$clients.json"
+done
+python -m benchmarks.sustained --ca "$EVIDENCE/ca.crt" --clients 8 \
+  --cards 1 --first-id 120000000 --output "$EVIDENCE/hot-8.json"
+```
+
+Repeat all four levels with concurrent Kafka input at a fixed 10 events/s, using the same authorized input and producer rate for both revisions. Use `"${stack[@]}" exec -T consumer python -m src.streaming.producer --raw-dir /app/data/raw --limit 27000 --rate 10` with the same approved raw-data bind mount in both stacks. If the workload is shorter, stop the producer before its input runs out and record the produced count and duration. Use fresh volumes for this repeat and confirm Kafka transaction IDs and entity keys do not collide with the synthetic HTTP fixture. Capture `iostat -xz 30` and the sampler log. Measure one minute warmup and ten minutes at each level, and wait for Kafka to drain at the end. Compare medians using the throughput protocol, and compare stored scores, alerts and online state for a separate fixed-cohort parity run. A 30% resource headroom planning target means peak steady-state memory and disk use below 70% and enough CPU and I/O margin to run the checkpoint, drift and Kafka work. Verify no committed offset gap, durable Redis writes, no unexplained pending journal entries and zero lag after drain. Keep timings and I/O samples for both host sizes. Select the four-vCPU option only after it passes, and repeat checks against the deployment VM before public cutover.
+
+The recovery workflow uses a small synthetic cohort, a private loopback HTTPS proxy and separate source and restored named volumes. It verifies PostgreSQL score/alert digests, Kafka payload IDs and committed positions, binary Redis hashes and MLflow alias/artifacts before and after recovery. It also injects an API container that exits before startup and verifies unhealthy ingress before rolling it back. Record the measured times as rehearsal observations only. Without replication, a lost VM or disk can incur RPO up to the age of the last usable checkpoint. External DNS, public TLS, alert notification delivery, and AOF failure and stale journal alerting require a separate actual-host fault exercise.
+
+### Budget and approval commands
+
+Monthly planning estimate for Iowa and 730 powered-on hours, before credits and tax:
+
+| Item | Assumption | 4 vCPU | 8 vCPU |
+| --- | --- | ---: | ---: |
+| Compute | E2 on demand | $97.84 | $195.67 |
+| Disk | 100 GB pd-balanced | $10.00 | $10.00 |
+| External IPv4 | One in use | $3.65 | $3.65 |
+| Snapshots | 100 GB-month net billed | $6.50 | $6.50 |
+| Off-VM dumps | 50 GB-month regional Standard storage including a small operations allowance below | $1.00 | $1.00 |
+| Registry | 10 GiB retained, budget 9.5 GiB billed | $0.95 | $0.95 |
+| Internet egress | 100 GiB at $0.12/GiB, assume no free quota | $12.00 | $12.00 |
+| DNS | One zone and 100k queries | $0.24 | $0.24 |
+| Secrets, backup operations and probes | Four active secret versions, low access and a $1 operations allowance | $1.00 | $1.00 |
+| Logs and metrics | 20 GiB logs, 30-day retention, standard metrics and low custom volume within allowances | $0.00 | $0.00 |
+| **Illustrative total** | Replace estimates with measured usage before approval | **$133.18** | **$231.01** |
+
+Network cost depends on destination and tier. Reserve additional margin for traffic beyond the assumed 100 GiB, log ingestion above the included quota, additional backup/restore operations, and taxes. Eligible Free Trial accounts receive up to $300 in credits for 90 days. At the modeled run rate a full credit would cover about 69 days (four vCPU) or 40 days (eight vCPU), before other project spend. Actual credit balance, account type and expiry must be confirmed by the billing owner. Set budgets against gross usage so credits do not hide the burn rate. Budgets send notifications and are not automatic spending caps. [Free Trial](https://docs.cloud.google.com/free/docs/free-cloud-features) [Compute](https://cloud.google.com/products/compute/pricing/general-purpose) [Block storage](https://cloud.google.com/products/block-storage) [Backups](https://cloud.google.com/storage/pricing) [Registry](https://cloud.google.com/artifact-registry/pricing) [DNS](https://cloud.google.com/dns/pricing) [Network](https://cloud.google.com/vpc/pricing) [Logging and monitoring](https://cloud.google.com/products/observability/pricing)
+
+Run the following only after release and cost approval. Set `BILLING_ACCOUNT` and `ALERT_CHANNEL` to the approved billing ID and resource name. Choose `BUDGET_USD=160` for the qualified four-vCPU VM or `275` for the eight-vCPU VM. Use the VM and firewall commands under [Linux deployment procedure](#linux-deployment-procedure) with the approved machine type. Defer the web tag/firewall rule and DNS publication to the separately approved cutover. Give the infrastructure operator only instance/disk, networking, DNS, scoped budget management and VM service-account attachment permissions for their assigned steps. The deploy operator uses `roles/iap.tunnelResourceAccessor` and OS Login, and uses OS Admin Login only for the required `sudo` setup. Give the publisher repository-scoped writer and the VM repository-scoped reader.
+
+```bash
+PROJECT_ID=fraud-detection-platform-2026
+REGION=us-central1
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+gcloud billing budgets create --billing-account="$BILLING_ACCOUNT" \
+  --display-name=fraud-production-monthly --budget-amount="${BUDGET_USD}USD" \
+  --filter-projects="projects/$PROJECT_NUMBER" --credit-types-treatment=exclude-all-credits \
+  --threshold-rule=percent=0.50 --threshold-rule=percent=0.80 --threshold-rule=percent=1.00 \
+  --threshold-rule=percent=1.00,basis=forecasted-spend \
+  --notifications-rule-monitoring-notification-channels="$ALERT_CHANNEL"
+gcloud artifacts repositories create fraud-release --project "$PROJECT_ID" \
+  --repository-format=docker --location "$REGION" --immutable-tags
+gcloud auth configure-docker "$REGION-docker.pkg.dev"
+```
+
+Publish the byte-preserved approved linux/amd64 manifests with `skopeo copy --preserve-digests docker://SOURCE@sha256:DIGEST docker://us-central1-docker.pkg.dev/fraud-detection-platform-2026/fraud-release/IMAGE:RELEASE_TAG` from the authorized release build environment. Compare all destination digests. Use an immutable Compose override that maps both API and consumer to serving, proxy to Caddy and every other service to its approved digest. Apply the overlay with `-f /etc/fraud/release-images.yml`. Use `pull` and `up --no-build`, preserving the named volumes. Provision PostgreSQL password, API key, dashboard cookie secret and bcrypt analyst entries in Secret Manager with individually scoped access from the VM. Keep public hostnames, ACME email and Secret Manager version references in a root-readable deployment manifest. Use the VM identity to render them into `/run/fraud/production.env` with mode `0600` before Compose starts, and keep them out of logs and Git. The VM needs logging and metric writer grants only if using the Ops Agent, and a bucket-scoped backup writer grant. Keep backup-reading permission on the isolated restore identity. Record build/image digests, verified artifact hash, backup checksum and previous-known-good override before cutover.
+
+After cutover approval, apply the firewall web tag/rule and DNS A records, wait for Caddy's public certificate, run `bash deploy/verify.sh "$API_HOSTNAME" "$DASHBOARD_HOSTNAME"`, and verify an authorized synthetic score and duplicate plus analyst sign-in. Confirm external alert delivery for a controlled health failure and verify the recovery notification. If the startup or reconciliation gate fails, close ingress and stop writers, reapply the previous image override by digest and reuse data volumes only if schema compatibility is confirmed. For state incompatibility, restore the coordinated checkpoint into separate volumes, reconcile all digests/offsets and only then switch ingress.
+
+### Exact image audit evidence and disposition
+
+A hosted Linux amd64 build and Trivy inventory completed for all nine image roles. The table uses digest prefixes for readability. Full manifest refs, package inventories and complete finding lists are in the workflow artifacts. The PostgreSQL rebuild with the Alpine package fix requires a fresh scan and restore validation. [Initial digest inventory](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45565323432)
+
+| Image role | SHA-256 prefix | High | Critical |
+| --- | --- | ---: | ---: |
+| Serving (API and consumer) | `aa0448406f67` | 101 | 4 |
+| Dashboard | `c88bd821f759` | 101 | 4 |
+| Kafka | `d2672d869647` | 24 | 1 |
+| PostgreSQL upstream base | `9d9e487c1bd6` | 26 | 1 |
+| Redis | `e4ee3e03ce8f` | 0 | 0 |
+| MLflow | `ee13af170797` | 99 | 2 |
+| Caddy | `fc9cbc100585` | 2 | 0 |
+| Drift | `e82a91e70f12` | 101 | 4 |
+| Retraining | `3e29cb5f5b61` | 120 | 4 |
+
+- **Kafka:** The Java scan completed. It identified 25 high/critical entries with fixes listed, including critical Netty `CVE-2026-75595` and Jackson, compression, ZooKeeper and Jetty dependencies. The private KRaft broker does not exercise ZooKeeper or Connect in this Compose topology, but exposure of the other bundled server paths still requires review. Evaluate a supported upstream Kafka release on isolated volumes, then verify read/write clients, group offsets, KRaft upgrade and downgrade prerequisites, and cold restore. The production Kafka base remains at 3.9.2 pending that verification. [Kafka releases](https://kafka.apache.org/downloads/) [Kafka advisories](https://kafka.apache.org/community/cve-list/)
+- **PostgreSQL:** Trivy identified the bundled Go `gosu` startup helper and Alpine `libxml2` `CVE-2026-86144`. The same-major image rebuild requires `libxml2>=2.13.9-r3`. The `gosu` findings remain open pending reachability review and a patched privilege-drop helper verified against init and recovery. [PostgreSQL 16.16 release notes](https://www.postgresql.org/docs/release/16.16/)
+- **Feast and PyArrow:** The four listed Python fixes require moving beyond Feast 0.47's package constraints (`numpy<2`, `pyarrow<18.1.0`). Existing entries expire **2027-01-31**. Embedded Feast has a locally generated trusted registry, with no feature or registry server published. The offline materializer is outside production Compose, and PyArrow inputs must remain generated locally and trusted. Revalidate those conditions for the exact release, or migrate Feast, NumPy and PyArrow together and rerun the byte-level Redis, recovery, and model parity tests. These scopes do not extend to other findings. [Existing entries](security.md) [Feast releases](https://github.com/feast-dev/feast/releases)
+- **Python image OS layers:** The scan still reports critical SQLite and zlib findings without a listed Bookworm fix in this run, across serving, dashboard, drift, retraining and MLflow. Confirm each Debian advisory disposition, affected binary and call path. MLflow actively uses SQLite, so do not apply a blanket unused-component exception. Compare a supported newer base on isolated runtime, MLflow and recovery tests before changing production.
+- **Caddy:** The two high findings are `golang.org/x/net/html` and Go JOSE. The current proxy routes do not configure an HTML templating or JWK authentication module. Keep reachability unresolved until both findings are reviewed against the exact binary and config, and use an upstream or reproducibly patched build if either applies. [Go HTML advisory](https://pkg.go.dev/vuln/GO-2026-6860) [Go JOSE advisory](https://github.com/advisories/GHSA-mgcc-cww5-fp2q)
+
+The security gate remains blocked. The scan workflow succeeds when it inventories the package and findings; release disposition is a separate gate. No new risk exceptions were granted.

@@ -86,7 +86,7 @@ attest_ingress() {
     https://api.localhost:18443/score | jq -e '.transaction_id == 910000001 and .duplicate and .is_alert' >/dev/null
 }
 
-stack "$source_project" build api kafka dashboard mlflow
+stack "$source_project" build api kafka postgres dashboard mlflow
 stack "$source_project" up -d --no-build --wait --wait-timeout 200
 stack "$source_project" exec -T mlflow python - registry-seed < deploy/recovery-evidence.py
 stack "$source_project" exec -T api python - seed < deploy/recovery-evidence.py
@@ -116,12 +116,19 @@ cp -a artifacts/baseline "$work/checkpoint/model-bundle"
 printf 'cold_backup_seconds=%s\n' "$(( $(date +%s) - backup_start ))" > "$evidence/timings.txt"
 
 restore_start=$(date +%s)
-stack "$restore_project" create --no-build
 for volume in "${volumes[@]}"; do
-  docker volume inspect "${restore_project}_$volume" >/dev/null
+  target="${restore_project}_$volume"
+  if docker volume inspect "$target" >/dev/null 2>&1; then
+    echo "Refusing to overwrite existing restore volume $target" >&2
+    exit 1
+  fi
+  docker volume create --label "com.docker.compose.project=$restore_project" \
+    --label "com.docker.compose.volume=$volume" "$target" >/dev/null
+  printf 'Restoring %s\n' "$target"
   docker run --rm --network none --entrypoint sh \
-    -v "${restore_project}_$volume:/state" -v "$work/checkpoint:/backup:ro" postgres:16.16-alpine3.24 \
-    -ec 'test -z "$(ls -A /state)"; tar -C /state -xzf "/backup/$1.tgz"' sh "$volume"
+    --mount "type=volume,source=$target,target=/state,volume-nocopy" \
+    -v "$work/checkpoint:/backup:ro" postgres:16.16-alpine3.24 \
+    -ec 'test -z "$(ls -A /state)" || { echo "Restore volume is not empty" >&2; exit 1; }; tar -C /state -xzf "/backup/$1.tgz"' sh "$volume"
 done
 # Rebind the restored service to the copied model rather than the source fixture directory.
 sed -i "s|$repo/artifacts/baseline|$work/checkpoint/model-bundle|" "$work/rehearsal.yml"

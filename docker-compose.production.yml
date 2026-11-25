@@ -12,7 +12,10 @@ services:
       timeout: 30s
       start_period: 60s
   postgres:
-    image: postgres:16.16-alpine3.24
+    image: fraud-postgres:16.16-alpine3.24-patched
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.postgres
     ports: !reset []
   redis:
     image: redis:7.4.12-alpine3.22

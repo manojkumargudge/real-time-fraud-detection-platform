@@ -1,0 +1,4 @@
+FROM postgres:16.16-alpine3.24@sha256:9d9e487c1bd6413c52ccb3c02f46c8e37fa1e1d1a32a84519eb4e68d0ad1da30
+
+# Apply the Alpine libxml2 security patch while retaining PostgreSQL 16.16.
+RUN apk add --no-cache --upgrade 'libxml2>=2.13.9-r3'
