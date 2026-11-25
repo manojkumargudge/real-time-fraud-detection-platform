@@ -160,66 +160,6 @@ if os.getenv("BENCH_PROFILE"):
         instrument(cls, name)
 
 
-if sys.argv[2] == "direct":
-    from feast.protos.feast.types.EntityKey_pb2 import EntityKey
-    from feast.type_map import python_values_to_proto_values
-
-    from src.features import feast_store as feast_module
-
-    class OnlineRow:
-        def __init__(self, records):
-            self.records = records
-
-    class PandasProxy:
-        DataFrame = OnlineRow
-
-        def __getattr__(self, name):
-            return getattr(original_pandas, name)
-
-    original_pandas = feast_module.pd
-    feast_module.pd = PandasProxy()
-    standard_prep = PassthroughProvider._prep_rows_to_write_for_ingestion
-
-    def arrow_prep(feature_view, df, field_mapping=None):
-        if not isinstance(df, OnlineRow):
-            return standard_prep(feature_view, df, field_mapping)
-        assert field_mapping is None and not feature_view.batch_source.field_mapping
-        started = time.perf_counter()
-        (row,) = df.records
-        join_keys = {
-            entity.name: entity.dtype.to_value_type() for entity in feature_view.entity_columns
-        }
-        try:
-            key = EntityKey(
-                join_keys=list(join_keys),
-                entity_values=[
-                    python_values_to_proto_values([row[name]], value_type)[0]
-                    for name, value_type in join_keys.items()
-                ],
-            )
-            values = {
-                field.name: python_values_to_proto_values(
-                    [row[field.name]], field.dtype.to_value_type()
-                )[0]
-                for field in feature_view.features
-            }
-            return [
-                (
-                    key,
-                    values,
-                    row[feature_view.batch_source.timestamp_field],
-                    row[feature_view.batch_source.created_timestamp_column],
-                )
-            ]
-        finally:
-            stage = "feast_row_conversion"
-            timing.values[stage] = (
-                timing.values.get(stage, 0) + (time.perf_counter() - started) * 1000
-            )
-
-    PassthroughProvider._prep_rows_to_write_for_ingestion = staticmethod(arrow_prep)
-
-
 def run_load(clients):
     scope = f"bench_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(DB, autocommit=True) as conn:
@@ -228,16 +168,25 @@ def run_load(clients):
     with TemporaryDirectory() as temp:
         fs = open_store(Path(temp), redis=os.environ["TEST_REDIS"], project=scope)
         opts = {"reject_late": True} if CANDIDATE else {}
-        scorer = Scorer(BUNDLE, pg, FeastFeatures(fs, BUNDLE.history_config), True, **opts)
+        feast_options = {"serialize_online_rows": sys.argv[2] == "direct"} if CANDIDATE else {}
+        feast = FeastFeatures(fs, BUNDLE.history_config, **feast_options)
+        scorer = Scorer(BUNDLE, pg, feast, True, **opts)
         api_opts = {"production": True} if CANDIDATE else {}
         profiles = {}
         score_event = scorer.score_event
 
         def measured_score(event):
+            if CANDIDATE:
+                from src import timing as application_timing
+
+                application_stages = application_timing.collect()
             timing.values = {}
             try:
                 return score_event(event)
             finally:
+                if CANDIDATE:
+                    timing.values.update(application_stages)
+                    application_timing.clear()
                 profiles[event.TransactionID] = timing.values
 
         scorer.score_event = measured_score

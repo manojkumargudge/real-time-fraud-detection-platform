@@ -677,8 +677,13 @@ def test_concurrent_feast_scoring_preserves_same_timestamp_updates(
 
 @needs_db
 @needs_redis
+@pytest.mark.parametrize("serialize_online_rows", [False, True])
 def test_feast_update_resumes_after_partial_write(
-    bundle_dir: Path, tmp_path: Path, pg_dsn: str, monkeypatch: pytest.MonkeyPatch
+    bundle_dir: Path,
+    tmp_path: Path,
+    pg_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+    serialize_online_rows: bool,
 ) -> None:
     from src.features import feast_store as fs
     from src.serving.scorer import PendingFeastUpdateError
@@ -689,19 +694,21 @@ def test_feast_update_resumes_after_partial_write(
     redis_store = fs.open_store(
         tmp_path, redis=REDIS, config=bundle.history_config, project=project
     )
-    feast = fs.FeastFeatures(redis_store, bundle.history_config)
+    feast = fs.FeastFeatures(
+        redis_store, bundle.history_config, serialize_online_rows=serialize_online_rows
+    )
     provider = redis_store._get_provider()
-    ingest = provider.ingest_df
+    write = provider.online_write_batch
     interrupted = False
 
-    def fail_second_write(view: Any, frame: pd.DataFrame) -> None:
+    def fail_second_write(config: Any, view: Any, data: Any, progress: Any) -> None:
         nonlocal interrupted
         if view.name == fs.CARD_VIEW and not interrupted:
             interrupted = True
             raise ConnectionError("injected Redis write failure after UID update")
-        ingest(view, frame)
+        write(config, view, data, progress)
 
-    monkeypatch.setattr(provider, "ingest_df", fail_second_write)
+    monkeypatch.setattr(provider, "online_write_batch", fail_second_write)
     first = TransactionEvent.model_validate(event(TransactionID=1, TransactionDT=100))
     pg = PostgresStore(pg_dsn, pool_size=1)
     retry = PostgresStore(pg_dsn, pool_size=1)
@@ -723,6 +730,63 @@ def test_feast_update_resumes_after_partial_write(
         retry.close()
         pg.close()
         redis_store.teardown()
+
+
+@needs_redis
+@pytest.mark.parametrize("ttl", [None, 60])
+def test_direct_feast_serialization_matches_redis_bytes(tmp_path: Path, ttl: int | None) -> None:
+    from redis import Redis
+
+    from src.features import feast_store as fs
+    from src.features.history import HistoryConfig
+
+    assert REDIS
+    client = Redis.from_url(f"redis://{REDIS}")
+    config = HistoryConfig()
+    stores = []
+    try:
+        for direct in (False, True):
+            project = f"test_{uuid.uuid4().hex[:12]}"
+            store = fs.open_store(tmp_path / project, redis=REDIS, config=config, project=project)
+            store.config.online_store.key_ttl_seconds = ttl
+            stores.append(
+                (project.encode(), fs.FeastFeatures(store, config, serialize_online_rows=direct))
+            )
+
+        def snapshot(project: bytes) -> dict[bytes, Any]:
+            keys = list(client.scan_iter(match=b"*" + project))
+            assert keys
+            for key in keys:
+                remaining = client.pttl(key)
+                if ttl is None:
+                    assert remaining == -1
+                else:
+                    assert 0 < remaining <= ttl * 1000
+            # The namespace suffix is the sole expected difference in the raw Redis keys.
+            return {key[: -len(project)]: client.hgetall(key) for key in keys}
+
+        for tid, dt, uid, address in (
+            (1, 100, "uid-null", None),
+            (2, 100, "uid-null", None),
+            (3, 101, "uid-address", 315),
+            (4, 102, "uid-null", None),
+        ):
+            transaction = event(TransactionID=tid, TransactionDT=dt, addr1=address)
+            for project, feast in stores:
+                _, before = feast.read(transaction, "card", uid)
+                feast.push(transaction, "card", uid, before)
+                after = snapshot(project)
+                feast.push(transaction, "card", uid, before)
+                assert snapshot(project) == after
+                _, online = feast.read(transaction, "card", uid)
+                assert online["card_last_ts"] == dt
+                assert online["uid_last_ts"] == dt
+            assert snapshot(stores[0][0]) == snapshot(stores[1][0])
+        assert len(snapshot(stores[0][0])) == 3
+    finally:
+        for _, feast in stores:
+            feast.store.teardown()
+        client.close()
 
 
 @needs_db

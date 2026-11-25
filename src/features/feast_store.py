@@ -428,6 +428,7 @@ class FeastFeatures:
     # rebuild every feature view from the registry on each call (~22 FeatureView.from_proto with
     # runtime type checks, ~30 ms per read); same keys, values and store (tested equal).
     direct_online: bool = True
+    serialize_online_rows: bool = False
     _views: dict[str, Any] | None = field(default=None, init=False, repr=False)
 
     def _state_views(self) -> dict[str, Any]:
@@ -501,6 +502,7 @@ class FeastFeatures:
         if uid is None or card is None:
             return
         from feast.data_source import PushMode
+        from feast.infra.online_stores.redis import RedisOnlineStoreConfig
 
         cols = self.config.change_columns
         t, tid = int(event[TIME]), int(event["TransactionID"])
@@ -521,11 +523,43 @@ class FeastFeatures:
             ),
         ):
             stamp = {EVENT_TIMESTAMP: to_datetime(row[ts_field]), CREATED: datetime.now(UTC)}
-            df = pd.DataFrame([row | stamp])
-            if self.direct_online:  # what push -> write_to_online_store runs for this view
-                self.store._get_provider().ingest_df(self._state_views()[view_name], df)
+            if self.direct_online:
+                provider = self.store._get_provider()
+                view = self._state_views()[view_name]
+                if self.serialize_online_rows and isinstance(
+                    self.store.config.online_store, RedisOnlineStoreConfig
+                ):
+                    _write_redis_row(provider, self.store.config, view, row, stamp)
+                else:
+                    provider.ingest_df(view, pd.DataFrame([row | stamp]))
             else:
-                self.store.push(view_push, df, to=PushMode.ONLINE)
+                self.store.push(view_push, pd.DataFrame([row | stamp]), to=PushMode.ONLINE)
+
+
+def _write_redis_row(
+    provider: Any, config: Any, view: Any, row: dict[str, Any], stamp: dict[str, datetime]
+) -> None:
+    """Convert one state row using Feast's schema and retain its online-store write path."""
+    from feast.protos.feast.types.EntityKey_pb2 import EntityKey
+    from feast.type_map import python_values_to_proto_values
+
+    with stage("feast_row_conversion"):
+        key = EntityKey(
+            join_keys=[field.name for field in view.entity_columns],
+            entity_values=[
+                python_values_to_proto_values([row[field.name]], field.dtype.to_value_type())[0]
+                for field in view.entity_columns
+            ],
+        )
+        values = {
+            field.name: python_values_to_proto_values(
+                [row[field.name]], field.dtype.to_value_type()
+            )[0]
+            for field in view.features
+        }
+    provider.online_write_batch(
+        config, view, [(key, values, stamp[EVENT_TIMESTAMP], stamp[CREATED])], progress=None
+    )
 
 
 def _next_write(previous: Any, t: int) -> int:
