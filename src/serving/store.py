@@ -302,13 +302,31 @@ class PostgresStore:
         return [r["event"] for r in rows]
 
     def save(self, record: ScoredRecord, *, feast_online: dict[str, Any] | None = None) -> bool:
-        # The score, alert and optional feature recovery record commit together.
-        with self._connection() as conn, conn.transaction():
+        # One atomic statement avoids separate BEGIN, INSERT and COMMIT round trips.
+        # The alert and journal inserts run only when this request wins deduplication.
+        with self._connection() as conn:
             inserted = conn.execute(
-                "INSERT INTO scored_transactions (transaction_id, transaction_dt, card_id, "
-                "uid, event, score, threshold, is_alert, model_version) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (transaction_id) DO NOTHING RETURNING transaction_id",
+                """
+                WITH scored AS (
+                    INSERT INTO scored_transactions (
+                        transaction_id, transaction_dt, card_id, uid, event, score,
+                        threshold, is_alert, model_version
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (transaction_id) DO NOTHING
+                    RETURNING transaction_id, card_id, score, is_alert
+                ), alerted AS (
+                    INSERT INTO alerts (transaction_id, score)
+                    SELECT transaction_id, score FROM scored WHERE is_alert
+                    ON CONFLICT (transaction_id) DO NOTHING
+                ), journal_input AS (
+                    SELECT %s::jsonb AS online
+                ), journaled AS (
+                    INSERT INTO pending_feast_updates (card_id, transaction_id, online)
+                    SELECT card_id, transaction_id, online FROM scored CROSS JOIN journal_input
+                    WHERE online IS NOT NULL
+                )
+                SELECT transaction_id FROM scored
+                """,
                 (
                     record.transaction_id,
                     record.transaction_dt,
@@ -319,20 +337,9 @@ class PostgresStore:
                     record.threshold,
                     record.is_alert,
                     record.model_version,
+                    None if feast_online is None else json.dumps(feast_online),
                 ),
             ).fetchone()
-            if inserted and record.is_alert:
-                conn.execute(
-                    "INSERT INTO alerts (transaction_id, score) VALUES (%s, %s) "
-                    "ON CONFLICT (transaction_id) DO NOTHING",
-                    (record.transaction_id, record.score),
-                )
-            if inserted and feast_online is not None:
-                conn.execute(
-                    "INSERT INTO pending_feast_updates (card_id, transaction_id, online) "
-                    "VALUES (%s, %s, %s)",
-                    (record.card_id, record.transaction_id, json.dumps(feast_online)),
-                )
         return inserted is not None
 
     def pending_feast(self, card_id: str) -> dict[str, Any] | None:

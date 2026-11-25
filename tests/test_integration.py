@@ -109,6 +109,21 @@ class TestPostgresStore:
         pg_store.save(record(2, 101, alert=True))
         assert pg_store.counts() == {"scored_transactions": 2, "alerts": 1}
 
+    def test_journal_failure_rolls_back_score_and_alert(self, pg_store: PostgresStore) -> None:
+        first = record(1, 100)
+        assert pg_store.save(first, feast_online={})
+        second = record(2, 101, alert=True)
+
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            pg_store.save(second, feast_online={})
+
+        assert pg_store.get(2) is None
+        assert pg_store.counts() == {"scored_transactions": 1, "alerts": 0}
+        assert pg_store.pending_feast("c1") is not None
+        pg_store.finish_feast("c1", 1)
+        assert pg_store.save(second, feast_online={})
+        assert pg_store.counts() == {"scored_transactions": 2, "alerts": 1}
+
     def test_card_history_is_strictly_earlier_and_per_card(self, pg_store: PostgresStore) -> None:
         for tid, dt, card in [(1, 100, "a"), (2, 200, "a"), (3, 300, "a"), (4, 150, "b")]:
             pg_store.save(record(tid, dt, card))
