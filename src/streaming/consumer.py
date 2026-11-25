@@ -253,8 +253,15 @@ class _Worker:
                     and not polled.error()
                     and (polled.topic(), polled.partition()) not in self.revoked
                 ):
-                    # Paused partitions should not deliver; rewind anything that slipped through.
-                    _rewind(self.consumer, polled)
+                    # A buffered record can slip through a pause. If we cannot rewind it,
+                    # leave the group so it is fetched again from the committed offset.
+                    try:
+                        self.consumer.seek(
+                            TopicPartition(polled.topic(), polled.partition(), polled.offset())
+                        )
+                    except KafkaException:
+                        logger.error("could not rewind; leaving the group %s", _where(polled))
+                        raise
                 if tp in self.revoked:
                     raise _MessageAbandonedError("partition revoked")
         finally:
@@ -346,13 +353,6 @@ class _Committer:
             )
         self.failing_since = self.last_alert = None
         self.counts.pop("consecutive_commit_failures", None)
-
-
-def _rewind(consumer: Consumer, msg: Any) -> None:
-    try:
-        consumer.seek(TopicPartition(msg.topic(), msg.partition(), msg.offset()))
-    except KafkaException as exc:  # partition no longer assigned: its owner re-reads it
-        logger.warning("could not rewind %s: %s", _where(msg), exc)
 
 
 def _where(msg: Any) -> str:

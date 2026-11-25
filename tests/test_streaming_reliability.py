@@ -14,7 +14,7 @@ from typing import Any
 
 import psycopg
 import pytest
-from confluent_kafka import KafkaError, KafkaException
+from confluent_kafka import KafkaError, KafkaException, TopicPartition
 from confluent_kafka.admin import ConfigResource, NewTopic
 from pydantic import ValidationError
 
@@ -116,6 +116,32 @@ def test_production_leaves_group_on_unconfirmed_commit(failure: int) -> None:
     fake.commit_errors = [failure]
     run(fake, scorer, FakeDeadLetterSink(), commit_delays=(), require_contiguous=True)
     assert fake.committed_messages == [] and fake.closed and scorer.scored == [10]
+
+
+def test_failed_rewind_during_retry_leaves_group_before_advancing() -> None:
+    class FailedSeekConsumer(FakeConsumer):
+        def seek(self, tp: TopicPartition) -> None:
+            raise KafkaException(KafkaError(KafkaError._STATE))
+
+    fake = FailedSeekConsumer(values(10, 11))
+    fake.ignore_pause = True
+    scorer = FlakyScorer(psycopg.OperationalError("database unavailable"))
+
+    with pytest.raises(KafkaException, match="_STATE"):
+        run(
+            fake,
+            scorer,
+            FakeDeadLetterSink(),
+            policy=RetryPolicy(base_delay=0.1),
+            require_contiguous=True,
+        )
+
+    assert fake.closed and not fake.committed_messages and not scorer.scored
+    assert not fake.queue
+
+    resumed = FakeConsumer(values(10, 11))
+    run(resumed, scorer, FakeDeadLetterSink(), require_contiguous=True)
+    assert offsets(resumed) == [0, 1] and scorer.scored == [10, 11]
 
 
 def test_revoked_worker_does_not_commit_completed_dlq_outcome() -> None:
