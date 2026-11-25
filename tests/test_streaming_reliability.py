@@ -81,7 +81,48 @@ def run(
 
 
 def offsets(fake: FakeConsumer) -> list[int]:
-    return [m.offset() for m in fake.committed]
+    return [m.offset() for m in fake.committed_messages]
+
+
+def test_production_stops_at_gap_after_successful_commit_retry() -> None:
+    fake, scorer, dlq = FakeConsumer(values(10, 11, 12, 13)), FlakyScorer(), FakeDeadLetterSink()
+    fake.commit_errors = [KafkaError.NOT_COORDINATOR, KafkaError.COORDINATOR_LOAD_IN_PROGRESS]
+    fake.queue = [fake.all[0], fake.all[3]]
+
+    with pytest.raises(consumer_mod.OffsetGapError, match="expected offset=1"):
+        run(fake, scorer, dlq, commit_delays=(0.0, 0.0), require_contiguous=True)
+
+    assert offsets(fake) == [0] and fake.commit_calls == 3
+    assert scorer.scored == [10] and dlq.sent == [] and fake.closed
+
+    resumed = FakeConsumer(values(10, 11, 12, 13))
+    resumed.start_offset = 1
+    resumed.queue = resumed.all[1:]
+    run(resumed, scorer, dlq, require_contiguous=True)
+    assert offsets(resumed) == [1, 2, 3] and scorer.scored == [10, 11, 12, 13]
+
+
+def test_production_checks_first_delivery_against_committed_position() -> None:
+    fake = FakeConsumer(values(10, 11))
+    fake.queue = fake.all[1:]
+    with pytest.raises(consumer_mod.OffsetGapError, match="expected offset=0"):
+        run(fake, FlakyScorer(), FakeDeadLetterSink(), require_contiguous=True)
+    assert fake.committed_messages == [] and fake.closed
+
+
+@pytest.mark.parametrize("failure", [KafkaError.NOT_COORDINATOR, KafkaError.ILLEGAL_GENERATION])
+def test_production_leaves_group_on_unconfirmed_commit(failure: int) -> None:
+    fake, scorer = FakeConsumer(values(10, 11)), FlakyScorer()
+    fake.commit_errors = [failure]
+    run(fake, scorer, FakeDeadLetterSink(), commit_delays=(), require_contiguous=True)
+    assert fake.committed_messages == [] and fake.closed and scorer.scored == [10]
+
+
+def test_revoked_worker_does_not_commit_completed_dlq_outcome() -> None:
+    fake = FakeConsumer([b"{invalid"])
+    dlq = FakeDeadLetterSink(on_attempt=lambda _: fake.revoke())
+    counts = run(fake, FlakyScorer(), dlq, require_contiguous=True)
+    assert len(dlq.sent) == 1 and fake.committed_messages == [] and counts["interrupted"] == 1
 
 
 class TestRetryPolicy:
@@ -246,7 +287,7 @@ class TestConsumerReliability:
             FakeDeadLetterSink(),
             stop=stop,
         )
-        assert first.committed == [] and first.closed
+        assert first.committed_messages == [] and first.closed
 
         # Restart: the uncommitted message is redelivered and stored exactly once.
         scorer = Scorer(bundle, store)
@@ -268,7 +309,7 @@ class TestConsumerReliability:
         )
         fake = FakeConsumer([b"{poison"])
         counts = run(fake, FlakyScorer(), dlq, stop=stop)
-        assert fake.committed == [] and dlq.sent == [] and counts["interrupted"] == 1
+        assert fake.committed_messages == [] and dlq.sent == [] and counts["interrupted"] == 1
 
     def test_rebalance_during_a_retry_abandons_the_message_uncommitted(self) -> None:
         fake, dlq = FakeConsumer(values(1)), FakeDeadLetterSink()
@@ -277,7 +318,7 @@ class TestConsumerReliability:
         counts = run(
             fake, FlakyScorer(*(psycopg.OperationalError() for _ in range(99))), dlq, policy=policy
         )
-        assert fake.committed == [] and dlq.sent == [] and counts["interrupted"] == 1
+        assert fake.committed_messages == [] and dlq.sent == [] and counts["interrupted"] == 1
 
     def test_messages_delivered_while_paused_are_rewound_not_lost(self) -> None:
         fake, dlq = FakeConsumer(values(1, 2)), FakeDeadLetterSink()
@@ -411,7 +452,7 @@ class TestCommitter:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         fake, dlq = FakeConsumer(values(1, 2)), FakeDeadLetterSink()
-        fake.poll_hook = lambda c: c.revoke() if c.committed and c.assigned else None
+        fake.poll_hook = lambda c: c.revoke() if c.committed_messages and c.assigned else None
         with caplog.at_level("INFO", logger="src.streaming.consumer"):
             run(fake, FlakyScorer(), dlq)
         assert "partitions assigned: t[0]" in caplog.text

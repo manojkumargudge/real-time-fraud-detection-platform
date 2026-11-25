@@ -544,6 +544,7 @@ def test_database_outage_is_retried_without_dlq_or_skipped_events(
         policy=QUICK,
         max_messages=3,
         idle_timeout=20,
+        require_contiguous=True,
     )
     assert counts["scored"] == 3 and counts["retries"] == 8 and counts["dead_lettered"] == 0
     assert pg_store.counts()["scored_transactions"] == 3

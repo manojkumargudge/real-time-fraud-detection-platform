@@ -639,7 +639,7 @@ class TestConsumerLoop:
         dlq = FakeDeadLetterSink()
         counts = consumer_mod.run(fake, scorer, "t", dead_letters=dlq, max_messages=4)
         assert counts["scored"] == 2 and counts["duplicate"] == 1 and counts["invalid"] == 1
-        assert len(fake.committed) == 4 and fake.closed and len(memory_store(scorer)) == 2
+        assert len(fake.committed_messages) == 4 and fake.closed and len(memory_store(scorer)) == 2
         assert [d.value for d in dlq.sent] == [b"junk"]  # the poison message, dead-lettered
 
     def test_no_commit_while_the_database_is_down(self, scorer: Scorer) -> None:
@@ -663,7 +663,7 @@ class TestConsumerLoop:
         assert (
             len(calls) == 6 and counts["retries"] == 6 and counts["interrupted"] == 1
         )  # 6th: wait cut
-        assert fake.committed == [] and dlq.sent == [] and fake.closed
+        assert fake.committed_messages == [] and dlq.sent == [] and fake.closed
 
     def test_missing_topic_is_waited_out_not_fatal(self, scorer: Scorer) -> None:
         from confluent_kafka import KafkaError
@@ -676,7 +676,7 @@ class TestConsumerLoop:
         counts = consumer_mod.run(
             fake, scorer, "t", dead_letters=FakeDeadLetterSink(), max_messages=1
         )
-        assert counts["scored"] == 1 and len(fake.committed) == 1
+        assert counts["scored"] == 1 and len(fake.committed_messages) == 1
 
     def test_other_broker_errors_are_fatal(self, scorer: Scorer) -> None:
         from confluent_kafka import KafkaError, KafkaException
@@ -685,7 +685,7 @@ class TestConsumerLoop:
         fake.queue = [FakeMessage(None, FakeError(KafkaError._TRANSPORT))]
         with pytest.raises(KafkaException):
             consumer_mod.run(fake, scorer, "t", dead_letters=FakeDeadLetterSink(), max_messages=1)
-        assert fake.committed == [] and fake.closed
+        assert fake.committed_messages == [] and fake.closed
 
     @pytest.mark.parametrize("enabled", [False, True])
     def test_stage_timings_are_logged_only_when_enabled(
@@ -729,7 +729,7 @@ class TestConsumerLoop:
             max_messages=4,
         )
         assert counts["scored"] == 4 and counts["alerts"] == 4
-        assert len(fake.committed) == 4 and fake.queue == []
+        assert len(fake.committed_messages) == 4 and fake.queue == []
 
     def test_main_turns_sigterm_into_a_graceful_stop(
         self, bundle_dir: Path, monkeypatch: pytest.MonkeyPatch
@@ -762,7 +762,7 @@ class TestConsumerLoop:
         stop.set()
         fake = FakeConsumer([encode(event())[1]])
         counts = consumer_mod.run(fake, scorer, "t", dead_letters=FakeDeadLetterSink(), stop=stop)
-        assert sum(counts.values()) == 0 and fake.committed == [] and fake.closed
+        assert sum(counts.values()) == 0 and fake.committed_messages == [] and fake.closed
         assert len(fake.queue) == 1  # nothing consumed, so nothing lost
 
 
