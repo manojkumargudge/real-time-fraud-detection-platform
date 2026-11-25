@@ -735,7 +735,7 @@ def test_feast_update_resumes_after_partial_write(
 @needs_redis
 @pytest.mark.parametrize("ttl", [None, 60])
 def test_direct_feast_serialization_matches_redis_bytes(tmp_path: Path, ttl: int | None) -> None:
-    from redis import Redis  # type: ignore[import-untyped]
+    from redis import Redis
 
     from src.features import feast_store as fs
     from src.features.history import HistoryConfig
@@ -758,6 +758,7 @@ def test_direct_feast_serialization_matches_redis_bytes(tmp_path: Path, ttl: int
             assert keys
             for key in keys:
                 remaining = client.pttl(key)
+                assert isinstance(remaining, int)
                 if ttl is None:
                     assert remaining == -1
                 else:

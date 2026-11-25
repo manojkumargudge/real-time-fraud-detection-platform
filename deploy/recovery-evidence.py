@@ -44,7 +44,7 @@ def kafka(action: str) -> None:
         return
 
     import psycopg
-    from redis import Redis  # type: ignore[import-untyped]
+    from redis import Redis
 
     partition = TopicPartition("transactions", 0)
     with psycopg.connect(
