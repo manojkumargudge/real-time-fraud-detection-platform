@@ -16,6 +16,7 @@ case "$kind" in
   drift) requirements=requirements-monitoring.txt ;;
   retrain) requirements=requirements-retrain.txt; extra=(--build-arg EXTRA_APT_PACKAGES=git) ;;
   kafka|postgres) ;;
+  kafka-next) source_ref=apache/kafka:4.3.2 ;;
   redis) source_ref=redis:7.4.12-alpine3.22 ;;
   caddy) source_ref=caddy:2.11.9-alpine ;;
   *) exit 2 ;;
