@@ -43,6 +43,10 @@ jobs:
           PY
       - name: Recover into distinct volumes and roll back an unhealthy upgrade
         run: bash deploy/rehearse-recovery.sh "$RUNNER_TEMP/recovery-evidence"
+      - name: Verify Redis bytes against the pre-upgrade synthetic fixture
+        run: |
+          jq -e '.redis_sha256 == "6760c6935ac1fc6bce53cfc974f7f400eed232366bf1a2cc32415084266512ab"' \
+            "$RUNNER_TEMP/recovery-evidence/evidence/rolled-back-stream.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

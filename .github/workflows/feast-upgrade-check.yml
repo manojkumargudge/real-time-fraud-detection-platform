@@ -25,11 +25,9 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-      - name: Resolve a patched Feast trial environment only
+      - name: Resolve the release Feast and Arrow pins
         run: |
-          sed -i -e 's/^numpy==1\.26\.4$/numpy==2.2.6/' \
-            -e 's/^feast\[redis\]==0\.47\.0$/feast[redis]==0.67.0/' requirements.txt
-          python -m pip install -r requirements-dev.txt pyarrow==23.0.1
+          python -m pip install -r requirements-dev.txt
           python -m pip check
       - run: docker compose -p feast-security-test -f docker-compose.test.yml up -d --wait postgres redis
       - name: Validate embedded SDK, scoring and partial-write recovery

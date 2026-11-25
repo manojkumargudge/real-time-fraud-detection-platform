@@ -1,6 +1,6 @@
 # Milestone 1: data loading and validation.
-# Pinned conservatively for later compatibility with Feast, Evidently and torch.
-numpy==1.26.4
+# Keep the serving and training NumPy versions aligned.
+numpy==2.2.6
 pandas==2.2.3
 # Milestone 2: model comparison (native XGBoost API; scikit-learn not required).
 xgboost==2.1.4
@@ -20,9 +20,9 @@ psycopg-pool==3.2.8  # PostgresStore connection pool (DB_POOL_SIZE, default 10)
 confluent-kafka==2.6.1
 # MLOps: training-run tracking and model registry (training only; not in requirements-serving).
 mlflow==3.17.2
-# Feature store (entity state online; docs/feature_store.md). 0.47.0: newest release that
-# works with numpy 1.26.4 / pydantic 2.14.1; it pins pyarrow 18.0.0.
-feast[redis]==0.47.0
+# Embedded feature store and patched Arrow IPC runtime.
+feast[redis]==0.67.0
+pyarrow==23.0.1
 # Drift monitoring (batch job, not in requirements-serving). 0.7.23: current API (Report /
 # Dataset / DataDefinition, evidently.presets); adds no change to the pins above; pip-audit clean
 # 2026-10-24. Telemetry off via EVIDENTLY_DISABLE_TELEMETRY=1 / DO_NOT_TRACK=1.

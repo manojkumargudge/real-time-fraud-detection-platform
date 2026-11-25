@@ -6,6 +6,6 @@ RUN apk add --no-cache --upgrade 'libxml2>=2.13.9-r3'
 # The official entrypoint calls `gosu postgres COMMAND`. Use Alpine's privilege
 # drop helper at that path so the old statically linked Go executable is absent.
 RUN apk add --no-cache su-exec \
-    && gosu_path="$(command -v gosu)" \
-    && ln -sf "$(command -v su-exec)" "$gosu_path" \
+    && test -x /sbin/su-exec \
+    && ln -sf /sbin/su-exec /usr/local/bin/gosu \
     && test "$(gosu postgres id -un)" = postgres
