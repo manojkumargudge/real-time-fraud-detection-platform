@@ -2,3 +2,10 @@ FROM postgres:16.16-alpine3.24@sha256:9d9e487c1bd6413c52ccb3c02f46c8e37fa1e1d1a3
 
 # Apply the Alpine libxml2 security patch while retaining PostgreSQL 16.16.
 RUN apk add --no-cache --upgrade 'libxml2>=2.13.9-r3'
+
+# The official entrypoint calls `gosu postgres COMMAND`. Use Alpine's privilege
+# drop helper at that path so the old statically linked Go executable is absent.
+RUN apk add --no-cache su-exec \
+    && gosu_path="$(command -v gosu)" \
+    && ln -sf "$(command -v su-exec)" "$gosu_path" \
+    && test "$(gosu postgres id -un)" = postgres

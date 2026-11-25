@@ -43,6 +43,8 @@ stack() {
 
 capture() {
   local project=$1 label=$2 table
+  stack "$project" exec -T postgres sh -ec \
+    'test "$(awk '\''/^Uid:/ {print $2}'\'' /proc/1/status)" = "$(id -u postgres)"'
   for table in scored_transactions alerts; do
     stack "$project" exec -T postgres psql -X -v ON_ERROR_STOP=1 -U fraud -d fraud -q \
       -c "COPY (SELECT * FROM $table ORDER BY transaction_id) TO STDOUT" |
@@ -86,7 +88,7 @@ attest_ingress() {
     https://api.localhost:18443/score | jq -e '.transaction_id == 910000001 and .duplicate and .is_alert' >/dev/null
 }
 
-stack "$source_project" build api kafka postgres dashboard mlflow
+stack "$source_project" build api kafka postgres dashboard mlflow proxy
 stack "$source_project" up -d --no-build --wait --wait-timeout 200
 stack "$source_project" exec -T mlflow python - registry-seed < deploy/recovery-evidence.py
 stack "$source_project" exec -T api python - seed < deploy/recovery-evidence.py

@@ -1,0 +1,9 @@
+FROM caddy:2.11.9-builder-alpine AS build
+
+# Keep Caddy's standard modules and update the affected HTML parser.
+RUN xcaddy build v2.11.9 --output /usr/bin/caddy \
+    --replace golang.org/x/net=golang.org/x/net@v0.62.0
+
+FROM caddy:2.11.9-alpine@sha256:fc9cbc100585871d18d4e451cca7021785c90a7006087427ae5ceb3e4efe6424
+
+COPY --from=build /usr/bin/caddy /usr/bin/caddy

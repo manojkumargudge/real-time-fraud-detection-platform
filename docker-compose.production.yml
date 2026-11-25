@@ -104,7 +104,10 @@ services:
         condition: service_healthy
     security_opt: ["no-new-privileges:true"]
   proxy:
-    image: caddy:2.11.9-alpine
+    image: fraud-caddy:2.11.9-alpine-patched
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.caddy
     environment:
       API_HOSTNAME: ${API_HOSTNAME:?set API_HOSTNAME}
       DASHBOARD_HOSTNAME: ${DASHBOARD_HOSTNAME:?set DASHBOARD_HOSTNAME}
