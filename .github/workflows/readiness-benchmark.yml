@@ -1,0 +1,76 @@
+name: Readiness benchmark
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - benchmarks/**
+      - .github/workflows/readiness-benchmark.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      BENCH_PROFILE: '1'
+      API_REQUESTS_PER_MINUTE: '20000'
+      TEST_DATABASE_URL: postgresql://fraud:test-only@127.0.0.1:25432/fraud
+      TEST_REDIS: 127.0.0.1:26379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Start isolated PostgreSQL and Redis
+        run: |
+          docker compose -p readiness-bench -f docker-compose.test.yml up -d --wait postgres redis
+          redis() { docker compose -p readiness-bench -f docker-compose.test.yml exec -T redis redis-cli "$@"; }
+          [[ $(redis CONFIG SET appendfsync always appendonly yes latency-monitor-threshold 1) == OK ]]
+          for _ in {1..30}; do
+            persistence=$(redis INFO persistence | tr -d '\r')
+            if grep -qx aof_enabled:1 <<< "$persistence" && grep -qx aof_rewrite_in_progress:0 <<< "$persistence" && grep -qx aof_rewrite_scheduled:0 <<< "$persistence"; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Generate one shared synthetic bundle
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from src.data.load import load_ieee_cis
+          from src.models.train import save_bundle, train_baseline
+          from tests.test_models import FAST, synthetic_split
+
+          root = Path(os.environ['RUNNER_TEMP'])
+          frame = load_ieee_cis(synthetic_split(root / 'benchmark-data'), usecols=[])
+          model, metadata = train_baseline(frame, FAST)
+          save_bundle(model, metadata, root / 'benchmark-bundle')
+          PY
+      - name: Compare revisions sequentially
+        run: |
+          set -o pipefail
+          export BENCH_BUNDLE="$RUNNER_TEMP/benchmark-bundle"
+          mkdir "$RUNNER_TEMP/benchmark-main"
+          git fetch --depth=1 origin 6f1a39f018e4c8f5bb11f9c4b051ba73d6467094
+          git archive FETCH_HEAD src | tar -x -C "$RUNNER_TEMP/benchmark-main"
+          nproc
+          free -m
+          for revision in baseline candidate direct direct candidate baseline; do
+            code=$PWD
+            if [[ $revision == baseline ]]; then code="$RUNNER_TEMP/benchmark-main"; fi
+            python benchmarks/readiness.py "$code" "$revision" | tee -a "$RUNNER_TEMP/readiness.jsonl"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readiness-metrics
+          path: ${{ runner.temp }}/readiness.jsonl

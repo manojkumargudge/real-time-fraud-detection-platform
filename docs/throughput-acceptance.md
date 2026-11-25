@@ -1,0 +1,3 @@
+# Throughput acceptance protocol
+
+The comparison uses two sequential runs per revision and 1, 4 and 8 concurrent clients. Compare the median of run-level metrics against main. At one client require throughput at least 95% of main and p95 at most 110% of main. At eight clients require throughput at least 95% of main. Report four-client results and p50/p95/p99 at every level. Require zero errors, timeouts, score differences, alert differences and history-count differences at every level. For a release decision repeat on the target Linux VM with durable stores and a representative sustained workload.
