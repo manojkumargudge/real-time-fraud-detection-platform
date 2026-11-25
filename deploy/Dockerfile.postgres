@@ -1,4 +1,4 @@
-FROM postgres:16.16-alpine3.24@sha256:9d9e487c1bd6413c52ccb3c02f46c8e37fa1e1d1a32a84519eb4e68d0ad1da30
+FROM postgres:16.16-alpine3.24@sha256:9d9e487c1bd6413c52ccb3c02f46c8e37fa1e1d1a32a84519eb4e68d0ad1da30 AS patched
 
 # Apply the Alpine libxml2 security patch while retaining PostgreSQL 16.16.
 RUN apk add --no-cache --upgrade 'libxml2>=2.13.9-r3'
@@ -11,3 +11,19 @@ RUN apk add --no-cache su-exec \
     && cp /sbin/su-exec /usr/local/bin/gosu \
     && cmp /sbin/su-exec /usr/local/bin/gosu \
     && test "$(gosu postgres id -un)" = postgres
+
+# Ship only the patched filesystem. The inherited layer contains the original
+# vulnerable executable even after replacing it in the mounted filesystem.
+FROM scratch
+LABEL org.opencontainers.image.base.digest="sha256:9d9e487c1bd6413c52ccb3c02f46c8e37fa1e1d1a32a84519eb4e68d0ad1da30"
+COPY --from=patched / /
+ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    LANG=en_US.utf8 \
+    PG_MAJOR=16 \
+    PG_VERSION=16.16 \
+    PGDATA=/var/lib/postgresql/data
+VOLUME ["/var/lib/postgresql/data"]
+EXPOSE 5432
+STOPSIGNAL SIGINT
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["postgres"]
