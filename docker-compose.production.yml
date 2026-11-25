@@ -76,6 +76,8 @@ services:
       start_period: 60s
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
+  drift:
+    security_opt: ["no-new-privileges:true"]
   retrain:
     profiles: ["retraining"]
     build:

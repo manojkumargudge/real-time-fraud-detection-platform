@@ -46,6 +46,44 @@ fi
 printf '%s\n' "$kind $ref" > "$out/release-reference.txt"
 docker image inspect "$ref" > "$out/image-inspect.json"
 
+if [[ -n $requirements ]]; then
+  docker run --rm -i --network none --cap-drop ALL --security-opt no-new-privileges:true \
+    --entrypoint sh "$ref" -s > "$out/python-runtime.txt" <<'SH'
+set -eu
+id
+for binary in mount nsenter infocmp systemd-homed perl git curl; do
+  printf '%s: ' "$binary"
+  command -v "$binary" || printf 'not in PATH\n'
+done
+if test -e /usr/lib/systemd/systemd-homed; then
+  dpkg-query --search /usr/lib/systemd/systemd-homed
+fi
+perl -MArchive::Tar -e 'print "Archive::Tar $Archive::Tar::VERSION\n"' 2>/dev/null \
+  || printf 'Archive::Tar import unavailable\n'
+python - <<'PY'
+import pyexpat
+import sqlite3
+import ssl
+import subprocess
+import _sqlite3
+import _ssl
+
+print(ssl.OPENSSL_VERSION)
+print(pyexpat.EXPAT_VERSION)
+print("SQLite", sqlite3.sqlite_version)
+with sqlite3.connect(":memory:") as db:
+    print("SQLite compile options", ", ".join(row[0] for row in db.execute("PRAGMA compile_options")))
+with open("/proc/self/status", encoding="utf-8") as status:
+    for line in status:
+        if line.startswith(("CapEff:", "NoNewPrivs:")):
+            print(line.strip())
+for module in (_sqlite3, _ssl, pyexpat):
+    print(module.__file__, flush=True)
+    subprocess.run(["ldd", module.__file__], check=True)
+PY
+SH
+fi
+
 # Preserve all high and critical findings, including unfixed and locally excepted entries.
 # A scanner failure fails this job. A successful inventory still needs human disposition.
 for attempt in 1 2; do
