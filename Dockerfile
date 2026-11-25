@@ -1,6 +1,6 @@
-# Debian 12 (bookworm) slim. Security: a current base tag plus `apt-get upgrade` at build time
-# picks up Debian security fixes (Trivy on the old 3.11.9 base: 128 HIGH/CRITICAL OS findings).
-FROM python:3.11.16-slim-bookworm
+# Debian 13 includes fixes for SQLite and zlib that Bookworm does not ship.
+# Resolve the built image by digest and scan its full resolved package inventory.
+FROM python:3.11.16-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app

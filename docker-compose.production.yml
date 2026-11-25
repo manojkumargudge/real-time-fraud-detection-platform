@@ -3,11 +3,13 @@ name: fraud-production
 
 services:
   kafka:
-    image: fraud-kafka:3.9.2-alpine-patched
+    image: fraud-kafka:4.3.2-alpine-patched
     build:
       context: .
       dockerfile: deploy/Dockerfile.kafka
     ports: !reset []
+    environment:
+      KAFKA_OPTS: "-XX:-UseBASE64Intrinsics"
     healthcheck:
       timeout: 30s
       start_period: 60s
