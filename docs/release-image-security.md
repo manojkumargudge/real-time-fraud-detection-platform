@@ -26,6 +26,16 @@ The hosted recovery script now builds Redis with the other local images before s
 
 ## Applicability review on 2026-11-25
 
+The `66f75ca` inventory contains the exact manifest and each installed package
+version, affected image and scanner fix field for the 22 findings below. The follow-up
+review found no supported Trixie fixed version to apply from that inventory or the
+linked Debian records. Production Compose now drops all application capabilities
+and sets no-new-privileges. The recovery harness checks both settings in the running
+serving process. Retraining remains an opt-in profile. All findings remain open
+pending a supported fix or a time-limited release-owner decision. No residual-risk
+approval or expiry is recorded for an open finding.
+[Exact package and image inventory](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45739147563) [Debian stable tracker](https://security-tracker.debian.org/tracker/status/release/trixie)
+
 The table combines the exact Trivy binary inventory with the Debian source-package advisory and the production Compose call paths. Each listed Trixie issue was open without a fixed release version in Debian's tracker. Presence of a binary package is confirmed by the scan. Reachability statements reflect code and configuration review and remain subject to runtime confirmation. No finding was suppressed, waived or accepted. [Debian release tracker](https://security-tracker.debian.org/tracker/status/release/trixie)
 
 | Debian source and image scope | CVE | Vulnerable component, current constraints and remaining verification |

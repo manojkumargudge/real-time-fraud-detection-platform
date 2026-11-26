@@ -5,6 +5,10 @@ on:
     paths:
       - .github/workflows/release-images.yml
       - deploy/scan-release-image.sh
+      - Dockerfile
+      - deploy/Dockerfile.*
+      - requirements*.txt
+      - src/**
   workflow_dispatch:
 permissions:
   contents: read
