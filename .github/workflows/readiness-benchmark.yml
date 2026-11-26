@@ -42,7 +42,7 @@ jobs:
           done
           exit 1
       - name: Verify Redis bytes, TTL and journal recovery
-        run: python -m pytest tests/test_integration.py -k "direct_feast_serialization or resumes_after_partial_write or concurrent_feast_scoring" -q
+        run: python -m pytest tests/test_integration.py -k "direct_feast_serialization or feast_update_retries_a_committed_score or concurrent_feast_scoring" -q
       - name: Generate one shared synthetic bundle
         run: |
           python - <<'PY'

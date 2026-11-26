@@ -14,6 +14,13 @@
 | Redis | `e4ee3e03ce8f75471f40937a7c6b2b0e500390b6812fcdf5cb32c01295ded446` | 0 |
 | Caddy | `0c0eba2013316469ab9f5a5cf1ba697ae510b0ade15dcf45564c14ba62dab449` | 0 |
 
+The November 26 scan at `9385799` reported two new high-severity Redis package
+findings for the same OpenSSL advisory, CVE-2026-124709. The Redis build retains
+7.4.12 and requires Alpine's fixed `libcrypto3` and `libssl3` revisions
+`3.5.9-r2` or later. Both packages resolved to `3.5.9-r2` in the local build.
+The release inventory builds and scans this patched image. The Python image
+findings below remain open. [Exact-head scan](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45733807628) [Alpine package index](https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/)
+
 ## Applicability review on 2026-11-25
 
 The table combines the exact Trivy binary inventory with the Debian source-package advisory and the production Compose call paths. Each listed Trixie issue was open without a fixed release version in Debian's tracker. Presence of a binary package is confirmed by the scan. Reachability statements reflect code and configuration review and remain subject to runtime confirmation. No finding was suppressed, waived or accepted. [Debian release tracker](https://security-tracker.debian.org/tracker/status/release/trixie)

@@ -4,6 +4,18 @@ The comparison uses two sequential runs per revision and 1, 4 and 8 concurrent c
 
 ## Hosted profiling results
 
+At `9385799`, two matched repeats per revision met the HTTP comparison gate on one runner.
+All 4,608 requests across the baseline, candidate and direct-writer runs shared the same
+score, alert and history digest. There were zero errors or timeouts. The table compares the
+direct writer with main. Full-stack Linux host sizing still requires the sustained rehearsal.
+[Hosted raw samples](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45733807774)
+
+| Clients | Main requests/s | Direct writer requests/s | Main p50 / p95 / p99 (ms) | Direct writer p50 / p95 / p99 (ms) |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 57.88 | 68.89 | 16.83 / 17.85 / 21.08 | 14.37 / 15.15 / 18.30 |
+| 4 | 53.04 | 70.61 | 75.11 / 90.57 / 98.09 | 54.48 / 69.54 / 136.51 |
+| 8 | 49.96 | 71.87 | 157.21 / 202.48 / 244.10 | 110.53 / 137.33 / 159.10 |
+
 The first controlled hosted comparison used main `6f1a39f`, candidate `a5dae19` application behavior, and an isolated direct-serialization prototype. One Linux runner, one Uvicorn worker, one synthetic champion, 16 cards, 16 warmups and 96 measured requests per client level were shared across revisions. PostgreSQL and Redis were isolated, with Redis AOF and `appendfsync always`. Both repeats produced the same score, decision and history digest at every client level. All 1,728 measured requests succeeded without timeouts.
 
 | Revision | Clients | Requests/s | p50 ms | p95 ms | p99 ms |

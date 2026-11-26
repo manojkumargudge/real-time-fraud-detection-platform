@@ -6,7 +6,6 @@ out=${2:?report directory required}
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 local_ref="127.0.0.1:5500/fraud-release/$kind:$(git rev-parse --short HEAD)"
-source_ref=
 requirements=
 extra=()
 case "$kind" in
@@ -15,31 +14,25 @@ case "$kind" in
   mlflow) requirements=requirements-registry.txt ;;
   drift) requirements=requirements-monitoring.txt ;;
   retrain) requirements=requirements-retrain.txt; extra=(--build-arg EXTRA_APT_PACKAGES=git) ;;
-  kafka|postgres|caddy) ;;
+  kafka|postgres|redis|caddy) ;;
   kafka-next)
     extra=(--build-arg KAFKA_BASE=apache/kafka:4.3.2@sha256:8f325fc00143fed78eabe00b033a86747078bb06edc21345d06651f77ae44f30)
     ;;
-  redis) source_ref=redis:7.4.12-alpine3.22 ;;
   *) exit 2 ;;
 esac
 
-if [[ -n $source_ref ]]; then
-  docker buildx imagetools inspect --raw "$source_ref" > "$out/source-manifest.json"
-  digest=$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | if length == 1 then .[0] else error("expected exactly one amd64 manifest") end' "$out/source-manifest.json")
-  ref="${source_ref}@${digest}"
-  docker pull --platform linux/amd64 "$ref"
+docker run -d --name release-inventory-registry -p 127.0.0.1:5500:5000 registry:2 >/dev/null
+if [[ $kind == kafka-next ]]; then
+  docker build --platform linux/amd64 --pull -f deploy/Dockerfile.kafka "${extra[@]}" -t "$local_ref" .
+elif [[ $kind == redis ]]; then
+  docker build --platform linux/amd64 --pull -f deploy/Dockerfile.redis -t "$local_ref" deploy
+elif [[ -z $requirements ]]; then
+  docker build --platform linux/amd64 --pull -f "deploy/Dockerfile.$kind" -t "$local_ref" .
 else
-  docker run -d --name release-inventory-registry -p 127.0.0.1:5500:5000 registry:2 >/dev/null
-  if [[ $kind == kafka-next ]]; then
-    docker build --platform linux/amd64 --pull -f deploy/Dockerfile.kafka "${extra[@]}" -t "$local_ref" .
-  elif [[ $kind == kafka || $kind == postgres || $kind == caddy ]]; then
-    docker build --platform linux/amd64 --pull -f "deploy/Dockerfile.$kind" -t "$local_ref" .
-  else
-    docker build --platform linux/amd64 --pull --build-arg "REQUIREMENTS=$requirements" "${extra[@]}" -t "$local_ref" .
-  fi
-  docker push "$local_ref"
-  ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$local_ref")
+  docker build --platform linux/amd64 --pull --build-arg "REQUIREMENTS=$requirements" "${extra[@]}" -t "$local_ref" .
 fi
+docker push "$local_ref"
+ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$local_ref")
 
 [[ $ref =~ @sha256:[a-f0-9]{64}$ ]]
 [[ $(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$ref") == linux/amd64 ]]

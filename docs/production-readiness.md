@@ -38,6 +38,20 @@ contains aggregate counts and SHA-256 values. The archived group positions were 
 had 21,665 distinct IDs. The archived batch output reconstructed
 `804a580ce0005d3448c56df11a5a4ecb8e298408bb8fafa473d672fad81e5a61` with 917 alert decisions.
 
+### November 26 candidate verification
+
+- `9385799` passed 737 local unit tests with one configured skip and all 52 local integration
+  tests against isolated PostgreSQL, Kafka and Redis. Hosted CI passed 712 unit tests with 11
+  environment-dependent skips, all 52 service-backed tests, strict mypy, Ruff and the configured
+  security jobs. [Hosted CI](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45733807553)
+- The exact-head two-transaction recovery fixture had identical score and alert records, Redis
+  digest, champion registry data, and committed Kafka offset 2 in source, restore and rollback.
+  Cold backup took 2 seconds, verified restore 31 seconds, and rollback 10 seconds. Zero fixture
+  transactions were lost. [Hosted recovery](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45733807576)
+- The hosted HTTP throughput gate passed with matching result digests for 4,608 requests.
+  See the [matched comparison](throughput-acceptance.md). Full-stack CPU and storage headroom
+  still need a dedicated sustained trial.
+
 - Fetched main passed 726 local unit tests with one skip. The candidate passed 728 local unit tests with one skip and all 46 integration tests against isolated PostgreSQL, Kafka and Redis. Ruff lint and formatting and strict mypy passed. The integration suite covered train/serve parity, replay idempotency, late-event handling, drift reporting and promotion safeguards.
 - The November 25 integration suite recorded 46 passes and one failure. The failed Kafka round trip uses the in-memory store and received zero scored messages before the test ended. It passed on an isolated rerun. The new PostgreSQL integration test confirmed that a rejected recovery-journal insert rolls back both the score and alert and that the score can be retried after the existing journal entry is cleared.
 - The recovery regression injected a Redis failure after the UID write. A replay through a separate PostgreSQL scorer finished the card write, returned the original score, cleared the journal and counted the event once for later scoring. The concurrent same-timestamp and late-event regression passed against the isolated PostgreSQL and Redis containers.

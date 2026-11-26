@@ -20,7 +20,10 @@ services:
       dockerfile: deploy/Dockerfile.postgres
     ports: !reset []
   redis:
-    image: redis:7.4.12-alpine3.22
+    image: fraud-redis:7.4.12-alpine3.22-patched
+    build:
+      context: deploy
+      dockerfile: Dockerfile.redis
     ports: !reset []
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always"]
   api:

@@ -12,6 +12,9 @@ is not deployed to real traffic.
 
 The [Compute Engine release checklist and runbook](docs/production-readiness.md) covers
 the Linux Compose deployment, service exposure, model and registry setup, and release gates.
+Production release is blocked. The latest verified cloud environment was a private
+single-VM rehearsal in `us-central1-a`. Public demo and live API links depend on release
+approval and external TLS and authentication checks.
 
 ## Results
 
@@ -50,6 +53,27 @@ Full diagram, with what runs in Docker Compose, in Minikube and on the host only
 [docs/architecture.md](docs/architecture.md). API reference (`/health`, `/score`, OpenAPI spec):
 [docs/api.md](docs/api.md). Kafka messages, PostgreSQL tables and Feast objects:
 [docs/data.md](docs/data.md).
+
+### Serving design and trade-offs
+
+- Kafka buffers ingestion, partitions the stream by card, and lets independent consumers
+  resume from committed offsets. In production a consumer processes one record at a time,
+  checks for offset gaps and acknowledges only after score persistence and the Feast update
+  or after a confirmed dead-letter write. Retries can redeliver messages. PostgreSQL's
+  transaction ID key deduplicates stored scores and alerts.
+- PostgreSQL stores the score, alert and pending Feast update atomically. A per-card lock
+  orders Redis updates and allows a retry to finish a pending write before later scoring
+  uses the card. Redis serves compact feature history quickly. Feast defines how the training
+  and serving paths interpret that history. Complete Redis state loss requires a verified
+  restore or rebuild before scoring resumes.
+- XGBoost serves the champion because it delivered higher validation PR-AUC than the graph
+  candidates. MLflow tracks the versioned model and artifacts and keeps the champion
+  selection traceable. The retraining evaluation must clear the promotion gate.
+- The hosted benchmark on `9385799` measured 71.87 requests/s at eight spread clients,
+  up from 49.96 on main, with the same score, decision and feature-history digest across
+  4,608 requests. The direct Feast serializer reduced request-path conversion work. The
+  four-vCPU full-stack rehearsal reached CPU saturation. Production host capacity remains
+  an open gate. [Hosted measurements](docs/throughput-acceptance.md)
 
 ## Dashboard
 
