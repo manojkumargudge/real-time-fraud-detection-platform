@@ -21,7 +21,8 @@ dropped.
 CLI (cold start): ``python -m src.features.feast_store materialize [--before DT]`` builds the
 starting state of every entity from the offline batch data -- all IEEE-CIS transactions with
 ``TransactionDT`` earlier than the first streamed event -- and loads it into the online store
-(``FEAST_REDIS``). See docs/feature_store.md.
+(``FEAST_REDIS``). The ``rebuild`` command also folds durable scored events into a fresh Redis
+instance. See docs/feature_store.md.
 """
 
 from __future__ import annotations
@@ -599,6 +600,21 @@ def first_streamed_dt(dsn: str) -> int | None:
     return None if row is None or row[0] is None else int(row[0])
 
 
+def durable_feature_events(dsn: str, before: int) -> list[EntityEvent]:
+    """Read a consistent, drained PostgreSQL snapshot without modifying it."""
+    import psycopg
+
+    with psycopg.connect(dsn) as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        if conn.execute("SELECT 1 FROM pending_feast_updates LIMIT 1").fetchone() is not None:
+            raise ValueError("Resolve pending feature journal rows before rebuilding")
+        rows = conn.execute("SELECT event, card_id, uid FROM scored_transactions").fetchall()
+    events = [EntityEvent(event, card, uid) for event, card, uid in rows]
+    if any(event.event[TIME] < before for event in events):
+        raise ValueError("The seed cutoff overlaps durable scores")
+    return events
+
+
 def materialize_initial_state(
     store: Any, repo_dir: Path, events: list[EntityEvent], config: HistoryConfig
 ) -> tuple[int, int]:
@@ -612,9 +628,10 @@ def materialize_initial_state(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["materialize"])
+    parser.add_argument("command", choices=["materialize", "rebuild"])
     parser.add_argument("--repo-dir", type=Path, default=DEFAULT_DIR)
     parser.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW_DIR)
+    parser.add_argument("--model-dir", type=Path, help="Required for rebuild")
     parser.add_argument(
         "--before",
         default=None,
@@ -627,13 +644,24 @@ def main(argv: list[str] | None = None) -> None:
     redis = os.environ.get("FEAST_REDIS")
     if not redis:
         raise SystemExit("set FEAST_REDIS (online store host:port)")
+    rebuild = args.command == "rebuild"
+    dsn = os.environ.get("DATABASE_URL")
+    if rebuild:
+        if not dsn or args.before is None or args.model_dir is None:
+            parser.error("rebuild requires DATABASE_URL, --before and --model-dir")
+        if args.repo_dir.exists():
+            parser.error("rebuild requires a new --repo-dir")
+        from redis import Redis
+
+        with Redis.from_url(f"redis://{redis}") as client:
+            if client.dbsize() != 0:
+                parser.error("rebuild requires an empty Redis instance")
     df = load_ieee_cis(args.raw_dir, usecols=[])
     if args.before == "validation":
         before = validation_start(df[TIME])
     elif args.before is not None:
         before = int(args.before)
     else:
-        dsn = os.environ.get("DATABASE_URL")
         if not dsn:
             raise SystemExit("pass --before or set DATABASE_URL to find the first streamed event")
         first = first_streamed_dt(dsn)
@@ -641,13 +669,22 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit("no scored events yet: pass --before explicitly")
         before = first
     config = HistoryConfig()
+    recovered: list[EntityEvent] = []
+    if rebuild:
+        from src.serving.model import ModelBundle
+
+        assert dsn is not None
+        config = ModelBundle.load(args.model_dir).history_config
+        recovered = durable_feature_events(dsn, before)
     events = pre_stream_events(df, before, config)
+    events.extend(recovered)
     store = open_store(args.repo_dir, redis=redis, config=config)
     uids, cards = materialize_initial_state(store, args.repo_dir, events, config)
     logger.info(
-        "materialized pre-stream state before=%d events=%d uids=%d cards=%d",
+        "materialized state seed_before=%d events=%d recovered=%d uids=%d cards=%d",
         before,
         len(events),
+        len(recovered),
         uids,
         cards,
     )

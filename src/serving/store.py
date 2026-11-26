@@ -359,7 +359,8 @@ class PostgresStore:
     def has_scored_entity(self, card_id: str, uid: str, *, any_uid: bool) -> bool:
         with self._connection() as conn:
             row = conn.execute(
-                "SELECT 1 FROM scored_transactions WHERE card_id = %s AND (%s OR uid = %s) LIMIT 1",
+                "SELECT 1 FROM scored_transactions WHERE card_id = %s AND uid IS NOT NULL "
+                "AND (%s OR uid = %s) LIMIT 1",
                 (card_id, any_uid, uid),
             ).fetchone()
             return row is not None

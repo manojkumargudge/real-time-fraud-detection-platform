@@ -726,6 +726,8 @@ def test_feast_update_retries_a_committed_score(
         saved = pg.get(1)
         assert saved is not None and saved.card_id is not None
         assert pg.pending_feast(saved.card_id) is not None
+        with pytest.raises(ValueError, match="Resolve pending feature journal"):
+            fs.durable_feature_events(pg_dsn, before=100)
         restarted = Scorer(bundle, retry, feast, read_from_feast=True)
         if failure_stage == "journal":
             restarted.recover_pending_feast()
@@ -746,7 +748,7 @@ def test_feast_update_retries_a_committed_score(
 @needs_db
 @needs_redis
 def test_missing_feast_history_blocks_scoring_until_restored(
-    bundle_dir: Path, tmp_path: Path, pg_store: PostgresStore
+    bundle_dir: Path, tmp_path: Path, pg_store: PostgresStore, pg_dsn: str
 ) -> None:
     from redis import Redis
 
@@ -775,7 +777,14 @@ def test_missing_feast_history_blocks_scoring_until_restored(
         assert pg_store.get(2) is None
         assert pg_store.pending_feast_cards() == []
 
-        feast.push(first.to_record(), saved.card_id, saved.uid, {})
+        with pytest.raises(ValueError, match="seed cutoff overlaps"):
+            fs.durable_feature_events(pg_dsn, before=101)
+        recovered = fs.durable_feature_events(pg_dsn, before=100)
+        assert len(recovered) == 1
+        assert fs.materialize_initial_state(store, tmp_path, recovered, bundle.history_config) == (
+            1,
+            1,
+        )
         assert scorer.score_event(second).history_rows == 1
     finally:
         store.teardown()

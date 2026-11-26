@@ -70,6 +70,25 @@ transaction, so it had no pre-stream history at all (0 of 710 cards).
 
 Redis uses an append-only file (volume `redisdata`), so the state survives restarts.
 
+### Rebuilding online state after Redis loss
+
+Quiesce the API and consumers. Use the champion bundle, the original trusted seed dataset
+and cutoff, and a consistent PostgreSQL checkpoint that has a drained feature journal.
+The rebuild reads the scores from PostgreSQL in a read-only snapshot and folds each
+transaction into the original seed history once. It requires an empty Redis instance and
+a new Feast repository directory.
+
+```bash
+FEAST_REDIS=127.0.0.1:36379 python -m src.features.feast_store rebuild \
+  --repo-dir artifacts/feast-recovery --model-dir artifacts/baseline \
+  --raw-dir data/raw/ieee-cis --before validation
+```
+
+Supply `DATABASE_URL` through the runtime environment. Verify feature values for known
+transactions and confirm the Redis snapshot persists across restart before switching
+scoring to the rebuilt cache. If the PostgreSQL journal has pending entries, first use
+a coordinated checkpoint and replay to obtain a consistent drained state.
+
 ## Training from the Feast offline store
 
 Champion v2 was trained on the pandas matrix (`build_model_frame(df, "baseline")`, split at
