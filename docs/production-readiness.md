@@ -432,7 +432,9 @@ before starting the production scorer. The earlier full retained-cohort evidence
 remains the incident audit. The checkpoint path requires a new capacity measurement.
 Local promotion of the full training seed verified 39,087 user rows and 13,792
 card rows in 98.3 seconds. Opening the scorer and rechecking those rows took
-53.3 seconds on the isolated Windows/WSL stack.
+53.3 seconds on the isolated Windows/WSL stack. A subsequent 256-event run with
+the checkpoint enabled matched the independent batch oracle exactly for all 12
+history features, probabilities and alert decisions.
 
 On November 26 billing was linked, the private four-vCPU rehearsal VM was stopped,
 and Iowa showed 24 E2 CPUs available, eight unused address slots and 100 GB of

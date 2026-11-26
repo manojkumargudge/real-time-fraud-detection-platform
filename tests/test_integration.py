@@ -1661,6 +1661,8 @@ class TestDashboardPages:
             assert before == [
                 "alerts",
                 "case_reviews",
+                "feast_checkpoint",
+                "feast_entity_digests",
                 "pending_feast_updates",
                 "scored_transactions",
             ]
