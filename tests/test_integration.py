@@ -922,6 +922,9 @@ def test_checkpoint_fences_redis_rollback_and_promotes_verified_rebuild(
             )
             assert observed.history_rows == 1
             assert observed.score == float(bundle.predict(expected_row)[0])
+            client.set(keys[0], "invalid-redis-type")
+            with pytest.raises(FeastHistoryUnavailableError, match="Cannot read verified"):
+                scorer.score_event(second)
             for key, saved in seed_cache:
                 assert isinstance(saved, bytes)
                 client.restore(key, 0, saved, replace=True)

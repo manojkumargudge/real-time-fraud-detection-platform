@@ -126,9 +126,19 @@ class Scorer:
                 and card_id is not None
                 and uid is not None
             ):
-                feats, online = self.feast.read(
-                    ev, card_id, uid, validate=partial(self._verify_online, durable, card_id, uid)
-                )
+                try:
+                    feats, online = self.feast.read(
+                        ev,
+                        card_id,
+                        uid,
+                        validate=partial(self._verify_online, durable, card_id, uid),
+                    )
+                except FeastHistoryUnavailableError:
+                    raise
+                except Exception:
+                    raise FeastHistoryUnavailableError(
+                        "Cannot read verified Redis history"
+                    ) from None
             else:
                 feats, online = self.feast.read(ev, card_id, uid)
             if durable is not None and card_id is not None and uid is not None:
