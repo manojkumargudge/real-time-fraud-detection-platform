@@ -727,6 +727,9 @@ def test_feast_update_retries_a_committed_score(
         assert saved is not None and saved.card_id is not None
         assert pg.pending_feast(saved.card_id) is not None
         restarted = Scorer(bundle, retry, feast, read_from_feast=True)
+        if failure_stage == "journal":
+            restarted.recover_pending_feast()
+            assert retry.pending_feast(saved.card_id) is None
         assert restarted.score_event(first).duplicate is True
         assert retry.pending_feast(saved.card_id) is None
         later = TransactionEvent.model_validate(event(TransactionID=2, TransactionDT=101))
@@ -738,6 +741,44 @@ def test_feast_update_retries_a_committed_score(
         retry.close()
         pg.close()
         redis_store.teardown()
+
+
+@needs_db
+@needs_redis
+def test_missing_feast_history_blocks_scoring_until_restored(
+    bundle_dir: Path, tmp_path: Path, pg_store: PostgresStore
+) -> None:
+    from redis import Redis
+
+    from src.features import feast_store as fs
+    from src.serving.scorer import FeastHistoryUnavailableError
+
+    assert REDIS
+    bundle = ModelBundle.load(bundle_dir)
+    project = f"test_{uuid.uuid4().hex[:12]}"
+    store = fs.open_store(tmp_path, redis=REDIS, config=bundle.history_config, project=project)
+    feast = fs.FeastFeatures(store, bundle.history_config)
+    scorer = Scorer(bundle, pg_store, feast, read_from_feast=True)
+    first = TransactionEvent.model_validate(event(TransactionID=1, TransactionDT=100))
+    second = TransactionEvent.model_validate(event(TransactionID=2, TransactionDT=101))
+    try:
+        scorer.score_event(first)
+        saved = pg_store.get(1)
+        assert saved is not None and saved.card_id is not None and saved.uid is not None
+        with Redis.from_url(f"redis://{REDIS}") as client:
+            keys = list(client.scan_iter(match=f"*{project}".encode()))
+            assert len(keys) == 2
+            client.delete(*keys)
+
+        with pytest.raises(FeastHistoryUnavailableError):
+            scorer.score_event(second)
+        assert pg_store.get(2) is None
+        assert pg_store.pending_feast_cards() == []
+
+        feast.push(first.to_record(), saved.card_id, saved.uid, {})
+        assert scorer.score_event(second).history_rows == 1
+    finally:
+        store.teardown()
 
 
 @needs_redis

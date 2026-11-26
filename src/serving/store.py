@@ -351,6 +351,19 @@ class PostgresStore:
                 (card_id,),
             ).fetchone()
 
+    def pending_feast_cards(self) -> list[str]:
+        with self._connection() as conn:
+            rows = conn.execute("SELECT card_id FROM pending_feast_updates ORDER BY card_id")
+            return [row["card_id"] for row in rows]
+
+    def has_scored_entity(self, card_id: str, uid: str, *, any_uid: bool) -> bool:
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM scored_transactions WHERE card_id = %s AND (%s OR uid = %s) LIMIT 1",
+                (card_id, any_uid, uid),
+            ).fetchone()
+            return row is not None
+
     def finish_feast(self, card_id: str, transaction_id: int) -> None:
         with self._connection() as conn:
             conn.execute(

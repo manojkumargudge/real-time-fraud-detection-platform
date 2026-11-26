@@ -78,10 +78,18 @@ class Settings:
                 self.feast_repo_dir, redis=self.feast_redis, config=bundle.history_config
             )
             feast = FeastFeatures(store, bundle.history_config)
-        return Scorer(
+        production = os.getenv("FRAUD_PRODUCTION") == "1"
+        scorer = Scorer(
             bundle,
             self.build_store(),
             feast=feast,
             read_from_feast=self.feature_source == "feast",
-            reject_late=os.getenv("FRAUD_PRODUCTION") == "1",
+            reject_late=production,
         )
+        if production:
+            try:
+                scorer.recover_pending_feast()
+            except BaseException:
+                scorer.store.close()
+                raise
+        return scorer

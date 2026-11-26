@@ -40,6 +40,10 @@ class PendingFeastUpdateError(ConnectionError):
     """A committed score has a pending feature update that must be retried."""
 
 
+class FeastHistoryUnavailableError(ConnectionError):
+    """An online entity row is missing despite durable scoring history."""
+
+
 @dataclass
 class Scorer:
     bundle: ModelBundle
@@ -113,6 +117,13 @@ class Scorer:
         online: dict[str, Any] | None = None
         if self.read_from_feast and self.feast is not None:
             feats, online = self.feast.read(ev, card_id, uid)
+            if durable is not None and card_id is not None and uid is not None:
+                card_missing = online.get("card_last_ts") is None
+                uid_missing = online.get("uid_last_ts") is None
+                if (card_missing or uid_missing) and durable.has_scored_entity(
+                    card_id, uid, any_uid=card_missing
+                ):
+                    raise FeastHistoryUnavailableError("Restore missing online feature history")
             if self.reject_late and any(
                 online.get(field) is not None and online[field] > event.TransactionDT
                 for field in ("uid_last_ts", "card_last_ts")
@@ -189,6 +200,17 @@ class Scorer:
         pending = store.pending_feast(card_id)
         if pending is not None:
             self._push_pending(store, card_id, pending["uid"], pending["event"], pending["online"])
+
+    def recover_pending_feast(self) -> None:
+        """Retry work left by a previous writer, even if a card receives no new events."""
+        if self.feast is None or not isinstance(self.store, PostgresStore):
+            return
+        cards = self.store.pending_feast_cards()
+        if cards:
+            logger.info("recovering pending Feast updates count=%d", len(cards))
+        for card_id in cards:
+            with self.store.serialize_card(card_id):
+                self._recover_feast(self.store, card_id)
 
     def _push_pending(
         self,
