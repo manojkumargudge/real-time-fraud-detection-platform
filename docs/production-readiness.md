@@ -24,7 +24,7 @@
 | --- | --- | --- | --- | --- | --- |
 | Kafka acknowledgement and ownership | P0 | The original consumer could advance past an offset gap. The archived broker and client logs do not establish what caused the missing deliveries. | Use a single broker position snapshot for production assignment and gap tracking. Check commits against broker watermarks and preserve manual acknowledgements. Exercise actual coordinator outages, reassignment, crash windows and drain. | No acknowledgement across unresolved records and exact score and alert counts after replay. | Assignment and bounds regressions added. See `tests/test_streaming_reliability.py` and the isolated replay evidence below. |
 | Redis and PostgreSQL recovery | P0 | Redis writes and journal cleanup occur after durable score persistence. A journal cleanup error could send a persisted transaction down the permanent failure path. Redis data loss can also leave acknowledged history outside the pending journal. | Retry cleanup as part of the journaled write, drain pending work at production startup, and fail scoring when a missing Redis row has matching durable history. Verify complete cache restore against the original seed and all subsequent scores. | Later transactions see the same history as the oracle. Pending entries drain after faults and restart without double application. | Service-backed tests cover retry, startup drain, and missing rows for entities that have durable scores. Detecting stale cache copies and loss of training-only history remains open. |
-| Complete forensic reconciliation | P0 | The archive covers committed offsets. Another 36,803 broker records were outside the export. | Export the tail from an isolated copy of the preserved broker and replay both cohorts against batch feature and model output. | Exact offset boundaries, unique and duplicate counts, zero unexplained score or alert differences, zero outstanding lag, pending updates and dead letters, and reproducible digests. | All 16 source checksums and all 21,665 committed payload IDs verified offline. Tail remains open. |
+| Complete forensic reconciliation | P0 | The first archive covered only the committed offsets. The offline broker disk retained 36,803 more records. | Verify every Kafka batch and replay the full export into isolated stores against independent batch feature and model output. | Exact offset boundaries, unique and duplicate counts, zero unexplained score or alert differences, zero outstanding lag, pending updates and dead letters, and reproducible digests. | Passed for the retained cohort. All 58,468 distinct scores and 2,430 alert rows reconciled. See the full replay evidence below. |
 | Sustained capacity | P1 | Four-vCPU rehearsal CPU reached 100%, above the 70% steady-state p95 gate. | Run two isolated final-image trials on an approved host with concurrent Kafka, API, checkpoint and drift traffic. | Meet the throughput protocol, preserve all counts and digests, and pass the documented resource headroom thresholds. | Hosted API comparison passed on the prior head. The full-stack resource gate is open. |
 | Exact-image security and recovery | P1 | High-severity image findings require disposition. Previous recovery runs used small synthetic cohorts. | Review remaining findings against the exact publishable images and rehearse restore and rollback with the final release candidate. | Required scans and CI pass, all applicable findings resolved or explicitly accepted, and verified restored state agrees across stores. | See [image review](release-image-security.md) and the recovery results below. |
 | Deployment and live evidence | P2 | The private rehearsal had no public endpoint. Compute Engine inventory showed the rehearsal VM stopped on November 26. | After the preceding gates and cost approval, validate production ingress, TLS, synthetic workload, recovery and alert delivery. | External authenticated checks and oracle comparison pass. Only Caddy is public, and resource usage and costs are bounded. | Blocked on P0 and P1. The stopped VM retains a 100 GB balanced disk. |
@@ -51,6 +51,52 @@ had 21,665 distinct IDs. The archived batch output reconstructed
 - The hosted HTTP throughput gate passed with matching result digests for 4,608 requests.
   See the [matched comparison](throughput-acceptance.md). Full-stack CPU and storage headroom
   still need a dedicated sustained trial.
+
+### Full retained Kafka cohort
+
+The original Docker disk remained offline. A read-only extraction produced copies of the three
+Kafka transaction segments. The VHDX reader reported an unreplayed disk log, and the copy's
+broker recovery checkpoints were unreadable. The audit decoded the transaction segments
+directly, verified every batch CRC-32C and matched every key and payload at the 21,665 previously
+archived offsets. It used the frozen group report for original commits and confirmed the
+record boundaries through all three archived log ends.
+
+| Partition | Original next commit | Verified log end | Additional records | Replay next commit |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 9,145 | 20,201 | 11,056 | 20,201 |
+| 1 | 8,760 | 17,527 | 8,767 | 17,527 |
+| 2 | 3,760 | 20,740 | 16,980 | 20,740 |
+
+- The retained segments contained 58,468 records and 58,468 unique transaction IDs. The
+  partitioned export SHA-256 was
+  `1cd00d52b2a0f24125d3bec696c27bfa8bef92e1e906e29241b8f501e53ec618`.
+  Replay preserved keys, values, headers and per-partition offsets in a fresh broker.
+- The batch oracle used the offline feature implementation on the same cohort plus the
+  original seed history. The champion was `baseline-9fdad27ea3b0` at threshold
+  `0.12806208431720734`. Windows and Linux produced identical encoded feature matrix
+  SHA-256 `24fccbf46c5f043b9293047026ec52d17d2902a542ee6c91cfe1e4548c24bcb5`
+  and raw margin SHA-256 `7a0c18b89df17922ada4fff04f279b385b9a136ea56299bac06dfe0d39fa1b32`.
+  The platforms differed in 44 batch probabilities by at most two float32 ULPs
+  (`2.98e-8` absolute). Alert decisions agreed for every record.
+- All 12,380 Windows and 46,088 Linux persisted scores matched the corresponding
+  runtime's batch oracle exactly. This accounted for 35 differences with the Windows
+  reference after handoff. There were 2,430 alerts and zero unexplained score or alert
+  differences, missing or duplicate scores, unexpected records, pending updates, dead
+  letters or residual lag. The sorted SQL score and alert digest was
+  `ded8d0f78821004840d6bd9c1ce060a0b770314aa366bbbff3709a97833c3f6b`.
+- The replay included abrupt consumer loss and reassignment, a Kafka restart that produced
+  `NOT_COORDINATOR` and `COORDINATOR_LOAD_IN_PROGRESS` commit retries, a temporary Redis
+  pause and a PostgreSQL restart during active scoring. A replacement consumer recovered
+  a pending Feast entry. The final oracle and drain checks passed after these interruptions.
+- The cache rebuild read the drained PostgreSQL checkpoint and folded 58,468 durable
+  scores into the 472,432-event seed. The patched Redis instance rebuilt all 55,706 keys.
+  All 12 history features matched exactly for 494 sampled entities before and after a
+  restart, with probe digest
+  `133bff428f38d3caa4dfb8d1d1452a35498140e06342553f25cd125e5815bb3e`.
+  See the [rebuild runbook](feature_store.md#rebuilding-online-state-after-redis-loss).
+
+The raw export, decoder, oracles and final audit output are retained locally under `tmp/`.
+The aggregate results above require no publication of payloads or transaction identifiers.
 
 - Fetched main passed 726 local unit tests with one skip. The candidate passed 728 local unit tests with one skip and all 46 integration tests against isolated PostgreSQL, Kafka and Redis. Ruff lint and formatting and strict mypy passed. The integration suite covered train/serve parity, replay idempotency, late-event handling, drift reporting and promotion safeguards.
 - The November 25 integration suite recorded 46 passes and one failure. The failed Kafka round trip uses the in-memory store and received zero scored messages before the test ended. It passed on an isolated rerun. The new PostgreSQL integration test confirmed that a rejected recovery-journal insert rolls back both the score and alert and that the score can be retried after the existing journal entry is cleared.
