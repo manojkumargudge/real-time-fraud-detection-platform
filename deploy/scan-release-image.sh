@@ -39,6 +39,16 @@ ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$local_ref")
 printf '%s\n' "$kind $ref" > "$out/release-reference.txt"
 docker image inspect "$ref" > "$out/image-inspect.json"
 
+if [[ $kind == retrain ]]; then
+  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+    --entrypoint sh "$ref" -ec '
+      test "$(dpkg-query -W -f "\${Version}" libcurl4-gnutls)" = 8.21.0-2~bpo13+1
+      git --version
+      ldd /usr/lib/git-core/git-remote-http | grep libcurl-gnutls
+      python -c "import feast, mlflow, numpy, pyarrow, xgboost"
+    ' > "$out/retrain-backport-smoke.txt"
+fi
+
 if [[ -n $requirements ]]; then
   docker run --rm -i --network none --cap-drop ALL --security-opt no-new-privileges:true \
     --entrypoint sh "$ref" -s > "$out/python-runtime.txt" <<'SH'

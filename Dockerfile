@@ -33,6 +33,18 @@ RUN if [ -n "${EXTRA_APT_PACKAGES}" ]; then \
     fi \
     && useradd --create-home --uid 10001 app \
     && install -d -o app -g app /app/state
+
+# Git's GnuTLS transport is only installed by the opt-in retraining build.
+# Use the signed Trixie backport and its dependencies for the two curl fixes.
+RUN if [ "${EXTRA_APT_PACKAGES}" = git ]; then \
+      printf '%s\n' 'deb http://deb.debian.org/debian trixie-backports main' \
+        > /etc/apt/sources.list.d/retrain-backports.list \
+      && apt-get update \
+      && apt-get -t trixie-backports install -y --no-install-recommends --no-remove \
+        libcurl3t64-gnutls=8.21.0-2~bpo13+1 \
+      && rm /etc/apt/sources.list.d/retrain-backports.list \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 USER app
 
 # Model artifacts are mounted at runtime (never baked into the image or committed).
