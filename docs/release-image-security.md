@@ -18,8 +18,11 @@ The November 26 scan at `9385799` reported two new high-severity Redis package
 findings for the same OpenSSL advisory, CVE-2026-124709. The Redis build retains
 7.4.12 and requires Alpine's fixed `libcrypto3` and `libssl3` revisions
 `3.5.9-r2` or later. Both packages resolved to `3.5.9-r2` in the local build.
-The release inventory builds and scans this patched image. The Python image
-findings below remain open. [Exact-head scan](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45733807628) [Alpine package index](https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/)
+The patched Redis digest `sha256:429dd7fcc0903e3fb6f5638f02ac0d4550cbef69913cfdb8c10029366f3064db`
+had zero high and critical findings. A local AOF-backed restart retained its fixture.
+The hosted recovery script now builds Redis with the other local images before starting with
+`--no-build`. The Python image findings below remain open.
+[Initial scan](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45733807628) [Patched scan](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45736248107) [Alpine package index](https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/)
 
 ## Applicability review on 2026-11-25
 

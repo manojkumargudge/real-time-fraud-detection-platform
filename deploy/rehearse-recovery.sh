@@ -88,7 +88,7 @@ attest_ingress() {
     https://api.localhost:18443/score | jq -e '.transaction_id == 910000001 and .duplicate and .is_alert' >/dev/null
 }
 
-stack "$source_project" build api kafka postgres dashboard mlflow proxy
+stack "$source_project" build api kafka postgres redis dashboard mlflow proxy
 stack "$source_project" up -d --no-build --wait --wait-timeout 200
 stack "$source_project" exec -T mlflow python - registry-seed < deploy/recovery-evidence.py
 stack "$source_project" exec -T api python - seed < deploy/recovery-evidence.py
