@@ -4,6 +4,35 @@ The comparison uses two sequential runs per revision and 1, 4 and 8 concurrent c
 
 ## Hosted profiling results
 
+The checkpoint candidate's direct-writer sample enables PostgreSQL/Redis digest
+validation and write read-back. Older direct-writer results remain historical
+comparisons. For the sustained rehearsal, promote the verified full seed before
+every trial and keep the checkpoint guard enabled. Capture seeding and startup
+validation times separately from steady-state measurements.
+
+### Private capacity rehearsal provisioning
+
+After spending approval, use the existing private rehearsal subnet and approved IAP
+firewall target tag. Supply the scoped rehearsal service account and a new VM name.
+
+```bash
+gcloud compute instances create "$REHEARSAL_VM" --project fraud-detection-platform-2026 \
+  --zone us-central1-a --machine-type e2-standard-8 --subnet "$REHEARSAL_SUBNET" \
+  --tags "$IAP_TARGET_TAG" --service-account "$REHEARSAL_SERVICE_ACCOUNT" \
+  --scopes cloud-platform --metadata enable-oslogin=TRUE \
+  --image-family ubuntu-2404-lts-amd64 --image-project ubuntu-os-cloud \
+  --boot-disk-size 100GB --boot-disk-type pd-balanced --no-boot-disk-auto-delete \
+  --max-run-duration 8h --instance-termination-action STOP
+```
+
+At the documented Iowa rates the eight-hour estimate is $2.14 compute, $0.04
+ephemeral IPv4 and $0.11 prorated disk, plus variable egress, logging and taxes.
+The old stopped disk is billed separately. Retain the new disk only as authorized
+and run both trials with loopback ingress and the same approved seed and image
+digests. Use the [full procedure](production-readiness.md#sustained-linux-rehearsal)
+to capture metrics and reconcile each trial. Stop compute after collecting evidence.
+[Compute pricing](https://cloud.google.com/products/compute/pricing/general-purpose)
+
 At `9385799`, two matched repeats per revision met the HTTP comparison gate on one runner.
 All 4,608 requests across the baseline, candidate and direct-writer runs shared the same
 score, alert and history digest. There were zero errors or timeouts. The table compares the

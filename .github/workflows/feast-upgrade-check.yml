@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - .github/workflows/feast-upgrade-check.yml
+      - src/features/feast*.py
+      - src/serving/**
   workflow_dispatch:
 permissions:
   contents: read
@@ -33,4 +35,4 @@ jobs:
       - name: Validate embedded SDK, scoring and partial-write recovery
         run: |
           python -m pytest tests/test_feast_store.py tests/test_feast_training.py tests/test_serving.py -rfEs
-          python -m pytest tests/test_integration.py -k 'feast or journal or concurrent' -rfEs
+          python -m pytest tests/test_integration.py -k 'feast or journal or concurrent or checkpoint' -rfEs

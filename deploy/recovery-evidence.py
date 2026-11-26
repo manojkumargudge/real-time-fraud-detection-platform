@@ -55,6 +55,9 @@ def kafka(action: str) -> None:
         assert pg.execute("SELECT count(*) FROM pending_feast_updates").fetchone() == (0,)
         alerts = pg.execute("SELECT transaction_id FROM alerts ORDER BY 1").fetchall()
         assert alerts == rows, alerts
+        checkpoint = pg.execute("SELECT generation FROM feast_checkpoint").fetchone()
+        assert checkpoint is not None
+        namespace = checkpoint[0].encode()
     client = Consumer(
         {
             "bootstrap.servers": "kafka:19092",
@@ -84,11 +87,12 @@ def kafka(action: str) -> None:
         assert len(keys) == 2
         values = [
             [
-                key.hex(),
+                (key.removesuffix(namespace) + b"fraud").hex(),
                 sorted((field.hex(), value.hex()) for field, value in redis.hgetall(key).items()),
             ]
             for key in keys
         ]
+        assert all(key.endswith(namespace) for key in keys)
         assert redis.info("persistence")["aof_last_write_status"] == "ok"
     finally:
         redis.close()

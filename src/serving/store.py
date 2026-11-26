@@ -131,6 +131,17 @@ CREATE TABLE IF NOT EXISTS pending_feast_updates (
     transaction_id BIGINT NOT NULL REFERENCES scored_transactions (transaction_id),
     online JSONB NOT NULL
 );
+CREATE TABLE IF NOT EXISTS feast_checkpoint (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    generation TEXT NOT NULL,
+    seed_sha256 TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS feast_entity_digests (
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('uid', 'card')),
+    entity_key TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    PRIMARY KEY (entity_type, entity_key)
+);
 CREATE TABLE IF NOT EXISTS alerts (
     alert_id BIGSERIAL PRIMARY KEY,
     transaction_id BIGINT NOT NULL UNIQUE REFERENCES scored_transactions (transaction_id),
@@ -256,6 +267,7 @@ class PostgresStore:
         """Hold one database session lock across scoring, commit, and the Feast write."""
         with self._pool.connection() as conn:
             try:
+                conn.execute("SELECT pg_advisory_lock_shared(74913, 0)")
                 conn.execute("SELECT pg_advisory_lock(74912, hashtext(%s))", (card_id,))
             except BaseException:
                 conn.close()
@@ -267,6 +279,7 @@ class PostgresStore:
                 self._scoring_connection.reset(token)
                 try:
                     conn.execute("SELECT pg_advisory_unlock(74912, hashtext(%s))", (card_id,))
+                    conn.execute("SELECT pg_advisory_unlock_shared(74913, 0)")
                 except psycopg.Error:
                     # A connection returned to the pool must never retain a session lock.
                     conn.close()
@@ -365,8 +378,53 @@ class PostgresStore:
             ).fetchone()
             return row is not None
 
-    def finish_feast(self, card_id: str, transaction_id: int) -> None:
+    def feast_checkpoint(self) -> tuple[str, str] | None:
         with self._connection() as conn:
+            row = conn.execute("SELECT generation, seed_sha256 FROM feast_checkpoint").fetchone()
+            return None if row is None else (row["generation"], row["seed_sha256"])
+
+    @contextmanager
+    def feast_maintenance(self) -> Iterator[psycopg.Connection[DictRow]]:
+        """Exclude per-card writers until validation or promotion commits."""
+        with self._pool.connection() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(74913, 0)")
+            yield conn
+
+    def feast_digests(self, card_id: str, uid: str) -> tuple[str | None, str | None]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT entity_type, digest FROM feast_entity_digests "
+                "WHERE (entity_type, entity_key) IN (('uid', %s), ('card', %s))",
+                (uid, card_id),
+            )
+            expected = {row["entity_type"]: row["digest"] for row in rows}
+            return expected.get("uid"), expected.get("card")
+
+    def finish_feast(
+        self,
+        card_id: str,
+        transaction_id: int,
+        *,
+        digests: list[tuple[str, str, str]] | None = None,
+    ) -> None:
+        with self._connection() as conn:
+            if digests is not None:
+                with conn.transaction():
+                    deleted = conn.execute(
+                        "DELETE FROM pending_feast_updates "
+                        "WHERE card_id = %s AND transaction_id = %s",
+                        (card_id, transaction_id),
+                    )
+                    if deleted.rowcount != 1:
+                        raise RuntimeError("Pending feature update disappeared")
+                    with conn.cursor() as cursor:
+                        cursor.executemany(
+                            "INSERT INTO feast_entity_digests VALUES (%s, %s, %s) "
+                            "ON CONFLICT (entity_type, entity_key) "
+                            "DO UPDATE SET digest = EXCLUDED.digest",
+                            digests,
+                        )
+                return
             conn.execute(
                 "DELETE FROM pending_feast_updates WHERE card_id = %s AND transaction_id = %s",
                 (card_id, transaction_id),

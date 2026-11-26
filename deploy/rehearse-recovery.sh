@@ -5,6 +5,7 @@ work=${1:?report directory required}
 mkdir -p "$work"
 work=$(cd "$work" && pwd)
 mkdir "$work/checkpoint" "$work/evidence"
+mkdir "$work/checkpoint/feature-seed"
 evidence="$work/evidence"
 scope="fraud-recovery-$(date +%s)-$$"
 source_project="$scope-source"
@@ -15,12 +16,30 @@ export API_KEY=synthetic-recovery-api-key-not-for-deployment
 export DASHBOARD_COOKIE_SECRET=synthetic-recovery-cookie-not-for-deployment
 export DASHBOARD_USERS="$(python -c 'import bcrypt; print("analyst:" + bcrypt.hashpw(b"fixture-password", bcrypt.gensalt()).decode())')"
 export API_HOSTNAME=api.localhost DASHBOARD_HOSTNAME=dashboard.localhost ACME_EMAIL=rehearsal@example.invalid
+export FEAST_SEED_CUTOFF=0
+python - "$work/checkpoint/feature-seed/seed.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+from src.features.feast_checkpoint import seed_metadata
+from src.serving.model import ModelBundle
+
+Path(sys.argv[1]).write_text(json.dumps({
+    "metadata": seed_metadata(ModelBundle.load("artifacts/baseline"), 0),
+    "events": [],
+}))
+PY
+export FEAST_SEED_SHA256="$(sha256sum "$work/checkpoint/feature-seed/seed.json" | cut -d ' ' -f1)"
 cat > "$work/rehearsal.yml" <<YAML
 services:
   api:
     image: $scope-api
+    volumes:
+      - $work/checkpoint/feature-seed:/app/artifacts/feature-seed:ro
   consumer:
     image: $scope-api
+    volumes:
+      - $work/checkpoint/feature-seed:/app/artifacts/feature-seed:ro
   dashboard:
     image: $scope-dashboard
   kafka:
@@ -43,6 +62,11 @@ stack() {
 
 capture() {
   local project=$1 label=$2 table
+  stack "$project" exec -T api sh -ec '
+    test "$(id -u)" -ne 0
+    grep -Eq "^CapBnd:[[:space:]]+0+$" /proc/1/status
+    grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/1/status
+  '
   stack "$project" exec -T postgres sh -ec \
     'test "$(awk '\''/^Uid:/ {print $2}'\'' /proc/1/status)" = "$(id -u postgres)"'
   for table in scored_transactions alerts; do
@@ -89,6 +113,10 @@ attest_ingress() {
 }
 
 stack "$source_project" build api kafka postgres redis dashboard mlflow proxy
+stack "$source_project" up -d --no-build --wait postgres redis
+stack "$source_project" run --rm --no-deps -T -e FEAST_SEED_SHA256 api \
+  python -m src.features.feast_checkpoint promote /app/artifacts/feature-seed/seed.json \
+  --model-dir /app/artifacts/baseline --repo-dir /tmp/feast --before 0
 stack "$source_project" up -d --no-build --wait --wait-timeout 200
 stack "$source_project" exec -T mlflow python - registry-seed < deploy/recovery-evidence.py
 stack "$source_project" exec -T api python - seed < deploy/recovery-evidence.py

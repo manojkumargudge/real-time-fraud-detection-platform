@@ -849,6 +849,110 @@ def test_direct_feast_serialization_matches_redis_bytes(tmp_path: Path, ttl: int
 
 
 @needs_db
+@needs_redis
+def test_checkpoint_fences_redis_rollback_and_promotes_verified_rebuild(
+    bundle_dir: Path,
+    tmp_path: Path,
+    pg_dsn: str,
+    pg_store: PostgresStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    import json
+
+    from redis import Redis
+
+    from src.features import feast_checkpoint as checkpoint
+    from src.features import feast_store as fs
+    from src.serving.config import Settings
+    from src.serving.online_features import entity_keys, online_model_row
+    from src.serving.scorer import FeastHistoryUnavailableError
+
+    assert REDIS
+    bundle = ModelBundle.load(bundle_dir)
+    seed_event, first, second = [
+        TransactionEvent.model_validate(event(TransactionID=i, TransactionDT=99 + i))
+        for i in (1, 2, 3)
+    ]
+    card, uid = entity_keys(seed_event.to_record())
+    seed = tmp_path / "seed.json"
+    contents = json.dumps(
+        {
+            "metadata": checkpoint.seed_metadata(bundle, 101),
+            "events": [[seed_event.to_record(), card, uid]],
+        }
+    ).encode()
+    digest = hashlib.sha256(contents).hexdigest()
+    repo = tmp_path / "feast"
+    settings = Settings(bundle_dir, pg_dsn, "", "", "", feast_redis=REDIS, feast_repo_dir=repo)
+    monkeypatch.setenv("FEAST_REQUIRE_CHECKPOINT", "1")
+    monkeypatch.setenv("FEAST_SEED_ARTIFACT", str(seed))
+    monkeypatch.setenv("FEAST_SEED_CUTOFF", "101")
+
+    def promote() -> str:
+        return checkpoint.promote(pg_store, pg_dsn, REDIS, repo, bundle, 101, seed, digest)
+
+    with pytest.raises(ValueError, match="promoted"):
+        settings.build_scorer()
+    with pytest.raises(FileNotFoundError):
+        promote()
+    seed.write_bytes(contents + b"corrupt")
+    with pytest.raises(ValueError, match="checksum"):
+        promote()
+    seed.write_bytes(contents)
+    generation = promote()
+    seed.unlink()
+    with pytest.raises(FileNotFoundError):
+        settings.build_scorer()
+    seed.write_bytes(contents)
+    with Redis.from_url(f"redis://{REDIS}") as client:
+        keys = list(client.scan_iter(match=f"*{generation}"))
+        assert len(keys) == 2
+        seed_cache = [(key, client.dump(key)) for key in keys]
+        scorer = settings.build_scorer()
+        try:
+            observed = scorer.score_event(first)
+            expected_row = online_model_row(
+                first.to_record(), [seed_event.to_record()], bundle.history_config
+            )
+            assert observed.history_rows == 1
+            assert observed.score == float(bundle.predict(expected_row)[0])
+            for key, saved in seed_cache:
+                assert isinstance(saved, bytes)
+                client.restore(key, 0, saved, replace=True)
+            with pytest.raises(FeastHistoryUnavailableError, match="differs"):
+                scorer.score_event(second)
+            assert pg_store.get(second.TransactionID) is None
+            client.delete(keys[0])
+            with pytest.raises(ConnectionError, match="does not match"):
+                settings.build_scorer()
+            with monkeypatch.context() as failure:
+                failure.setattr(fs.FeastFeatures, "entity_digest", lambda *args: None)
+                with pytest.raises(ConnectionError, match="failed validation"):
+                    promote()
+                assert pg_store.feast_checkpoint() == (generation, digest)
+            assert promote() != generation
+            with pytest.raises(FeastHistoryUnavailableError, match="Restart"):
+                scorer.score_event(second)
+        finally:
+            scorer.store.close()
+    restarted = settings.build_scorer()
+    try:
+        observed = restarted.score_event(second)
+        expected_row = online_model_row(
+            second.to_record(), [seed_event.to_record(), first.to_record()], bundle.history_config
+        )
+        from src.serving.online_features import history_feature_values
+
+        assert observed.history_features == history_feature_values(
+            expected_row, bundle.history_config
+        )
+        assert observed.score == float(bundle.predict(expected_row)[0])
+    finally:
+        restarted.store.close()
+
+
+@needs_db
 @pytest.mark.parametrize("mode", ["fired", "forced"])
 def test_drift_job_end_to_end_writes_drift_reports(
     mode: str,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -51,6 +52,7 @@ class Scorer:
     feast: FeastFeatures | None = None
     read_from_feast: bool = False
     reject_late: bool = False
+    feast_generation: str | None = None
 
     def __post_init__(self) -> None:
         if self.read_from_feast and self.feast is None:
@@ -88,6 +90,7 @@ class Scorer:
                 and isinstance(self.store, PostgresStore)
             ):
                 with self.store.serialize_card(existing.card_id):
+                    self._check_generation(self.store)
                     self._recover_feast(self.store, existing.card_id)
             return self._duplicate(existing, ev, started)
 
@@ -96,6 +99,7 @@ class Scorer:
             card_id, uid = entity_keys_from_frame(frame)
         if card_id is not None and self.feast and isinstance(self.store, PostgresStore):
             with self.store.serialize_card(card_id):
+                self._check_generation(self.store)
                 self._recover_feast(self.store, card_id)
                 existing = self.store.get(event.TransactionID)
                 if existing is not None:
@@ -116,7 +120,17 @@ class Scorer:
         config = self.bundle.history_config
         online: dict[str, Any] | None = None
         if self.read_from_feast and self.feast is not None:
-            feats, online = self.feast.read(ev, card_id, uid)
+            if (
+                self.feast_generation is not None
+                and durable is not None
+                and card_id is not None
+                and uid is not None
+            ):
+                feats, online = self.feast.read(
+                    ev, card_id, uid, validate=partial(self._verify_online, durable, card_id, uid)
+                )
+            else:
+                feats, online = self.feast.read(ev, card_id, uid)
             if durable is not None and card_id is not None and uid is not None:
                 card_missing = online.get("card_last_ts") is None
                 uid_missing = online.get("uid_last_ts") is None
@@ -201,6 +215,25 @@ class Scorer:
         if pending is not None:
             self._push_pending(store, card_id, pending["uid"], pending["event"], pending["online"])
 
+    def _check_generation(self, store: PostgresStore) -> None:
+        checkpoint = store.feast_checkpoint()
+        if self.feast_generation != (None if checkpoint is None else checkpoint[0]):
+            raise FeastHistoryUnavailableError(
+                "Restart scoring against the promoted feature generation"
+            )
+
+    def _verify_online(
+        self, store: PostgresStore, card: str, uid: str, online: dict[str, Any]
+    ) -> None:
+        from src.features.feast_store import card_fields, online_digest, uid_fields
+
+        actual = (
+            online_digest(online, uid_fields()),
+            online_digest(online, card_fields(self.bundle.history_config.change_columns)),
+        )
+        if actual != store.feast_digests(card, uid):
+            raise FeastHistoryUnavailableError("Redis feature row differs from its checkpoint")
+
     def recover_pending_feast(self) -> None:
         """Retry work left by a previous writer, even if a card receives no new events."""
         if self.feast is None or not isinstance(self.store, PostgresStore):
@@ -210,6 +243,7 @@ class Scorer:
             logger.info("recovering pending Feast updates count=%d", len(cards))
         for card_id in cards:
             with self.store.serialize_card(card_id):
+                self._check_generation(self.store)
                 self._recover_feast(self.store, card_id)
 
     def _push_pending(
@@ -224,7 +258,27 @@ class Scorer:
         try:
             # The saved pre-update state yields the same values and write timestamps on retry.
             self.feast.push(event, card_id, uid, online)
-            store.finish_feast(card_id, int(event["TransactionID"]))
+            if self.feast_generation is None:
+                store.finish_feast(card_id, int(event["TransactionID"]))
+            else:
+                from src.features.feast_store import card_fields, online_digest, uid_fields
+
+                fields = card_fields(self.bundle.history_config.change_columns)
+                user_state, card_state = self.feast.next_rows(event, card_id, uid, online)
+                user_digest = online_digest(user_state, uid_fields())
+                card_digest = online_digest(card_state, fields)
+                if (
+                    user_digest is None
+                    or card_digest is None
+                    or self.feast.entity_digest("uid", uid) != user_digest
+                    or self.feast.entity_digest("card", card_id) != card_digest
+                ):
+                    raise FeastHistoryUnavailableError("Redis did not apply the pending state")
+                store.finish_feast(
+                    card_id,
+                    int(event["TransactionID"]),
+                    digests=[("uid", uid, user_digest), ("card", card_id, card_digest)],
+                )
         except Exception as exc:
             logger.warning("feast update pending error=%s", type(exc).__name__)
             raise PendingFeastUpdateError("Feature-state update pending") from None

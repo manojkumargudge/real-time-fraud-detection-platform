@@ -423,6 +423,19 @@ The Caddy build uses the exact upstream commit from PR 8368, which removes Go JO
 
 ### Release checkpoint and next capacity check
 
+The checkpoint candidate pins the seed to the model and verifies full Redis row
+digests at startup and on the scoring path. The service-backed regression exercises
+stale-but-present rows, a partial restore, damaged and missing seed files, failed
+promotion and independent batch feature/prediction parity. Use the
+[checkpoint bootstrap](feature_store.md#rebuilding-online-state-after-redis-loss)
+before starting the production scorer. The earlier full retained-cohort evidence
+remains the incident audit. The checkpoint path requires a new capacity measurement.
+
+On November 26 billing was linked, the private four-vCPU rehearsal VM was stopped,
+and Iowa showed 24 E2 CPUs available, eight unused address slots and 100 GB of
+500 GB balanced/SSD disk quota in use. Trial balance was unavailable via the CLI.
+Cloud spending and public ingress each require separate approval.
+
 Production stays blocked. See [exact manifest digests and the per-CVE review](release-image-security.md). Full hosted CI, byte-level Feast parity, Kafka upgrade and rollback, and coordinated recovery are recorded there. A scan that completes can still report unresolved findings. Start the next deployment validation only with a reviewed manifest set and fresh approval for the host, cost and eventual public ingress.
 
 1. Use a separate e2-standard-8 (8 vCPU, 32 GiB) in Iowa, Ubuntu 24.04, with 100 GB pd-balanced in the existing private rehearsal subnet and IAP-only SSH. Keep the old VM stopped. Set an eight-hour platform STOP limit, use loopback Caddy and synthetic data, and save results off the host before stopping it. Budget about **$2.29 for eight hours** before credits, variable network/log usage and tax. This assumes $0.26805/h compute, $0.005/h ephemeral IPv4 and $10/month disk prorated. The existing stopped VM's 100 GB disk is a separate ~$10/month while retained. At the read-only November 25 checkpoint, the old VM was `TERMINATED`, its disk was `READY`, and inventory showed no reserved IPv4 or snapshots. [Compute](https://cloud.google.com/products/compute/pricing/general-purpose) [Disk](https://cloud.google.com/compute/disks-image-pricing) [IPv4](https://cloud.google.com/vpc/network-pricing)

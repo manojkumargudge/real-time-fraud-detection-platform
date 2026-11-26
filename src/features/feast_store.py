@@ -28,9 +28,11 @@ instance. See docs/feature_store.md.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -186,6 +188,18 @@ def card_fields(columns: Sequence[str]) -> list[tuple[str, str]]:
             (f"card_last_tid_{_col(c)}", "int"),
         ]
     return out
+
+
+def online_digest(row: dict[str, Any], fields: list[tuple[str, str]]) -> str | None:
+    """Hash values as read by inference, including nulls and the logical write version."""
+    if all(row.get(name) is None for name, _ in fields):
+        return None
+    values = [
+        (name, list(value) if kind == "int_list" and value is not None else value)
+        for name, kind in fields
+        for value in (row.get(name),)
+    ]
+    return hashlib.sha256(json.dumps(values, allow_nan=False).encode()).hexdigest()
 
 
 def definitions(config: HistoryConfig | None = None) -> list[Any]:
@@ -450,6 +464,8 @@ class FeastFeatures:
         for view_name, join_key in ((UID_VIEW, USER_ID), (CARD_VIEW, CARD_ID)):
             view = self._state_views()[view_name]
             names = [r.split(":", 1)[1] for r in refs if r.startswith(f"{view_name}:")]
+            if not names:
+                continue
             key = EntityKey(
                 join_keys=[join_key], entity_values=[Value(string_val=entity[join_key])]
             )
@@ -460,8 +476,21 @@ class FeastFeatures:
                 flat[n] = feast_value_type_to_python_type(data[n]) if data and n in data else None
         return flat
 
+    def entity_digest(self, entity_type: str, key: str) -> str | None:
+        if entity_type == "uid":
+            entity, view, fields = USER_ID, UID_VIEW, uid_fields()
+        else:
+            entity, view, fields = CARD_ID, CARD_VIEW, card_fields(self.config.change_columns)
+        row = self._read_direct({entity: key}, [f"{view}:{name}" for name, _ in fields])
+        return online_digest(row, fields)
+
     def read(
-        self, event: dict[str, Any], card: str | None, uid: str | None
+        self,
+        event: dict[str, Any],
+        card: str | None,
+        uid: str | None,
+        *,
+        validate: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[dict[str, float], dict[str, Any]]:
         """``(features, raw_online_row)`` for one event (one online round trip)."""
         row = request_row(event, card, uid, self.config.change_columns)
@@ -476,6 +505,8 @@ class FeastFeatures:
             else:
                 resp = self.store.get_online_features(features=refs, entity_rows=[entity])
                 flat = {k: v[0] for k, v in resp.to_dict().items()}
+        if validate is not None:
+            validate(flat)
         if self.use_odfv:
             feats = {
                 n: (float("nan") if flat[n] is None else float(flat[n]))
@@ -492,37 +523,31 @@ class FeastFeatures:
                 )
         return feats, flat
 
+    def next_rows(
+        self, event: dict[str, Any], card: str, uid: str, online: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        cols = self.config.change_columns
+        t, tid = int(event[TIME]), int(event["TransactionID"])
+        u = apply_uid(uid_from_row(online), t, float(event[AMOUNT]), self.config)
+        c = apply_card(card_from_row(online, cols), t, tid, event_values(event, cols), cols)
+        return (
+            uid_row(uid, u, _next_write(online.get(UID_WRITE_TS), t)),
+            card_row(card, c, cols, _next_write(online.get(CARD_WRITE_TS), t)),
+        )
+
     def push(
         self, event: dict[str, Any], card: str | None, uid: str | None, online: dict[str, Any]
     ) -> None:
-        """Apply ``event`` to the state read with it and write both entities back.
-
-        Callers must serialize concurrent writers for a card. With the same input state, a
-        retry writes the same values and timestamps to both views. The PostgreSQL scorer
-        uses that property to recover after a partial push.
-        """
+        """Apply the journal's state transition. Retries write identical values and versions."""
         if uid is None or card is None:
             return
         from feast.data_source import PushMode
         from feast.infra.online_stores.redis import RedisOnlineStoreConfig
 
-        cols = self.config.change_columns
-        t, tid = int(event[TIME]), int(event["TransactionID"])
-        u = apply_uid(uid_from_row(online), t, float(event[AMOUNT]), self.config)
-        c = apply_card(card_from_row(online, cols), t, tid, event_values(event, cols), cols)
+        user_state, card_state = self.next_rows(event, card, uid, online)
         for view_name, view_push, ts_field, row in (
-            (
-                UID_VIEW,
-                UID_PUSH,
-                UID_WRITE_TS,
-                uid_row(uid, u, _next_write(online.get(UID_WRITE_TS), t)),
-            ),
-            (
-                CARD_VIEW,
-                CARD_PUSH,
-                CARD_WRITE_TS,
-                card_row(card, c, cols, _next_write(online.get(CARD_WRITE_TS), t)),
-            ),
+            (UID_VIEW, UID_PUSH, UID_WRITE_TS, user_state),
+            (CARD_VIEW, CARD_PUSH, CARD_WRITE_TS, card_state),
         ):
             stamp = {EVENT_TIMESTAMP: to_datetime(row[ts_field]), CREATED: datetime.now(UTC)}
             if self.direct_online:
@@ -600,13 +625,18 @@ def first_streamed_dt(dsn: str) -> int | None:
     return None if row is None or row[0] is None else int(row[0])
 
 
-def durable_feature_events(dsn: str, before: int) -> list[EntityEvent]:
+def durable_feature_events(
+    dsn: str, before: int, *, include_pending: bool = False
+) -> list[EntityEvent]:
     """Read a consistent, drained PostgreSQL snapshot without modifying it."""
     import psycopg
 
     with psycopg.connect(dsn) as conn:
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-        if conn.execute("SELECT 1 FROM pending_feast_updates LIMIT 1").fetchone() is not None:
+        if (
+            not include_pending
+            and conn.execute("SELECT 1 FROM pending_feast_updates LIMIT 1").fetchone() is not None
+        ):
             raise ValueError("Resolve pending feature journal rows before rebuilding")
         rows = conn.execute("SELECT event, card_id, uid FROM scored_transactions").fetchall()
     events = [EntityEvent(event, card, uid) for event, card, uid in rows]

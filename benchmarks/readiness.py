@@ -166,16 +166,34 @@ def run_load(clients):
     scope = f"bench_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(DB, autocommit=True) as conn:
         conn.execute(f"CREATE SCHEMA {scope}")
-    pg = PostgresStore(
-        make_conninfo(
-            DB,
-            options=f"-c search_path={scope}",
-            application_name=f"readiness_{sys.argv[2]}_{clients}",
-        )
+    dsn = make_conninfo(
+        DB,
+        options=f"-c search_path={scope}",
+        application_name=f"readiness_{sys.argv[2]}_{clients}",
     )
+    pg = PostgresStore(dsn)
     with TemporaryDirectory() as temp:
-        fs = open_store(Path(temp), redis=os.environ["TEST_REDIS"], project=scope)
         opts = {"reject_late": True} if CANDIDATE else {}
+        repo = Path(temp)
+        if sys.argv[2] == "direct":
+            from src.features.feast_checkpoint import promote, seed_metadata
+
+            seed = repo / "seed.json"
+            contents = json.dumps({"metadata": seed_metadata(BUNDLE, 0), "events": []}).encode()
+            seed.write_bytes(contents)
+            scope = promote(
+                pg,
+                dsn,
+                os.environ["TEST_REDIS"],
+                repo,
+                BUNDLE,
+                0,
+                seed,
+                hashlib.sha256(contents).hexdigest(),
+            )
+            opts["feast_generation"] = scope
+            repo = repo / scope
+        fs = open_store(repo, redis=os.environ["TEST_REDIS"], project=scope)
         feast_options = {"serialize_online_rows": sys.argv[2] == "direct"} if CANDIDATE else {}
         feast = FeastFeatures(fs, BUNDLE.history_config, **feast_options)
         scorer = Scorer(BUNDLE, pg, feast, True, **opts)

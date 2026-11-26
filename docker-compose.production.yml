@@ -31,8 +31,14 @@ services:
     command: ["uvicorn", "src.serving.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]
     environment:
       FRAUD_PRODUCTION: "1"
+      FEAST_REQUIRE_CHECKPOINT: "1"
+      FEAST_SEED_ARTIFACT: /app/artifacts/feature-seed/seed.json
+      FEAST_SEED_CUTOFF: "${FEAST_SEED_CUTOFF:-12192900}"
       API_REQUESTS_PER_MINUTE: ${API_REQUESTS_PER_MINUTE:-600}
+    volumes:
+      - ./artifacts/feature-seed:/app/artifacts/feature-seed:ro
     security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
       timeout: 8s
@@ -40,13 +46,20 @@ services:
   consumer:
     environment:
       FRAUD_PRODUCTION: "1"
+      FEAST_REQUIRE_CHECKPOINT: "1"
+      FEAST_SEED_ARTIFACT: /app/artifacts/feature-seed/seed.json
+      FEAST_SEED_CUTOFF: "${FEAST_SEED_CUTOFF:-12192900}"
+    volumes:
+      - ./artifacts/feature-seed:/app/artifacts/feature-seed:ro
     security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
   dashboard:
     ports: !reset []
     environment:
       STREAMLIT_SERVER_COOKIE_SECRET: ${DASHBOARD_COOKIE_SECRET:?set DASHBOARD_COOKIE_SECRET}
       STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION: "true"
     security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
   mlflow:
     profiles: ["registry"]
     build:
@@ -79,8 +92,10 @@ services:
       start_period: 60s
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
   drift:
     security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
   retrain:
     profiles: ["retraining"]
     build:
@@ -108,6 +123,7 @@ services:
       mlflow:
         condition: service_healthy
     security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
   proxy:
     image: fraud-caddy:31f9f0c-alpine
     build:
