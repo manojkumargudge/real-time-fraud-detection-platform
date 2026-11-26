@@ -1,0 +1,29 @@
+# Copy to the approved image override and supply registry references ending in @sha256.
+services:
+  api:
+    image: ${SERVING_IMAGE:?set an approved registry digest}
+    build: !reset null
+  consumer:
+    image: ${SERVING_IMAGE:?set an approved registry digest}
+    build: !reset null
+  dashboard:
+    image: ${DASHBOARD_IMAGE:?set an approved registry digest}
+    build: !reset null
+  drift:
+    image: ${DRIFT_IMAGE:?set an approved registry digest}
+    build: !reset null
+  mlflow:
+    image: ${MLFLOW_IMAGE:?set an approved registry digest}
+    build: !reset null
+  kafka:
+    image: ${KAFKA_IMAGE:?set an approved registry digest}
+    build: !reset null
+  postgres:
+    image: ${POSTGRES_IMAGE:?set an approved registry digest}
+    build: !reset null
+  redis:
+    image: ${REDIS_IMAGE:?set an approved registry digest}
+    build: !reset null
+  proxy:
+    image: ${CADDY_IMAGE:?set an approved registry digest}
+    build: !reset null

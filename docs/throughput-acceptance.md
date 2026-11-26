@@ -12,6 +12,19 @@ validation times separately from steady-state measurements.
 
 ### Private capacity rehearsal provisioning
 
+The November 26 zero-cost inventory found 12 logical processors, about
+16 GiB installed RAM, and a 10 GiB WSL2 memory cap with 4 GiB swap. Its Docker
+daemon saw about 9.7 GiB usable. This leaves the dedicated 8-vCPU, 32 GiB host
+gate open. The two sustained trials were deferred, and the hosted benchmark
+does not establish the target host's CPU p95, I/O or workload headroom.
+
+For the trial-credit path, confirm the project is linked to an open billing
+account and record the remaining credit, expiry and active Free Trial status
+from Billing Overview. Confirm the credit covers the full rehearsal estimate
+and variable charges before requesting provisioning approval. The CLI linkage
+check alone leaves credit eligibility and balance unverified. Keep the account
+on its existing billing plan. [Free Trial credit and expiry](https://docs.cloud.google.com/free/docs/free-cloud-features)
+
 After spending approval, use the existing private rehearsal subnet and approved IAP
 firewall target tag. Supply the scoped rehearsal service account and a new VM name.
 

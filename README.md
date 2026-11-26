@@ -70,11 +70,28 @@ Full diagram, with what runs in Docker Compose, in Minikube and on the host only
 - XGBoost serves the champion because it delivered higher validation PR-AUC than the graph
   candidates. MLflow tracks the versioned model and artifacts and keeps the champion
   selection traceable. The retraining evaluation must clear the promotion gate.
-- The hosted benchmark on `9385799` measured 71.87 requests/s at eight spread clients,
-  up from 49.96 on main, with the same score, decision and feature-history digest across
-  4,608 requests. The direct Feast serializer reduced request-path conversion work. The
-  four-vCPU full-stack rehearsal reached CPU saturation. Production host capacity remains
-  an open gate. [Hosted measurements](docs/throughput-acceptance.md)
+- The checkpoint-enabled hosted benchmark at `333ad04` measured 87.32 requests/s at eight
+  clients versus 70.36 on main. p99 fell from 193.88 ms to 132.71 ms. All 4,608 requests
+  shared the same score, decision and feature-history digest and completed without
+  errors or timeouts. The four-vCPU full-stack rehearsal reached CPU saturation. The
+  local WSL2 memory limit leaves the dedicated target-host capacity gate open.
+  [Hosted measurements](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45755631735)
+
+### Portfolio evidence
+
+- Reconciled **58,468 distinct scores and 2,430 alerts** with an independent batch
+  oracle through Kafka, PostgreSQL and Redis interruptions. Partition offsets drained
+  with zero unexplained differences, duplicate scores or dead letters.
+  [Reconciliation evidence](docs/production-readiness.md#full-retained-kafka-cohort)
+- Built a durable PostgreSQL checkpoint for Redis feature state. A promoted seed
+  verified 52,879 entity rows, and all 12 history features matched the batch oracle
+  for a 256-event sample. The coordinated checkpoint restored Kafka offsets,
+  PostgreSQL outcomes, Redis and the MLflow champion in 30 seconds on the synthetic
+  fixture. [Feature-state runbook](docs/feature_store.md#rebuilding-online-state-after-redis-loss)
+- Prepared a private-backed single-VM design where Caddy owns public TLS and only
+  authenticated application routes are exposed. The release remains blocked on the
+  exact-image security review and sustained host certification.
+  [Release and deployment checklist](docs/production-readiness.md)
 
 ## Dashboard
 

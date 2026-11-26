@@ -222,20 +222,40 @@ sudoedit /etc/fraud/production.env
 
 Set `POSTGRES_PASSWORD`, `API_KEY`, `DASHBOARD_COOKIE_SECRET`, `DASHBOARD_USERS`, `API_HOSTNAME`, `DASHBOARD_HOSTNAME` and `ACME_EMAIL`. The template also includes `API_REQUESTS_PER_MINUTE` and `FEATURE_SOURCE`. Generate independent hex secrets with `openssl rand -hex 32`. Use a single-quoted value for the bcrypt entries. Build the dashboard image and run its hash CLI interactively with `sudo bash deploy/compose.sh run --rm --no-deps dashboard python -m src.dashboard.auth hash ANALYST` after setting a temporary nonempty placeholder for the dashboard entry. For Secret Manager, render individual values into the root-owned env file using a VM identity with access to the specific secrets. Keep the env file out of Git and avoid printing rendered Compose configuration.
 
-Stage the trusted champion bundle under `artifacts/baseline/` before starting the API. Compare `sha256sum artifacts/baseline/model.json` with `9fdad27ea3b07d5c29159bae75acc3ecaa7bf671943ab543bf9385145b89ba88`. Run the [reproducible training procedure](../README.md) in an authorized environment if a verified bundle is unavailable. Use a new project and new volumes for initial materialization.
+Stage the trusted champion bundle under `artifacts/baseline/` before starting the API. Compare `sha256sum artifacts/baseline/model.json` with the approved model checksum. Stage the matching seed as `artifacts/feature-seed/seed.json` and set `FEAST_SEED_CUTOFF` in the root-owned environment file. The seed and bundle must be readable by UID 10001 on the read-only mounts. Run the [reproducible training procedure](../README.md) in an authorized environment if a verified bundle is unavailable. Use a new project and new volumes for initial bootstrap.
 
 ```bash
 sudo install -d -m 0750 -o 10001 -g 10001 reports/drift
-sudo bash deploy/compose.sh --profile monitoring --profile registry config --quiet
-sudo bash deploy/compose.sh --profile monitoring --profile registry build
-sudo bash deploy/compose.sh up -d --wait postgres redis kafka
-sudo bash deploy/compose.sh run --rm --no-deps -v "$PWD/data/raw:/app/data/raw:ro" \
-  consumer python -m src.features.feast_store materialize --repo-dir /tmp/feast --before validation
-sudo bash deploy/compose.sh --profile registry up -d --wait
-sudo bash deploy/verify.sh API_HOSTNAME DASHBOARD_HOSTNAME
+stack=(sudo env "FEAST_SEED_SHA256=$VERIFIED_SEED_SHA256" bash deploy/compose.sh \
+  -f /etc/fraud/images.approved.yml --profile registry --profile monitoring)
+"${stack[@]}" config --quiet
+"${stack[@]}" pull
+"${stack[@]}" up -d --no-build --wait postgres redis kafka
+"${stack[@]}" run --rm --no-deps -T -e FEAST_SEED_SHA256 api \
+  sh -ec 'exec python -m src.features.feast_checkpoint promote "$FEAST_SEED_ARTIFACT" \
+    --model-dir "$MODEL_DIR" --repo-dir "$FEAST_REPO_DIR" --before "$FEAST_SEED_CUTOFF"'
+"${stack[@]}" up -d --no-build --wait api consumer dashboard mlflow
 ```
 
-Use the materialization command only for the private IEEE-CIS validation replay, with authorized local files and a compatible stream cutoff. Use a separate empty deployment for synthetic demonstration transactions. The [competition rules](https://www.kaggle.com/c/ieee-fraud-detection/rules) restrict redistribution of competition data. Keep raw data, identifiers and transaction-derived analyst views inaccessible to public visitors. The API initializes the application schema under a PostgreSQL advisory transaction lock. A model artifact change requires restarting the API and consumers with the verified bundle.
+Use [the override template](../deploy/release-images.example.yml) to supply
+private registry `image: ...@sha256:...` references for
+api, consumer, dashboard, drift, MLflow, Kafka, PostgreSQL, Redis and proxy.
+API and consumer share the serving digest. Check the pinned references with
+`config --images` and compare each registry manifest with the reviewed
+[image inventory](release-image-security.md#release-owner-decision-for-the-audited-candidate).
+The ephemeral CI registry addresses identify evidence and cannot serve a
+deployment. A rebuild needs a new scan if its manifest changes.
+
+Use a separate project with a synthetic-only model fixture and seed for any
+public demonstration. After ingress approval, configure DNS and Caddy HTTPS,
+start the proxy explicitly with `"${stack[@]}" up -d --no-build --wait proxy`,
+run `bash deploy/verify.sh "$API_HOSTNAME" "$DASHBOARD_HOSTNAME"`, and use the
+authenticated score, duplicate submission, and analyst dashboard probes from
+the coordinated recovery fixture. Compare the synthetic score and alert
+counts with the fixture, and keep scoring credentials server-side. The
+[competition rules](https://www.kaggle.com/c/ieee-fraud-detection/rules) restrict
+redistribution of competition data. Keep that dataset and all derived seed
+state away from the demonstration.
 
 When upgrading an existing stack, pause producers and stop the API and consumers together before switching revisions. Bring them back together so every Feast writer uses the same locking and recovery protocol. A previously stale Redis volume needs a verified rebuild from its original baseline and subsequent events.
 
@@ -422,6 +442,17 @@ The Debian 13 Python rebuilds removed the initial Bookworm MiniZip and SQLite cr
 The Caddy build uses the exact upstream commit from PR 8368, which removes Go JOSE v3 and pins an updated x/net. The PostgreSQL image packages Alpine's privilege-drop helper at the official entrypoint's gosu path. The recovery check verifies that PostgreSQL PID 1 runs with the non-root PostgreSQL UID. Verify both images in the exact-digest inventory before release. [Caddy upstream security change](https://github.com/caddyserver/caddy/pull/8368)
 
 ### Release checkpoint and next capacity check
+
+The November 26 zero-cost preflight verified 12 logical processors and about
+16 GiB physical RAM on Windows. Ubuntu WSL2 and its separate Docker daemon
+reported approximately 9.7 GiB usable memory under the 10 GiB configuration
+limit, plus 4 GiB swap. Docker Desktop was stopped or unavailable to the CLI.
+The dedicated 8-vCPU, 32 GiB target capacity cannot be reproduced there.
+Neither sustained trial was started. The hosted HTTP benchmark remains a
+functional and comparative performance result. CPU headroom, durable AOF
+and disk behavior, and concurrent drift and checkpoint capacity still require
+the target-host rehearsal. The smaller 4-vCPU cloud rehearsal saturated CPU,
+so it has no release capacity certification.
 
 The checkpoint candidate pins the seed to the model and verifies full Redis row
 digests at startup and on the scoring path. The service-backed regression exercises
