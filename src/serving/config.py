@@ -123,6 +123,6 @@ class Settings:
         if generation is not None:
             from src.features.feast_checkpoint import verify_generation
 
-            assert feast is not None and isinstance(durable, PostgresStore)
-            verify_generation(durable, feast, generation)
+            assert feast is not None and isinstance(durable, PostgresStore) and self.feast_redis
+            verify_generation(durable, feast, generation, self.feast_redis)
         return scorer

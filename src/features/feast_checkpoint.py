@@ -10,8 +10,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from redis import Redis
+
 from src.data.load import load_ieee_cis
 from src.features import feast_store as fs
+from src.features.entity import CARD_ID, USER_ID
 from src.features.history import TIME
 from src.serving.model import ModelBundle
 from src.serving.store import PostgresStore
@@ -46,18 +49,26 @@ def load_seed(path: Path, digest: str, bundle: ModelBundle, before: int) -> list
     return events
 
 
-def verify_generation(store: PostgresStore, feast: fs.FeastFeatures, generation: str) -> None:
+def verify_generation(
+    store: PostgresStore, feast: fs.FeastFeatures, generation: str, redis: str
+) -> None:
     with store.feast_maintenance() as conn:
         row = conn.execute("SELECT generation FROM feast_checkpoint").fetchone()
         if row is None or row["generation"] != generation:
             raise ConnectionError("Feature checkpoint changed during startup")
         if conn.execute("SELECT 1 FROM pending_feast_updates LIMIT 1").fetchone() is not None:
             raise ConnectionError("Feature journal must be drained before opening the scorer")
+        expected = 0
         for digest in conn.execute(
             "SELECT entity_type, entity_key, digest FROM feast_entity_digests"
         ):
             if feast.entity_digest(digest["entity_type"], digest["entity_key"]) != digest["digest"]:
                 raise ConnectionError("Redis generation does not match the PostgreSQL checkpoint")
+            expected += 1
+        with Redis.from_url(f"redis://{redis}") as client:
+            keys = set(client.scan_iter(match=f"*{generation}".encode()))
+        if len(keys) != expected:
+            raise ConnectionError("Redis generation contains unexpected feature keys")
 
 
 def promote(
@@ -87,8 +98,8 @@ def promote(
         feast = fs.FeastFeatures(online, config)
         digests = []
         for entity_type, key_field, fields, rows in (
-            ("uid", fs.USER_ID, fs.uid_fields(), uids),
-            ("card", fs.CARD_ID, fs.card_fields(config.change_columns), cards),
+            ("uid", USER_ID, fs.uid_fields(), uids),
+            ("card", CARD_ID, fs.card_fields(config.change_columns), cards),
         ):
             for row in rows:
                 key = row[key_field]

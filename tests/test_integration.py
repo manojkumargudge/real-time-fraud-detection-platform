@@ -908,6 +908,11 @@ def test_checkpoint_fences_redis_rollback_and_promotes_verified_rebuild(
     with Redis.from_url(f"redis://{REDIS}") as client:
         keys = list(client.scan_iter(match=f"*{generation}"))
         assert len(keys) == 2
+        unexpected = f"unexpected-{generation}"
+        client.set(unexpected, "stale")
+        with pytest.raises(ConnectionError, match="unexpected feature keys"):
+            settings.build_scorer()
+        client.delete(unexpected)
         seed_cache = [(key, client.dump(key)) for key in keys]
         scorer = settings.build_scorer()
         try:
