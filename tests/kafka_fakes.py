@@ -82,6 +82,8 @@ class FakeConsumer:
         self.on_revoke: Callable[..., None] | None = None
         self.on_lost: Callable[..., None] | None = None
         self.start_offset = 0
+        self.watermarks = (0, len(self.all))
+        self.assigned_positions: list[TopicPartition] = []
 
     def subscribe(
         self,
@@ -95,6 +97,12 @@ class FakeConsumer:
 
     def committed(self, partitions: list[TopicPartition], timeout: float) -> list[TopicPartition]:
         return [TopicPartition(p.topic, p.partition, self.start_offset) for p in partitions]
+
+    def get_watermark_offsets(self, partition: TopicPartition, timeout: float) -> tuple[int, int]:
+        return self.watermarks
+
+    def assign(self, partitions: list[TopicPartition]) -> None:
+        self.assigned_positions = partitions
 
     def assignment(self) -> list[TopicPartition]:
         return [TopicPartition(t, p) for t, p in sorted(self.assigned)]

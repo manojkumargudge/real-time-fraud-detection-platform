@@ -202,10 +202,10 @@ class Scorer:
         try:
             # The saved pre-update state yields the same values and write timestamps on retry.
             self.feast.push(event, card_id, uid, online)
+            store.finish_feast(card_id, int(event["TransactionID"]))
         except Exception as exc:
             logger.warning("feast update pending error=%s", type(exc).__name__)
             raise PendingFeastUpdateError("Feature-state update pending") from None
-        store.finish_feast(card_id, int(event["TransactionID"]))
 
     def _update_feast(
         self,

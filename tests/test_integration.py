@@ -678,12 +678,14 @@ def test_concurrent_feast_scoring_preserves_same_timestamp_updates(
 @needs_db
 @needs_redis
 @pytest.mark.parametrize("serialize_online_rows", [False, True])
-def test_feast_update_resumes_after_partial_write(
+@pytest.mark.parametrize("failure_stage", ["redis", "journal"])
+def test_feast_update_retries_a_committed_score(
     bundle_dir: Path,
     tmp_path: Path,
     pg_dsn: str,
     monkeypatch: pytest.MonkeyPatch,
     serialize_online_rows: bool,
+    failure_stage: str,
 ) -> None:
     from src.features import feast_store as fs
     from src.serving.scorer import PendingFeastUpdateError
@@ -700,6 +702,8 @@ def test_feast_update_resumes_after_partial_write(
     provider = redis_store._get_provider()
     write = provider.online_write_batch
     interrupted = False
+    pg = PostgresStore(pg_dsn, pool_size=1)
+    retry = PostgresStore(pg_dsn, pool_size=1)
 
     def fail_second_write(config: Any, view: Any, data: Any, progress: Any) -> None:
         nonlocal interrupted
@@ -708,10 +712,14 @@ def test_feast_update_resumes_after_partial_write(
             raise ConnectionError("injected Redis write failure after UID update")
         write(config, view, data, progress)
 
-    monkeypatch.setattr(provider, "online_write_batch", fail_second_write)
+    def fail_journal_cleanup(card_id: str, transaction_id: int) -> None:
+        raise psycopg.errors.InsufficientPrivilege("injected journal delete failure")
+
+    if failure_stage == "redis":
+        monkeypatch.setattr(provider, "online_write_batch", fail_second_write)
+    else:
+        monkeypatch.setattr(pg, "finish_feast", fail_journal_cleanup)
     first = TransactionEvent.model_validate(event(TransactionID=1, TransactionDT=100))
-    pg = PostgresStore(pg_dsn, pool_size=1)
-    retry = PostgresStore(pg_dsn, pool_size=1)
     try:
         with pytest.raises(PendingFeastUpdateError):
             Scorer(bundle, pg, feast, read_from_feast=True).score_event(first)

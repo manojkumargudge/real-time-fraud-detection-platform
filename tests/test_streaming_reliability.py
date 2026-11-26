@@ -110,6 +110,29 @@ def test_production_checks_first_delivery_against_committed_position() -> None:
     assert fake.committed_messages == [] and fake.closed
 
 
+def test_production_assigns_the_resolved_start_for_a_new_group() -> None:
+    fake = FakeConsumer(values(10, 11))
+    fake.start_offset = -1001
+    fake.watermarks = (1, 2)
+    fake.queue = fake.all[1:]
+    run(fake, FlakyScorer(), FakeDeadLetterSink(), require_contiguous=True)
+    assert [tp.offset for tp in fake.assigned_positions] == [1]
+    assert offsets(fake) == [1]
+
+
+@pytest.mark.parametrize("watermarks", [(2, 3), (0, 0)])
+def test_production_refuses_to_reset_an_out_of_range_commit(
+    watermarks: tuple[int, int],
+) -> None:
+    fake, scorer = FakeConsumer(values(10, 11)), FlakyScorer()
+    fake.start_offset = 1
+    fake.watermarks = watermarks
+    with pytest.raises(consumer_mod.OffsetGapError, match="outside broker range"):
+        run(fake, scorer, FakeDeadLetterSink(), require_contiguous=True)
+    assert not fake.assigned_positions and not fake.committed_messages
+    assert scorer.calls == 0 and fake.closed
+
+
 @pytest.mark.parametrize("failure", [KafkaError.NOT_COORDINATOR, KafkaError.ILLEGAL_GENERATION])
 def test_production_leaves_group_on_unconfirmed_commit(failure: int) -> None:
     fake, scorer = FakeConsumer(values(10, 11)), FlakyScorer()

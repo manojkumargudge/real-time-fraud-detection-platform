@@ -83,6 +83,7 @@ def build_consumer(settings: Settings) -> Consumer:
             "bootstrap.servers": settings.kafka_bootstrap_servers,
             "group.id": settings.kafka_group_id,
             "enable.auto.commit": False,
+            "enable.auto.offset.store": False,
             "auto.offset.reset": "earliest",
         }
     )
@@ -154,13 +155,23 @@ class _Worker:
 
     def on_assign(self, consumer: Consumer, partitions: list[TopicPartition]) -> None:
         if self.require_contiguous:
-            for tp in consumer.committed(partitions, timeout=10):
+            positions = consumer.committed(partitions, timeout=10)
+            for tp in positions:
                 if tp.error is not None:
                     raise KafkaException(tp.error)
-                offset = tp.offset
-                if offset < 0:
-                    offset, _ = consumer.get_watermark_offsets(tp, timeout=10)
-                self.next_offset[tp.topic, tp.partition] = offset
+                low, high = consumer.get_watermark_offsets(tp, timeout=10)
+                if tp.offset < 0:
+                    tp.offset = low
+                if not low <= tp.offset <= high:
+                    raise OffsetGapError(
+                        f"committed offset={tp.offset} outside broker range [{low}, {high}] "
+                        f"for {tp.topic}[{tp.partition}]"
+                    )
+            # Start fetching from the same snapshot used by the gap check. Implicit
+            # assignment would independently resolve the starting position again.
+            consumer.assign(positions)
+            for tp in positions:
+                self.next_offset[tp.topic, tp.partition] = tp.offset
         logger.info("partitions assigned: %s", _partitions(partitions))
 
     def on_revoke(self, _consumer: Any, partitions: list[TopicPartition]) -> None:
