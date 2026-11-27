@@ -111,6 +111,10 @@ assert port["target"] == 443'
     "${stack[@]}" run --rm --no-deps -T -e FEAST_SEED_SHA256 api sh -ec 'exec python -m src.features.feast_checkpoint promote "$FEAST_SEED_ARTIFACT" --model-dir "$MODEL_DIR" --repo-dir "$FEAST_REPO_DIR" --before "$FEAST_SEED_CUTOFF"' > "$run/generation.txt"
   fi
   "${stack[@]}" up -d --no-build --wait --wait-timeout 260 api consumer dashboard mlflow proxy
+  if [[ ${FRAUD_VERIFY_METADATA_ISOLATION:-0} == 1 ]]; then
+    FRAUD_METADATA_PROBE_IMAGE="$candidate" bash deploy/check-container-metadata.sh \
+      "${stack[@]}" > "$run/metadata-isolation.txt"
+  fi
   "${stack[@]}" exec -T proxy cat /data/caddy/pki/authorities/local/root.crt > "$run/ca.crt"
   bash deploy/check-python-runtime.sh "${stack[@]}" > "$run/python-runtime.jsonl"
   "${stack[@]}" exec -T redis redis-cli CONFIG SET latency-monitor-threshold 1
@@ -122,6 +126,15 @@ assert port["target"] == 443'
       sleep 30
     done
   ) > "$run/telemetry.jsonl" 2> "$run/telemetry.err" & telemetry=$!
+  if [[ $trial == release-1 && ${FRAUD_TEST_NOTIFICATION:-0} == 1 ]]; then
+    sleep 60
+    date -u +%FT%TZ > "$run/controlled-incident-start.txt"
+    "${stack[@]}" stop api
+    sleep 150
+    "${stack[@]}" up -d --no-build --wait --wait-timeout 260 api
+    date -u +%FT%TZ > "$run/controlled-incident-recovered.txt"
+    sleep 120
+  fi
   bash deploy/sample-release-load.sh "${stack[@]}" > "$run/resources.log" 2>&1 & sampler=$!
   iostat -xz 30 > "$run/iostat.log" & io=$!
   "${stack[@]}" exec -T -e FRAUD_CAPACITY_FIXTURE=1 api python - produce 27000 < "$out/kafka-full-seed.py" > "$run/kafka-produced.json" 2> "$run/kafka-producer.log" & publisher=$!
@@ -130,7 +143,16 @@ assert port["target"] == 443'
     "${stack[@]}" exec -T postgres pg_dump -U fraud -d fraud -Fc > "$run/online-postgres.dump"
     sha256sum "$run/online-postgres.dump"
     "${stack[@]}" exec -T redis redis-cli BGREWRITEAOF
-    "${stack[@]}" run --rm --no-deps -T drift --window-start-day 152 --window-end-day 154
+    if [[ ${FRAUD_VERIFY_METADATA_ISOLATION:-0} == 1 ]]; then
+      "${stack[@]}" run --rm --no-deps -T --entrypoint sh \
+        -v "$repo/deploy/check-metadata-sockets.py:/tmp/check-metadata-sockets.py:ro" drift -ec '
+          python /tmp/check-metadata-sockets.py
+          echo "Drift metadata isolation verified"
+          exec python -m src.monitoring.run_drift --no-retrain --window-start-day 152 --window-end-day 154
+        '
+    else
+      "${stack[@]}" run --rm --no-deps -T drift --window-start-day 152 --window-end-day 154
+    fi
   ) > "$run/background.log" 2>&1 & background=$!
   for clients in 1 4 8; do
     python "$out/sustained-full-seed.py" --ca "$run/ca.crt" --clients "$clients" --first-id "$((100000000 + clients * 1000000))" --output "$run/spread-$clients.json"

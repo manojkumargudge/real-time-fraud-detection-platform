@@ -5,6 +5,7 @@ import base64
 import json
 import subprocess
 import time
+from datetime import datetime
 
 PROJECT = "fraud-detection-platform-2026"
 SUBSCRIPTION = "fraud-capacity-verifier-1127"
@@ -25,6 +26,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy-name", required=True, help="Alert policy display name")
     parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--not-before", type=datetime.fromisoformat)
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
@@ -65,6 +67,8 @@ def main() -> None:
             if not incident_id or state not in {"open", "closed"}:
                 continue
             timestamp = message["message"]["publishTime"]
+            if args.not_before and datetime.fromisoformat(timestamp) < args.not_before:
+                continue
             states = observed.setdefault(incident_id, {})
             if state not in states:
                 states[state] = timestamp

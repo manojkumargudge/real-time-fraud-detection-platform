@@ -126,7 +126,8 @@ for role in roles/logging.logWriter roles/monitoring.metricWriter; do
   gcloud projects add-iam-policy-binding "$P" --member="serviceAccount:$SA" --role="$role"
 done
 gcloud compute instances set-service-account "${target[@]}" \
-  --service-account="$SA" --scopes=https://www.googleapis.com/auth/cloud-platform
+  --service-account="$SA" \
+  --scopes=https://www.googleapis.com/auth/logging.write,https://www.googleapis.com/auth/monitoring.write
 CHANNEL=projects/$P/notificationChannels/14251330304105084080
 gcloud logging metrics create fraud_capacity_guest_fault --project "$P" \
   --config-from-file=deploy/capacity-log-metric.yaml
@@ -140,6 +141,18 @@ python3 deploy/verify-capacity-notifications.py \
 ```
 
 For the agent-enabled path, block and verify access to Compute Engine metadata from workload container networks before starting the application stack. Host-side Ops Agent authentication must continue to work. Use an approved host firewall rule on the Docker forwarding chain and verify from a disposable container on the same network. Grant neither registry-write nor secret permissions to the telemetry identity. Plan the notification test outside the 88 minutes of measured capacity work.
+
+Install `deploy/block-container-metadata.sh` in a root-owned directory via a
+Docker service `ExecStartPre` drop-in before attaching the identity. Verify the
+IPv4 Docker forwarding hook and both reject rules. The pilot verified that a
+container could not open the metadata socket whilst the guest could fetch its
+instance ID. Rerun `deploy/check-container-metadata.sh` across every active
+workload network namespace and probe the drift one-off before it starts. The
+agent receives only the structured capacity file in this rehearsal. Once
+stopped, detach the identity if no follow-up run is scheduled. Preserve the
+drop-in, original agent configuration backup and all evidence. Disable the test
+policy when no further tests are authorized. The verifier subscription has a
+one-day inactivity expiry.
 
 Use a separate isolated private fixture or run after measured load ends. Leave
 the probe and its log receiver running. Use the verifier in a separate
