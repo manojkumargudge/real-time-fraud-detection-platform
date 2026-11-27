@@ -44,7 +44,11 @@ if [[ $kind == retrain ]]; then
     --entrypoint sh "$ref" -ec '
       test "$(dpkg-query -W -f "\${Version}" libcurl4-gnutls)" = 8.21.0-2~bpo13+1
       git --version
-      ldd /usr/lib/git-core/git-remote-http | grep libcurl-gnutls
+      curl_library=$(ldd /usr/lib/git-core/git-remote-http | awk "/libcurl-gnutls[.]so/ {print \$3}")
+      test -f "$curl_library"
+      curl_owner=$(dpkg-query --search "$(readlink -f "$curl_library")")
+      printf "%s\n" "$curl_owner"
+      case "$curl_owner" in libcurl4-gnutls:*) ;; *) exit 1 ;; esac
       python -c "import feast, mlflow, numpy, pyarrow, xgboost"
     ' > "$out/retrain-backport-smoke.txt"
 fi
@@ -58,9 +62,10 @@ for binary in mount nsenter infocmp systemd-homed perl git curl; do
   printf '%s: ' "$binary"
   command -v "$binary" || printf 'not in PATH\n'
 done
-if test -e /usr/lib/systemd/systemd-homed; then
-  dpkg-query --search /usr/lib/systemd/systemd-homed
-fi
+printf 'Installed sensitive executable paths:\n'
+find /usr /opt -xdev \( -name systemd-homed -o -name infocmp -o -name nsenter \) -print
+printf 'Setuid or setgid executable paths:\n'
+find /usr /opt -xdev -type f \( -perm -4000 -o -perm -2000 \) -print
 perl -MArchive::Tar -e 'print "Archive::Tar $Archive::Tar::VERSION\n"' 2>/dev/null \
   || printf 'Archive::Tar import unavailable\n'
 python - <<'PY'

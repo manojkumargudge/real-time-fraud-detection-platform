@@ -173,6 +173,55 @@ The shared binary groups are `bsdutils libblkid1 liblastlog2-2 libmount1 libsmar
 
 ## Patch and release decisions
 
+### November 27 package availability
+
+The current Debian tracker still lists all 22 entries open on stable Trixie.
+A fresh signed APT index refresh in a disposable amd64 Python Trixie container
+checked stable, stable security and official Trixie backports. Curl remains the
+only affected source with a verified fixed backport. The stable OpenSSL
+candidate is already installed in the audited release images. No additional
+supported package upgrade was identified for the remaining 20 findings.
+[Debian tracker data](https://security-tracker.debian.org/tracker/data/json)
+
+| Source package | Remaining findings | Fixed release in Debian testing/unstable |
+| --- | ---: | --- |
+| util-linux | 4 | `2.42.3-1` for CVE-2026-76642, CVE-2026-78409 and CVE-2026-78410. `2.42.4-1` for CVE-2026-78408. |
+| acl | 1 | `2.4.0-1` |
+| ncurses | 1 | `6.6+20251231-1` |
+| sqlite3 | 3 | `3.54.1-1` |
+| openssl | 2 | Open in the tracker |
+| systemd | 1 | `261.2-1` |
+| perl | 1 | `5.42.3-1` |
+| git | 3 | Open in the tracker |
+| expat | 4 | `2.10.0-1` |
+
+The inventory now records sensitive executable paths and setuid/setgid files
+in the network-isolated Python images. The retraining smoke check verifies
+that the resolved Git HTTP helper library belongs to the fixed Debian package.
+Live role-specific listeners, subprocesses and the MLflow schema still need
+verification against the deployment digests before residual-risk approval.
+
+### Retraining libcurl backport
+
+The hosted inventory at `fdc66d0c6892a42665367cc66a5465fc0385c34b` recorded 22 distinct High CVEs and zero Critical CVEs across nine Linux amd64 images. Only the optional retraining image installs Git and its GnuTLS libcurl dependencies. Its smoke test verified the installed `8.21.0-2~bpo13+1` package, Git, the Git HTTP helper's linked libcurl and the required native Python imports. The unfiltered scan still reports CVE-2026-12064 and CVE-2026-8458 against both libcurl binary package names. Both upstream advisories identify 8.21.0 as fixed, and Debian publishes that source version in signed Trixie backports. Record these two findings as patched by version evidence, with scanner reconciliation pending for the deployment digest. The other 20 High findings remain open. Retraining stays disabled. [Hosted inventory and smoke test](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45765828299) [Debian backport](https://packages.debian.org/source/trixie-backports/curl) [CVE-2026-12064](https://curl.se/docs/CVE-2026-12064.html) [CVE-2026-8458](https://curl.se/docs/CVE-2026-8458.html)
+
+The same head passed 712 unit tests, 54 service-backed integration tests, 11 targeted Kafka tests, and the Feast byte-parity workflow. The coordinated recovery fixture recorded a 3-second cold backup, 30-second verified restore and 11-second rollback. These are isolated hosted measurements. Production stays blocked pending the final capacity, exact deployment digest and security disposition gates. [Full CI](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45765828293) [Kafka](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45765828243) [Feast](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45765828157) [Recovery](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45765828273)
+
+### Private Linux rehearsal inventory
+
+The private eight-vCPU build used the same source commit and a loopback registry. Its unfiltered amd64 scan reproduced the hosted totals of 22 distinct High and zero Critical findings. The counts below are package/CVE rows, which can include the same CVE for multiple packages. The private registry holds the corresponding manifest bytes. Any authorized promotion must preserve the digests and verify them in the destination registry before referencing them in the deployment override.
+
+| Role | Exact SHA-256 manifest | High rows |
+| --- | --- | ---: |
+| Serving | `3506b463882cf69f97ddd6b5249cccb341bd5585a2318bfa3cc5a13928b7f4b1` | 53 |
+| Dashboard | `a68b21b995a84f3585dda56d95fa2ae460880bebdbf4370aff8d45edb167b5b5` | 53 |
+| Kafka | `4cdd618a39bef86a4149929e0920c1fe4dad7da54a9a1ddfd85f2b3c9351505e` | 0 |
+| PostgreSQL | `9b6c495c503287a796d86bbd38c341c62d10cf58ac65348ea3bb2c16ab993176` | 0 |
+| Redis | `4e151855f8a6c663f112045070a1166142cded771ed064f418c6f715bd1f7e78` | 0 |
+| MLflow | `343315a4257603ccd3fdaa37c81a9aaa7ba9895b6d6539d2d5ee75311634b92a` | 53 |
+| Caddy | `c90a08d80b38b6ef71778f4b372f05dc89dcad4a2a9d616857df79ca271ecfd8` | 0 |
+| Drift | `ff23ef4f56956901706d7ad8257566d74bd532354fa461dc9f99df3088781025` | 53 |
+| Retrain, disabled | `5687ff5347881f7e11ea962d4f9775540e368ba488777d7fb3ddd65ba9cd55dd` | 70 |
 Debian Forky/Sid lists fixes for 17 of the 22 issues, including SQLite 3.54.1, Expat 2.10.0, util-linux 2.42.3/2.42.4 and ACL 2.4.0. It leaves the three Git issues and both OpenSSL issues open. Testing or unstable packages mixed into Trixie would change the runtime and support model. Use fixed Trixie packages or signed, supportable backports when available. A different maintainable base needs a separate digest scan and a wheel/native-library compatibility, coordinated restore and retraining check. Reverting to Bookworm would reopen the previously observed critical OS findings.
 
 Keep retraining disabled while its Git and XML risks are reviewed. Before removing Git, supply equivalent verified checkout provenance for training. Check whether MLflow can migrate to a supported PostgreSQL backend as a separate tested change with alias and artifact parity. That migration alone would leave the OS package installed. For release, verify per-digest executable and library ownership with `dpkg-query -L`, inspect runtime subprocesses and listeners, query SQLite compile options and schemas, and have the designated release/security owner review the evidence and any expiry-bound residual acceptance. Otherwise keep the production gate blocked.

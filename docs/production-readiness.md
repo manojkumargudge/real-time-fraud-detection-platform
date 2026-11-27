@@ -29,6 +29,12 @@
 | Exact-image security and recovery | P1 | High-severity image findings require disposition. Previous recovery runs used small synthetic cohorts. | Review remaining findings against the exact publishable images and rehearse restore and rollback with the final release candidate. | Required scans and CI pass, all applicable findings resolved or explicitly accepted, and verified restored state agrees across stores. | See [image review](release-image-security.md) and the recovery results below. |
 | Deployment and live evidence | P2 | The private rehearsal had no public endpoint. Compute Engine inventory showed the rehearsal VM stopped on November 26. | After the preceding gates and cost approval, validate production ingress, TLS, synthetic workload, recovery and alert delivery. | External authenticated checks and oracle comparison pass. Only Caddy is public, and resource usage and costs are bounded. | Blocked on P0 and P1. The stopped VM retains a 100 GB balanced disk. |
 
+### November 27 continuation
+
+- The later private Linux export includes nine image manifests and a trial host snapshot. It contains no completed workload samples, Kafka audit, oracle output or completion marker. The host snapshot's `nproc` value was 1. The archived driver set `OMP_NUM_THREADS=1` before running `nproc`, so that value cannot establish the VM's effective CPU allocation. The exit point and startup failure, if any, remain unverified.
+- Local Ubuntu WSL2 and its Docker daemon both reported 12 logical CPUs and 10,428,297,216 bytes of memory. The capacity preflight rejected that configuration. A qualifying dedicated Linux host still needs two complete repeats, including active ingestion, checkpoint and drift, with the 70% CPU, memory and disk gates.
+- The read-only frozen-cohort command below verified 16 checksums and independently reproduced 21,665 distinct committed records and 917 oracle alerts. The frozen database had 10,415 missing rows, 3,563 score discrepancies and 37 differing alert decisions. The separate full retained-cohort replay reconciled all 58,468 records and 2,430 alerts with zero unexplained differences. Both results describe different stores. The original evidence remains frozen and the initial delivery-gap root cause remains unproven.
+
 To reproduce the read-only committed-cohort audit from the repository root, run
 `python scripts/audit_frozen_cohort.py tmp/kafka-forensics-edd730b --threshold 0.12806208431720734`.
 The audit verifies the source manifest, matches Kafka offsets and payload IDs to the SQL export,
@@ -343,11 +349,12 @@ On that machine, use Ubuntu 24.04, the production Compose overlay, full durable 
 Use the same Compose arguments for all commands below. Select a fresh rehearsal project, use explicit test-only credentials, use the loopback override from `deploy/rehearse-recovery.sh`, and bring up all services including `--profile registry`. Copy the local CA with `exec -T proxy cat /data/caddy/pki/authorities/local/root.crt`, and set `API_KEY` to the matching synthetic key in the load process. Install `requirements-dev.txt` in the Linux venv. Set `stack` as a Bash array containing the complete Compose command and its overlay paths, for example `stack=(docker compose -p "$REHEARSAL_PROJECT" --env-file "$REHEARSAL_ENV" -f docker-compose.yml -f docker-compose.production.yml -f "$LOOPBACK_OVERLAY" --profile registry)`. Validate loopback binding before load. Use a dedicated evidence directory per repeat.
 
 ```bash
+bash deploy/check-capacity-host.sh > "$EVIDENCE/host.txt"
 "${stack[@]}" config --quiet
 "${stack[@]}" up -d --no-build --wait
 "${stack[@]}" exec -T proxy cat /data/caddy/pki/authorities/local/root.crt > "$EVIDENCE/ca.crt"
 "${stack[@]}" exec -T redis redis-cli CONFIG SET latency-monitor-threshold 1
-bash deploy/sample-release-load.sh "${stack[@]}" > "$EVIDENCE/resources.log" &
+bash deploy/sample-release-load.sh "${stack[@]}" > "$EVIDENCE/resources.log" 2>&1 &
 sampler=$!
 trap 'kill "$sampler" 2>/dev/null || true' EXIT
 for clients in 1 4 8; do
@@ -358,6 +365,16 @@ done
 python -m benchmarks.sustained --ca "$EVIDENCE/ca.crt" --clients 8 \
   --cards 1 --first-id 120000000 --output "$EVIDENCE/hot-8.json"
 ```
+
+For the final 8-vCPU/32 GiB rehearsal, run the preflight with the local Docker
+daemon and record the provisioned machine and storage tier. The preflight allows
+31 GiB of usable RAM to account for the guest kernel's reservation. For a
+historical 4-vCPU comparison, record the host resources separately. Preserve
+startup and background job logs even if a trial stops before producing load
+results. Check that the sampler remains active throughout each level and that
+consumer replicas are running without restarts. Apply the disk limit to both
+the root and Docker data filesystems and review PostgreSQL rollback and deadlock
+counters, I/O timing, Redis AOF status and Kafka lag alongside throughput.
 
 Repeat all four levels with concurrent Kafka input at a fixed 10 events/s, using the same authorized input and producer rate for both revisions. Use `"${stack[@]}" exec -T consumer python -m src.streaming.producer --raw-dir /app/data/raw --limit 27000 --rate 10` with the same approved raw-data bind mount in both stacks. If the workload is shorter, stop the producer before its input runs out and record the produced count and duration. Use fresh volumes for this repeat and confirm Kafka transaction IDs and entity keys do not collide with the synthetic HTTP fixture. Capture `iostat -xz 30` and the sampler log. Measure one minute warmup and ten minutes at each level, and wait for Kafka to drain at the end. Compare medians using the throughput protocol, and compare stored scores, alerts and online state for a separate fixed-cohort parity run. A 30% resource headroom planning target means peak steady-state memory and disk use below 70% and enough CPU and I/O margin to run the checkpoint, drift and Kafka work. Verify no committed offset gap, durable Redis writes, no unexplained pending journal entries and zero lag after drain. Keep timings and I/O samples for both host sizes. Select the four-vCPU option only after it passes, and repeat checks against the deployment VM before public cutover.
 

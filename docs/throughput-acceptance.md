@@ -14,9 +14,10 @@ validation times separately from steady-state measurements.
 
 The November 26 zero-cost inventory found 12 logical processors, about
 16 GiB installed RAM, and a 10 GiB WSL2 memory cap with 4 GiB swap. Its Docker
-daemon saw about 9.7 GiB usable. This leaves the dedicated 8-vCPU, 32 GiB host
-gate open. The two sustained trials were deferred, and the hosted benchmark
-does not establish the target host's CPU p95, I/O or workload headroom.
+daemon saw about 9.7 GiB usable, which the November 27 preflight confirmed. The
+dedicated 8-vCPU, 32 GiB capacity gate requires two sustained trials on a
+qualifying Linux host. The hosted comparison covers the HTTP regression gate
+on its own runner.
 
 For the trial-credit path, confirm the project is linked to an open billing
 account and record the remaining credit, expiry and active Free Trial status
@@ -26,13 +27,14 @@ check alone leaves credit eligibility and balance unverified. Keep the account
 on its existing billing plan. [Free Trial credit and expiry](https://docs.cloud.google.com/free/docs/free-cloud-features)
 
 After spending approval, use the existing private rehearsal subnet and approved IAP
-firewall target tag. Supply the scoped rehearsal service account and a new VM name.
+firewall target tag. Use a new VM name and OS Login through IAP. The isolated
+rehearsal runs without an attached service account or API scopes.
 
 ```bash
 gcloud compute instances create "$REHEARSAL_VM" --project fraud-detection-platform-2026 \
   --zone us-central1-a --machine-type e2-standard-8 --subnet "$REHEARSAL_SUBNET" \
-  --tags "$IAP_TARGET_TAG" --service-account "$REHEARSAL_SERVICE_ACCOUNT" \
-  --scopes cloud-platform --metadata enable-oslogin=TRUE \
+  --tags "$IAP_TARGET_TAG" --no-service-account --no-scopes \
+  --metadata enable-oslogin=TRUE \
   --image-family ubuntu-2404-lts-amd64 --image-project ubuntu-os-cloud \
   --boot-disk-size 100GB --boot-disk-type pd-balanced --no-boot-disk-auto-delete \
   --max-run-duration 8h --instance-termination-action STOP
@@ -45,6 +47,12 @@ and run both trials with loopback ingress and the same approved seed and image
 digests. Use the [full procedure](production-readiness.md#sustained-linux-rehearsal)
 to capture metrics and reconcile each trial. Stop compute after collecting evidence.
 [Compute pricing](https://cloud.google.com/products/compute/pricing/general-purpose)
+
+At `fdc66d0`, the matched hosted comparison again passed. The eight-client
+candidate reached 86.23 requests/s and 128.21 ms p99, versus 68.62 requests/s
+and 209.86 ms p99 on main. All 4,608 measured requests completed with zero
+errors and timeouts, with matching score, decision and history digests.
+[Exact-head hosted samples](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45765828297)
 
 At `9385799`, two matched repeats per revision met the HTTP comparison gate on one runner.
 All 4,608 requests across the baseline, candidate and direct-writer runs shared the same
