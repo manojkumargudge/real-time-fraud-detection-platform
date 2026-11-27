@@ -329,6 +329,9 @@ copies): [docs/evidence/2026-10-30-scheduled-retrain/](docs/evidence/2026-10-30-
 
 Every requirement of the project brief, with its status, evidence and gap:
 [docs/brief-evidence.md](docs/brief-evidence.md).
+See the [current completion matrix](docs/aiml-01-completion.md) for the release
+gates and the [interview walkthrough](docs/interview-walkthrough.md) for the
+model comparisons, data flow and engineering tradeoffs.
 
 ## Experiment tracking
 

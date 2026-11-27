@@ -46,7 +46,9 @@ services:
     ports: !override
       - 127.0.0.1:18443:443
 YAML
-python - <<'PY'
+python - "$out/sustained-full-seed.py" <<'PY'
+import runpy
+import sys
 from pathlib import Path
 import pandas as pd
 from tests.test_models import synthetic_split
@@ -55,18 +57,20 @@ raw = synthetic_split(Path("data/raw/ieee-cis"), n=12000)
 path = raw / "train_transaction.csv"
 ref = pd.read_csv(path)
 ref["TransactionDT"] = (ref["TransactionDT"] * 2.35).astype("int64")
-current = pd.DataFrame({
-    "TransactionID": range(101000000, 101001000),
-    "TransactionDT": 13200001,
-    "TransactionAmt": [5 + i % 97 for i in range(1000)],
-    "ProductCD": "W",
-    "card1": range(30000, 31000),
-    "card4": "visa",
-    "card6": "debit",
-    "addr1": 315,
-    "isFraud": 0,
-})
-pd.concat([ref, current], ignore_index=True).to_csv(path, index=False)
+cursor = runpy.run_path(sys.argv[1])["SyntheticCursor"](101000000, 1024)
+current = pd.DataFrame([cursor.take() for _ in range(1000)])
+# Provide earlier history for the scored entities without changing the load stream.
+prior = current.assign(
+    TransactionID=current["TransactionID"] - 1_500_000,
+    TransactionDT=current["TransactionDT"] - 3600,
+)
+fixture = pd.concat([prior, current], ignore_index=True)
+identity_fields = ["TransactionID", "DeviceType", "DeviceInfo"]
+identity_path = raw / "train_identity.csv"
+identity = pd.read_csv(identity_path)
+pd.concat([identity, fixture[identity_fields]], ignore_index=True).to_csv(identity_path, index=False)
+fixture = fixture.drop(columns=[*identity_fields[1:], "has_identity"]).assign(isFraud=0)
+pd.concat([ref, fixture], ignore_index=True).to_csv(path, index=False)
 PY
 install -d -m 0750 -o 10001 -g 10001 reports/drift
 chmod a+rx data data/raw data/raw/ieee-cis

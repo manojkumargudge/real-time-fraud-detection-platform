@@ -30,9 +30,19 @@ class SyntheticCursor(Cursor):
             "TransactionAmt": 5 + index % 97,
             "ProductCD": "W",
             "card1": 10_000 + index % self.cards,
+            "card2": 100,
+            "card3": 150,
             "card4": "visa",
+            "card5": 226,
             "card6": "debit",
             "addr1": 315,
+            "addr2": 87,
+            "dist1": 1 + index % 20,
+            "P_emaildomain": "gmail.com",
+            "R_emaildomain": "yahoo.com",
+            "DeviceType": "desktop",
+            "DeviceInfo": "Windows",
+            "has_identity": True,
         }
 
 

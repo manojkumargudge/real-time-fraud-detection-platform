@@ -34,6 +34,8 @@ for card1 in (*range(20000, 20256), *range(30000, 31024)):
         "card6": "debit",
         "addr1": 315,
     }
+    if card1 >= 30000:
+        payload.update(card2=100, card3=150, card5=226)
     card, uid = entity_keys(payload)
     assert card not in seed_cards and uid not in seed_uids
 del seed, seed_cards, seed_uids
