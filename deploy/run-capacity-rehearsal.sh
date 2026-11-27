@@ -6,16 +6,18 @@ session=${1:?supply a unique rehearsal ID}
 [[ $session =~ ^[a-z0-9][a-z0-9-]{0,24}$ ]]
 repo=${FRAUD_CAPACITY_REPO:-"$root/repo"}
 baseline=${FRAUD_CAPACITY_BASELINE_IMAGE_ID:?stage the pinned main serving image before starting}
+baseline_ref=fraud-capacity-main:6f1a39f
 [[ $baseline =~ ^sha256:[a-f0-9]{64}$ ]]
-[[ $(docker image inspect --format '{{.Id}}' "$baseline") == "$baseline" ]]
-[[ $(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$baseline") == 6f1a39f018e4c8f5bb11f9c4b051ba73d6467094 ]]
-[[ $(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$baseline") == linux/amd64 ]]
+[[ $(docker image inspect --format '{{.Id}}' "$baseline_ref") == "$baseline" ]]
+[[ $(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$baseline_ref") == 6f1a39f018e4c8f5bb11f9c4b051ba73d6467094 ]]
+[[ $(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$baseline_ref") == linux/amd64 ]]
 out="$root/evidence/trials/$session"
 mkdir -p "$root/evidence/trials"
 mkdir "$out"
 exec > >(tee -a "$out/driver.log") 2>&1
 bash "$repo/deploy/check-capacity-host.sh" > "$out/host.txt"
 cd "$repo"
+printf '%s %s\n' "$baseline_ref" "$baseline" > "$out/baseline-image.txt"
 test -f "$root/bootstrap.complete"
 test -f "$root/images.complete"
 test -f artifacts/feature-seed/seed.json
@@ -105,7 +107,7 @@ assert port["target"] == 443'
   if $is_baseline; then
     "${stack[@]}" run --rm --no-deps -T -e FEAST_SEED_SHA256 api python - \
       < deploy/seed-capacity-baseline.py > "$run/generation.txt"
-    export SERVING_IMAGE="$baseline"
+    export SERVING_IMAGE="$baseline_ref"
     audit=audit-main
   else
     "${stack[@]}" run --rm --no-deps -T -e FEAST_SEED_SHA256 api sh -ec 'exec python -m src.features.feast_checkpoint promote "$FEAST_SEED_ARTIFACT" --model-dir "$MODEL_DIR" --repo-dir "$FEAST_REPO_DIR" --before "$FEAST_SEED_CUTOFF"' > "$run/generation.txt"

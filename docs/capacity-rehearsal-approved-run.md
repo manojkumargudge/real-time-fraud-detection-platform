@@ -74,9 +74,12 @@ FRAUD_CAPACITY_REPO="$REPO" FRAUD_CAPACITY_BASELINE_IMAGE_ID="$BASELINE_IMAGE_ID
 Before starting the VM, build the main serving image offline from a clean archive of
 `6f1a39f018e4c8f5bb11f9c4b051ba73d6467094`. Set the Docker build label
 `org.opencontainers.image.revision` to that full SHA and use `--platform linux/amd64`.
-Record the image ID, save the image to a checksum-verified archive, and load it
-via IAP into the private guest. Set `BASELINE_IMAGE_ID` to the recorded image
-ID on the guest. Prefer a staged archive over building inside the paid runtime.
+Tag the image `fraud-capacity-main:6f1a39f`, save a checksum-verified archive,
+transfer it via IAP and verify that checksum before loading. Set
+`BASELINE_IMAGE_ID` from `docker image inspect --format '{{.Id}}' fraud-capacity-main:6f1a39f`
+on the guest after load. Docker image-store implementations can report distinct
+local identifiers for the same archive. Prefer a staged archive over building
+inside the billed runtime.
 
 The driver alternates main-1, release-1, release-2 and main-2 on the same host.
 All four runs use fresh projects, the same model and seed, the same backend
