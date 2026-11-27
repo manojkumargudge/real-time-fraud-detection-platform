@@ -27,6 +27,16 @@ allowance. A 180-minute guest poweroff timer adds to the 210-minute operator
 guard and existing four-hour Compute Engine STOP limit. The resumed workload
 checks the prior archive and imports only a complete, matching `main-1` run.
 
+The continued preflight subsequently discovered a guest security kernel
+update. Both VMs are stopped. The next qualifying session must generate
+all four repeats on one boot of the updated kernel. Including `1127f` and
+`1127g`, the capacity host has about 155 minutes of accumulated runtime, or
+US$0.71 at the compute and IPv4 rates above. Another four-hour fallback with
+US$0.02 transfer and US$0.20 telemetry allowances brings the cumulative
+planning ceiling to about US$2.02. Obtain approval for a cumulative US$2.10
+(₹194) Welcome-credit cap before the next start. Keep both retained disks
+outside this incremental estimate. [Run history](evidence/2026-11-27-release-continuation.md)
+
 After approval, run these commands from Linux with gcloud, OS Login and IAP rights:
 
 ```bash
@@ -48,6 +58,27 @@ The platform limit was applied and verified on the stopped instance on November 
 ## Stage and run the two trials
 
 Before starting, prepare a tar with the repository-relative paths for the new driver, runtime probe, oracle, telemetry, and capacity manifest. Record its SHA-256. The existing host must retain the scanned loopback registry bytes and the checksum-verified seed and model. Use IAP to stage the small tar. Inspect legacy services and timers before continuing. Start only the existing registry if stopped and verified bound to `127.0.0.1:5500`. A missing manifest aborts the run rather than triggering a rebuild. Keep prior trial evidence and volumes intact. Use a unique session ID.
+
+After startup and before starting the driver, verify maintenance is complete
+and the installed kernel is running. Keep guest security updates enabled.
+Run these checks on the guest and save the output in the evidence directory:
+
+```bash
+uname -r
+dpkg-query -W linux-image-gcp
+systemctl list-timers --all apt-daily.timer apt-daily-upgrade.timer
+for unit in apt-daily.service apt-daily-upgrade.service; do
+  if systemctl is-active --quiet "$unit"; then exit 1; fi
+done
+test ! -f /var/run/reboot-required
+```
+
+Schedule the 176 minutes of workload and the controlled incident in a clean
+maintenance window. An optional `RefuseManualStop=yes` setting applies only
+to the transient rehearsal unit. The Compute Engine STOP and operator guard
+remain available for emergency shutdown. Use a fresh session without
+`FRAUD_CAPACITY_RESUME_MAIN1` for this rerun. The prior baseline used a
+different kernel, even though the VM and cached image digests matched.
 
 ```bash
 tar -czf capacity-tools.tgz deploy/run-capacity-rehearsal.sh deploy/capacity-oracle.py \

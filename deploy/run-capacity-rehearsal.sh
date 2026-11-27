@@ -16,6 +16,7 @@ mkdir -p "$root/evidence/trials"
 mkdir "$out"
 exec > >(tee -a "$out/driver.log") 2>&1
 bash "$repo/deploy/check-capacity-host.sh" > "$out/host.txt"
+uname -r > "$out/kernel.txt"
 cd "$repo"
 printf '%s %s\n' "$baseline_ref" "$baseline" > "$out/baseline-image.txt"
 test -f "$root/bootstrap.complete"
@@ -80,16 +81,28 @@ trials=(main-1 release-1 release-2 main-2)
 if [[ -n ${FRAUD_CAPACITY_RESUME_MAIN1:-} ]]; then
   prior=$(realpath "$FRAUD_CAPACITY_RESUME_MAIN1")
   [[ $prior == "$root/evidence/trials/"* && $prior != "$out" ]]
-  [[ $(head -n 1 "$prior/host.txt") == $(head -n 1 "$out/host.txt") ]]
-  [[ $(awk 'NR==1 {print $2}' "$prior/main-1/iostat.log") == "$(uname -r)" ]]
+  if [[ $(awk 'NR==1 {print $2}' "$prior/main-1/iostat.log") != "$(<"$out/kernel.txt")" ]]; then
+    echo 'Prior baseline used a different Linux kernel.' >&2
+    exit 1
+  fi
   cmp "$prior/baseline-image.txt" "$out/baseline-image.txt"
   cmp "$prior/sustained-full-seed.py" "$out/sustained-full-seed.py"
   cmp "$prior/kafka-full-seed.py" "$out/kafka-full-seed.py"
-  python - "$prior/main-1" <<'PY'
+  python - "$prior/main-1" "$prior/host.txt" "$out/host.txt" <<'PY'
 import json, runpy, sys
 from pathlib import Path
 
 trial = Path(sys.argv[1])
+previous, current = (
+    dict(field.split("=", 1) for field in Path(path).read_text().splitlines()[0].split())
+    for path in sys.argv[2:]
+)
+for key in ("host_memory_bytes", "docker_memory_bytes"):
+    # MemTotal excludes a small amount reserved by the kernel on each boot.
+    if abs(int(previous.pop(key)) - int(current.pop(key))) > 1024 * 1024:
+        raise ValueError(f"Prior baseline has different memory capacity: {key}")
+if previous != current:
+    raise ValueError("Prior baseline has different CPU or Docker geometry")
 review = runpy.run_path("deploy/compare-capacity-trials.py")
 levels = [review["read_level"](trial, level) for level in review["LEVELS"]]
 oracle = json.loads((trial / "oracle.json").read_text())

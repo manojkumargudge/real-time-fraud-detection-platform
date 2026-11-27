@@ -45,7 +45,6 @@ def main() -> None:
                     "--project",
                     PROJECT,
                     "--limit=10",
-                    "--return-immediately",
                     "--auto-ack",
                     "--format=json",
                 ],

@@ -93,8 +93,10 @@ This change affects the telemetry interpretation of an active, empty group.
 including 49,968 HTTP scores with warmup and 27,000 Kafka scores. Kafka
 end and committed offsets were `[8547, 10020, 8433]`, with zero unexpected
 dead letters. The main oracle reported zero score differences. CPU p95 was
-59%, peak memory was 13.25% and peak filesystem use was 32% over 80 CPU
-samples. The four 10-minute measured segments were:
+59%, CPU peak was 78%, peak memory was 13.25% and peak filesystem use was
+32% over 80 CPU samples. Peak sampled nonnegative Kafka lag was two records.
+All three consumers remained running with zero restarts in the samples. The
+four 10-minute measured segments were:
 
 | Pattern | Requests | HTTP requests/s | p50 ms | p95 ms | p99 ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -112,3 +114,42 @@ the available evidence and stopped the VM, independently confirmed
 The resumed run verifies the archive and matched host, kernel, baseline image,
 workload scripts and completed audit before reusing main-1. The candidate and
 final baseline still require full sustained measurements.
+
+`1127f` passed image and archive checks, then stopped before load because
+usable memory differed by 12 KiB across boots. The revised preflight accepts
+up to 1 MiB of kernel memory reservation difference. It still requires the
+same CPU and Docker geometry and the same running kernel. A local test
+accepted the two actual inventories and rejected an eight-to-four CPU change.
+Its evidence archive SHA-256 is
+`76c33abd553c2be421d04aec0440c90c9280552e9d0e29b0f910f56bca4a3f1f`.
+
+`1127g` detected running kernel `7.0.0-1018-gcp` versus `7.0.0-1017-gcp`
+in the completed baseline and stopped before load. The guest journal showed
+`apt-daily-upgrade` started at 19:36:07 IST and upgraded libc at 19:36:47,
+seven seconds before systemd stopped the rehearsal. The package log recorded
+installation of `7.0.0-1018-gcp` at 19:39. Run four new 44-minute repeats on
+one boot after maintenance. Keep the earlier baseline as historical evidence.
+The `1127g` archive SHA-256 is
+`be1f0811977f68267d3b7d80fff47ec854f68aff633328a345501ebc38642df2`.
+
+The operator guard stopped both follow-up attempts and a separate compute
+inventory confirmed both instances `TERMINATED`. The last capacity VM stop
+was 20:42:04 IST. Both retained disks remain intact. The operator configured
+and verified a 180-minute guest timer for the shortened continuation. The
+210-minute operator guard and four-hour cloud STOP remained in force.
+Capacity-host creation and all later start/stop operation intervals sum to
+155.66 minutes. At US$0.27305/hour this gives a conservative US$0.7084 compute
+and IPv4 estimate before variable telemetry, transfer or retained disk charges.
+
+The short hosted comparison at `c9c6ee8` passed without changing its gates.
+Median main/direct rates were 53.635/57.300 rps with one client and
+46.700/58.535 rps with eight clients. Median one-client p95 was 19.675 ms
+for main and 18.210 ms for direct. The earlier short failures remain part
+of the record. [Passing hosted benchmark](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/46017498664)
+
+Live OPENED and CLOSED delivery and private exact-image recovery remain
+pending. The installed CLI rejected an optional Pub/Sub pull flag. The
+verifier now uses the supported command and retains incident state after a
+transient timeout. A local mock returned the same incident's open and close
+across a timeout and rejected an unrelated closure. That verifies the
+collector logic. No cloud notification is claimed from the interrupted runs.
