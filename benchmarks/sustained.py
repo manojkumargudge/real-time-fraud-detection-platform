@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import ssl
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -42,8 +43,11 @@ async def exercise(args: argparse.Namespace) -> None:
     async with httpx.AsyncClient(
         verify=tls, headers={"X-API-Key": os.environ["API_KEY"]}, timeout=15, trust_env=False
     ) as client:
+        started = time.time()
         result = await run_level(client, args.url, args.clients, cursor, args.warmup, args.duration)
         row = summarise(result, args.duration)
+        row["measured_start_unix"] = started + args.warmup
+        row["measured_end_unix"] = started + args.warmup + args.duration
         row["timeouts"] = sum("Timeout" in sample.error for sample in result.samples)
         rows.append(row)
         print(json.dumps(row, sort_keys=True), flush=True)

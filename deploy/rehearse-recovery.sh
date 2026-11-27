@@ -53,11 +53,26 @@ services:
       - 127.0.0.1:18443:443
 YAML
 
+release_override=()
+backup_image=postgres:16.16-alpine3.24
+if [[ -n ${FRAUD_RECOVERY_MANIFEST:-} ]]; then
+  cmp "$FRAUD_RECOVERY_MANIFEST" deploy/capacity-manifests.txt
+  while read -r role image; do
+    docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image" |
+      grep -Fx "$image"
+    export "${role^^}_IMAGE=$image"
+  done < "$FRAUD_RECOVERY_MANIFEST"
+  release_override=(-f deploy/release-images.example.yml)
+  backup_image=$POSTGRES_IMAGE
+  cp "$FRAUD_RECOVERY_MANIFEST" "$evidence/release-manifests.txt"
+fi
+
 stack() {
   local project=$1
   shift
   docker compose -p "$project" --profile registry --env-file /dev/null \
-    -f docker-compose.yml -f docker-compose.production.yml -f "$work/rehearsal.yml" "$@"
+    -f docker-compose.yml -f docker-compose.production.yml -f "$work/rehearsal.yml" \
+    "${release_override[@]}" "$@"
 }
 
 capture() {
@@ -107,12 +122,24 @@ attest_ingress() {
       [[ -n $id && -z $(docker port "$id") ]]
     done < <(stack "$project" ps -q "$service")
   done
+  stack "$project" exec -T api python -c '
+import socket
+try:
+    connection = socket.create_connection(("mlflow", 5000), timeout=2)
+except OSError:
+    pass
+else:
+    connection.close()
+    raise SystemExit("Application network reached MLflow")
+'
   api --fail -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
     -d '{"TransactionID":910000001,"TransactionDT":101,"TransactionAmt":50,"ProductCD":"W","card1":3999,"card4":"visa","card6":"debit","addr1":315}' \
     https://api.localhost:18443/score | jq -e '.transaction_id == 910000001 and .duplicate and .is_alert' >/dev/null
 }
 
-stack "$source_project" build api kafka postgres redis dashboard mlflow proxy
+if (( ${#release_override[@]} == 0 )); then
+  stack "$source_project" build api kafka postgres redis dashboard mlflow proxy
+fi
 stack "$source_project" up -d --no-build --wait postgres redis
 stack "$source_project" run --rm --no-deps -T -e FEAST_SEED_SHA256 api \
   python -m src.features.feast_checkpoint promote /app/artifacts/feature-seed/seed.json \
@@ -137,7 +164,7 @@ volumes=(pgdata kafkadata redisdata mlflowdata caddydata caddyconfig)
 for volume in "${volumes[@]}"; do
   docker volume inspect "${source_project}_$volume" >/dev/null
   docker run --rm --network none --entrypoint sh \
-    -v "${source_project}_$volume:/state:ro" -v "$work/checkpoint:/backup" postgres:16.16-alpine3.24 \
+    -v "${source_project}_$volume:/state:ro" -v "$work/checkpoint:/backup" "$backup_image" \
     -ec 'tar -C /state -czf "/backup/$1.tgz" .' sh "$volume"
 done
 (cd "$work/checkpoint" && sha256sum ./*.tgz > "$evidence/checkpoint.sha256")
@@ -157,7 +184,7 @@ for volume in "${volumes[@]}"; do
   printf 'Restoring %s\n' "$target"
   docker run --rm --network none --entrypoint sh \
     --mount "type=volume,source=$target,target=/state,volume-nocopy" \
-    -v "$work/checkpoint:/backup:ro" postgres:16.16-alpine3.24 \
+    -v "$work/checkpoint:/backup:ro" "$backup_image" \
     -ec 'test -z "$(ls -A /state)" || { echo "Restore volume is not empty" >&2; exit 1; }; tar -C /state -xzf "/backup/$1.tgz"' sh "$volume"
 done
 # Rebind the restored service to the copied model rather than the source fixture directory.

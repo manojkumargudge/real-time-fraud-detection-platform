@@ -1,0 +1,20 @@
+{
+  "displayName": "Fraud capacity rehearsal guest fault",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Synthetic guest probe above healthy range",
+      "conditionThreshold": {
+        "filter": "resource.type="gce_instance" AND resource.labels.instance_id="938503370005181237" AND metric.type="logging.googleapis.com/user/fraud_capacity_guest_fault"",
+        "aggregations": [
+          {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_PERCENTILE_99"}
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0.5,
+        "duration": "60s",
+        "evaluationMissingData": "EVALUATION_MISSING_DATA_NO_OP"
+      }
+    }
+  ],
+  "alertStrategy": {"notificationPrompts": ["OPENED", "CLOSED"]}
+}

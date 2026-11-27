@@ -5,6 +5,7 @@ set -euo pipefail
 (( $# > 0 )) || exit 2
 docker_root=$(docker info --format '{{.DockerRootDir}}')
 while true; do
+  sample_started=$SECONDS
   date -u +%FT%TZ
   free -b
   vmstat 1 2 | tail -1
@@ -12,7 +13,7 @@ while true; do
   container_ids=$("$@" ps --all --quiet)
   [[ -n $container_ids ]] || exit 1
   mapfile -t containers <<< "$container_ids"
-  docker inspect --format '{{.Name}} status={{.State.Status}} restarts={{.RestartCount}}' "${containers[@]}"
+  docker inspect --format '{{.Id}} {{.Name}} status={{.State.Status}} restarts={{.RestartCount}}' "${containers[@]}"
   docker stats --no-stream "${containers[@]}"
   "$@" exec -T postgres psql -X -v ON_ERROR_STOP=1 -U fraud -d fraud -At <<'SQL'
 SELECT 'wal_bytes=' || wal_bytes FROM pg_stat_wal;
@@ -27,5 +28,6 @@ SQL
   "$@" exec -T redis redis-cli INFO persistence | grep -E '^aof_(current_size|last_write_status|pending_bio_fsync|delayed_fsync)'
   "$@" exec -T redis redis-cli LATENCY LATEST
   "$@" exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server kafka:19092 --describe --group fraud-scorer
-  sleep 30
+  remaining=$((30 - (SECONDS - sample_started)))
+  if (( remaining > 0 )); then sleep "$remaining"; fi
 done

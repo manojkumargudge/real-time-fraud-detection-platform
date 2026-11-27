@@ -1,0 +1,14 @@
+logging:
+  receivers:
+    fraud_capacity:
+      type: files
+      include_paths:
+        - /srv/fraud-capacity/evidence/trials/*/release-*/telemetry.jsonl
+  processors:
+    fraud_capacity_json:
+      type: parse_json
+  service:
+    pipelines:
+      fraud_capacity:
+        receivers: [fraud_capacity]
+        processors: [fraud_capacity_json]
