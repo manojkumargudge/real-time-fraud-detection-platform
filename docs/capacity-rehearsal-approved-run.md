@@ -1,12 +1,31 @@
 # Private sustained capacity and security rehearsal
 
-**Approval required.** This procedure reuses the stopped `fraud-release-capacity-1126` in `fraud-detection-platform-2026/us-central1-a`, instance ID `938503370005181237`. The VPC is `fraud-rehearsal-vpc`, subnet `fraud-rehearsal-subnet`, and the only applicable ingress rule and target tag are `fraud-release-rehearsal-iap` (TCP 22 from the IAP range). The retained boot disk is `fraud-release-capacity-1126` (100 GiB balanced, auto-delete disabled). Leave `fraud-release-rehearsal` and its separate 100 GiB disk stopped. Neither host has a reserved IP. The eight-vCPU VM has an ephemeral IPv4 configuration, no service account, and an old startup script that must be removed before reuse.
+The approved private rehearsal reuses `fraud-release-capacity-1126` in `fraud-detection-platform-2026/us-central1-a`, instance ID `938503370005181237`. The VPC is `fraud-rehearsal-vpc`, subnet `fraud-rehearsal-subnet`, and the only applicable ingress rule and target tag are `fraud-release-rehearsal-iap` (TCP 22 from the IAP range). The retained boot disk is `fraud-release-capacity-1126` (100 GiB balanced, auto-delete disabled). Leave `fraud-release-rehearsal` and its separate 100 GiB disk stopped. Neither host has a reserved IP. The eight-vCPU VM uses an ephemeral IPv4 address for outbound traffic. The legacy startup script was removed before the telemetry pilot.
 
 ## Cost and runtime control
 
 At the Iowa planning rates of US$0.26805/hour for compute and US$0.005/hour for in-use IPv4, three hours costs **US$0.82 (₹76)** and four hours costs **US$1.09 (₹101)**, incremental to disk retention. Allow US$0.20 (₹19) for a maximum 1 GiB evidence export in this estimate and US$0.20 for variable telemetry/transfer. Request **US$2 (₹185) before tax** for a no-publication run. This is an approval envelope. The existing disks continue billing at about US$20/month (₹1,850) combined, or US$0.11 total over four hours. No new disk, snapshot, NAT, static IP, DNS or Artifact Registry is needed for the cached-manifest rehearsal. INR values use the RBI ₹92.48/USD reference for planning. Rates and any tax are governed by the billing account. [Compute pricing](https://cloud.google.com/products/compute/pricing/general-purpose) [Disk pricing](https://cloud.google.com/compute/disks-image-pricing) [Network pricing](https://cloud.google.com/vpc/network-pricing) [RBI reference](https://www.rbi.org.in/?id=10598)
 
 An independently approved private registry would add US$0.10/GiB-month above the account's 0.5 GiB allowance (10 GiB is about US$0.95–1.00/month). Same-region pulls to the VM cost US$0 for transfer. Retention and any external downloads accrue separately. The project is billing-linked and has the project rehearsal budget `Fraud private rehearsal INR 450` with 50%, 80%, and 100% gross-spend alerts and a 100% forecast alert. Budgets notify. The platform STOP policy bounds compute runtime. The billing owner must confirm Free Trial status, remaining applicable credit and expiry in Billing Overview. Active trial credit would cover eligible charges if sufficient, and a billing link alone cannot establish coverage. [Registry pricing](https://cloud.google.com/artifact-registry/pricing) [Trial terms](https://docs.cloud.google.com/free/docs/free-cloud-features)
+
+The billing owner confirmed an active Free Trial with ₹28,436 in Welcome
+credit and expiry February 8, 2027. The authorization is cumulative and capped
+at US$2 in eligible Welcome credits. The estimate before `1127e`, including
+prior failed starts, was US$0.23 for compute and ephemeral IPv4. One further
+four-hour window plus the US$0.40 variable allowance brings the estimated
+cumulative incremental total to US$1.72 (₹159), with existing disk retention
+tracked separately. The estimate is based on audited runtime and rates.
+
+For the `1127f` continuation, conservatively including initial inventory host
+creation and the interrupted runs through `1127e`, completed Compute Engine
+operation intervals account for about 142 minutes, or US$0.65 for compute and
+IPv4. A further four hours costs up to US$1.09 for those two items. A US$0.05
+transfer allowance and a US$0.20 telemetry allowance bring the cumulative
+planning upper bound to about US$1.99 (₹184) before existing disk retention.
+The small evidence archives and loopback pulls support the reduced transfer
+allowance. A 180-minute guest poweroff timer adds to the 210-minute operator
+guard and existing four-hour Compute Engine STOP limit. The resumed workload
+checks the prior archive and imports only a complete, matching `main-1` run.
 
 After approval, run these commands from Linux with gcloud, OS Login and IAP rights:
 
@@ -120,7 +139,7 @@ From the guarded workstation shell, run `gcloud compute scp --tunnel-through-iap
 
 ## Automated incident and recovery verification
 
-The driver emits structured guest samples every 30 seconds for HTTPS readiness, Kafka lag, stale Feast journal, Redis AOF and filesystem usage. The Ops Agent file receiver and distribution metric support explicit healthy zeros and both OPENED and CLOSED notifications. Prepare the Ops Agent with an approved dedicated identity with project `roles/logging.logWriter` and `roles/monitoring.metricWriter`, and no deployment/secret grants. The stopped VM currently has no service account. Require separate IAM and telemetry approval before attachment. Install the agent per the [Ops Agent procedure](https://docs.cloud.google.com/monitoring/agent/ops-agent/installation), merge [the receiver configuration](../deploy/capacity-ops-agent.yaml) with existing configuration, restart the agent and verify structured records are arriving. The policy uses the existing private channel and topic `fraud-rehearsal-alerts`. The earlier notification policy remains separate.
+The driver emits structured guest samples every 30 seconds for HTTPS readiness, Kafka lag, stale Feast journal, Redis AOF and filesystem usage. The Ops Agent file receiver and distribution metric support explicit healthy zeros and both OPENED and CLOSED notifications. The approved `fraud-capacity-telemetry` identity is attached to VM `938503370005181237` with project `roles/logging.logWriter` and `roles/monitoring.metricWriter` and no keys. Guest Ops Agent 2.73 uses the [receiver configuration](../deploy/capacity-ops-agent.yaml). Policy `10793285701053752654` uses existing private channel `14251330304105084080` and topic `fraud-rehearsal-alerts`. Verify recorded samples and both transitions during the controlled incident. The commands below record the setup for reconstruction after cleanup.
 
 ```bash
 SA="fraud-capacity-telemetry@$P.iam.gserviceaccount.com"
@@ -180,12 +199,14 @@ authorized environment with access to the retained registry, replacing
 ```bash
 gcloud artifacts repositories create fraud-release --project "$P" --location us-central1 \
   --repository-format=docker --immutable-tags
-gcloud auth configure-docker us-central1-docker.pkg.dev
+gcloud auth print-access-token | skopeo login --username oauth2accesstoken \
+  --password-stdin us-central1-docker.pkg.dev
 while read -r role source; do
   [[ $role != retrain ]] || continue
+  [[ $source == 127.0.0.1:5500/fraud-release/*@sha256:* ]]
   digest=${source##*@}
   target_ref="us-central1-docker.pkg.dev/$P/fraud-release/$role:APPROVED_RELEASE_TAG"
-  skopeo copy --preserve-digests "docker://$source" "docker://$target_ref"
+  skopeo copy --preserve-digests --src-tls-verify=false "docker://$source" "docker://$target_ref"
   test "$(skopeo inspect --format '{{.Digest}}' "docker://$target_ref")" = "$digest"
 done < deploy/capacity-manifests.txt
 ```

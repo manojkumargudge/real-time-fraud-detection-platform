@@ -11,8 +11,11 @@ curl --silent --fail --max-time 5 --noproxy '*' --cacert "$ca" \
   https://api.localhost:18443/health || endpoint=1
 if group=$(timeout 12 "$@" exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh \
     --bootstrap-server kafka:19092 --describe --group fraud-scorer 2>/dev/null); then
-  lag=$(awk '$2=="transactions" && $3~/^[0-9]+$/ && $6~/^[0-9]+$/ {seen[$3]=1; sum+=$6}
-    END {print length(seen)==3 ? sum+0 : -1}' <<< "$group")
+  # An assigned empty partition has no committed offset before its first event.
+  lag=$(awk '$2=="transactions" && $3~/^[0-9]+$/ {
+      if ($6~/^[0-9]+$/) {seen[$3]=1; sum+=$6}
+      else if ($4=="-" && $5=="0" && $6=="-" && NF>=7 && $7!="-") {seen[$3]=1}
+    } END {print length(seen)==3 ? sum+0 : -1}' <<< "$group")
 fi
 if (( lag < 0 || lag > ${FRAUD_KAFKA_LAG_LIMIT:-100} )); then kafka=1; fi
 baseline=${FRAUD_CAPACITY_BASELINE:-false}

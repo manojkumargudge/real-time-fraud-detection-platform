@@ -76,7 +76,35 @@ install -d -m 0750 -o 10001 -g 10001 reports/drift
 chmod a+rx data data/raw data/raw/ieee-cis
 chmod a+r data/raw/ieee-cis/*.csv
 candidate=$SERVING_IMAGE
-for trial in main-1 release-1 release-2 main-2; do
+trials=(main-1 release-1 release-2 main-2)
+if [[ -n ${FRAUD_CAPACITY_RESUME_MAIN1:-} ]]; then
+  prior=$(realpath "$FRAUD_CAPACITY_RESUME_MAIN1")
+  [[ $prior == "$root/evidence/trials/"* && $prior != "$out" ]]
+  [[ $(head -n 1 "$prior/host.txt") == $(head -n 1 "$out/host.txt") ]]
+  [[ $(awk 'NR==1 {print $2}' "$prior/main-1/iostat.log") == "$(uname -r)" ]]
+  cmp "$prior/baseline-image.txt" "$out/baseline-image.txt"
+  cmp "$prior/sustained-full-seed.py" "$out/sustained-full-seed.py"
+  cmp "$prior/kafka-full-seed.py" "$out/kafka-full-seed.py"
+  python - "$prior/main-1" <<'PY'
+import json, runpy, sys
+from pathlib import Path
+
+trial = Path(sys.argv[1])
+review = runpy.run_path("deploy/compare-capacity-trials.py")
+levels = [review["read_level"](trial, level) for level in review["LEVELS"]]
+oracle = json.loads((trial / "oracle.json").read_text())
+kafka = json.loads((trial / "kafka-audit.json").read_text())
+assert oracle["http"] == sum(row["warmup_requests"] + row["requests"] for row in levels)
+assert oracle["score_differences"] == kafka["dlq"] == 0
+assert oracle["kafka"] == kafka["kafka_scores"] == sum(kafka["ends"]) == 27000
+assert oracle["rows"] == oracle["http"] + oracle["kafka"]
+assert kafka["ends"] == kafka["commits"]
+PY
+  cp -a --reflink=auto "$prior/main-1" "$out/main-1"
+  printf '%s\n' "$prior/main-1" > "$out/resumed-main-1.txt"
+  trials=(release-1 release-2 main-2)
+fi
+for trial in "${trials[@]}"; do
   run="$out/$trial"
   mkdir "$run"
   is_baseline=false

@@ -4,6 +4,7 @@ import argparse
 import base64
 import json
 import subprocess
+import sys
 import time
 from datetime import datetime
 
@@ -33,24 +34,30 @@ def main() -> None:
     observed: dict[str, dict[str, str]] = {}
     deadline = time.monotonic() + args.timeout
     while time.monotonic() < deadline:
-        raw = subprocess.run(
-            [
-                "gcloud",
-                "pubsub",
-                "subscriptions",
-                "pull",
-                SUBSCRIPTION,
-                "--project",
-                PROJECT,
-                "--limit=10",
-                "--auto-ack",
-                "--format=json",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        )
+        try:
+            raw = subprocess.run(
+                [
+                    "gcloud",
+                    "pubsub",
+                    "subscriptions",
+                    "pull",
+                    SUBSCRIPTION,
+                    "--project",
+                    PROJECT,
+                    "--limit=10",
+                    "--return-immediately",
+                    "--auto-ack",
+                    "--format=json",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=min(60, max(1, deadline - time.monotonic())),
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            print(f"Notification pull retry after {type(error).__name__}", file=sys.stderr)
+            time.sleep(min(10, max(0, deadline - time.monotonic())))
+            continue
         for message in json.loads(raw.stdout):
             if message.get("ackStatus") != "SUCCESS":
                 continue
