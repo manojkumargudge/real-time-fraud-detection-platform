@@ -1,5 +1,52 @@
 # Release image security checkpoint
 
+## November 28 review of the enabled Python images
+
+The unfiltered Linux/amd64 inventory on `d140326` has identical High and
+Critical package/CVE rows to the previously downloaded `9b4b24f` inventory.
+These temporary CI manifests identify scanned bytes. The release decision
+requires a fresh comparison with the exact bytes retained for publication.
+[Unfiltered scans and runtime probes](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/46119116365)
+
+| Enabled image | SHA-256 manifest |
+| --- | --- |
+| Serving | `edd7ed15f7e0011ee554088e460417654b7c5848b956d2ca0a6697c3a3ad45a7` |
+| Dashboard | `f6b5bf0511ceb5f3f71ff52efa56a2933e3243b76a94c6764a3cc91e444cfa0d` |
+| Drift | `75c07e14ccbb475456493e28999988951b434abfd620dae3566b1639c4abd924` |
+| MLflow | `10e34c90a819a3cdda8e3a6f0dd68cc3e49a58d592e9cfebad68fccb6ad2cf7c` |
+
+A disposable serving container refreshed signed Trixie and security indexes.
+The representative packages from all seven affected source groups still
+resolved to their installed versions. No stable upgrade cleared these
+findings. The earlier backport and alternate base checks below document the
+supported alternatives already considered. The scanner recorded every row
+below as High. Each remains subject to the release-owner policy.
+
+| CVE | Affected installed package group | Reachability and controls |
+| --- | --- | --- |
+| CVE-2026-76642 | util-linux group¹ | Privileged mount hooks require a mount path. The Compose application roles drop all capabilities and set no-new-privileges. Keep privileged mounts on the host. |
+| CVE-2026-78408 | util-linux group¹ | Namespace and cgroup administration require privileges absent from normal application roles. The executable remains installed. |
+| CVE-2026-78409 | util-linux group¹ | Detached-tree mount handling requires a privileged mount path. No application service uses such a path in Compose. |
+| CVE-2026-78410 | util-linux group¹ | The risky path requires privileged bind-mount handling. Compose mounts are operator-controlled. Host source ownership and mount procedures still matter. |
+| CVE-2026-54369 | libacl1 `2.3.2-2+b1` | ACL symlink handling can cross privilege boundaries. Non-root containers restrict impact. Privileged backup and staging ACL paths need review. |
+| CVE-2025-69720 | ncurses and libtinfo `6.5+20250216-2` | Terminal tooling remains installed. No serving command invokes `infocmp`. Operator terminal inputs and subprocesses remain outside the runtime evidence. |
+| CVE-2026-119373 | libsqlite3-0 `3.46.1-7+deb13u2` | FTS5 is compiled in. Use trusted MLflow databases and backups. Exact deployment schema and imported artifact paths need verification. |
+| CVE-2026-119374 | libsqlite3-0 `3.46.1-7+deb13u2` | Corrupted FTS5 index handling requires FTS5 input. The internal registry and trusted restore boundary reduce exposure. Exact schema verification remains open. |
+| CVE-2026-119379 | libsqlite3-0 `3.46.1-7+deb13u2` | SQLite session support is present. No configured changeset importer was identified. Restore inputs must remain controlled. |
+| CVE-2026-107494 | openssl, libssl3t64 and openssl-provider-legacy `3.5.9-1~deb13u1` | The affected feature is OpenSSL QUIC. Caddy owns public TLS and the Python service configuration uses TCP. Exact final listener and dependency traces remain open. |
+| CVE-2026-124709 | openssl, libssl3t64 and openssl-provider-legacy `3.5.9-1~deb13u1` | The affected feature is OpenSSL QUIC stream processing. The Compose roles expose no Python QUIC endpoint. Check actual listeners before release. |
+| CVE-2026-16742 | libsystemd0 and libudev1 `257.13-1~deb13u1` | Exact inventory probes did not find `systemd-homed` on PATH. The affected service is absent from the Compose entrypoints. Host OS assessment is separate. |
+| CVE-2026-9538 | perl-base `5.40.1-6+deb13u1` | `Archive::Tar` import failed in each enabled Python image's inventory probe. Keep archive inputs trusted and verify the final image and its maintenance commands. |
+
+¹ `libblkid1`, `liblastlog2-2`, `libmount1`, `libsmartcols1`, `libuuid1`,
+`mount` and `util-linux` are `2.41.5-0+deb13u1`. `bsdutils` is
+`1:2.41.5-0+deb13u1`. `login` is `1:4.16.0-2+really2.41.5-0+deb13u1`.
+
+**Disposition for all 13 findings is hold.** Signed stable indexes offered
+no verified fixed candidates. Mitigations are conditional on the reviewed
+Compose controls and trusted operator inputs. Release requires verified
+fixed bytes or explicit policy disposition by the release owner.
+
 ## Release-owner decision for the audited candidate
 
 **Recommendation: keep release blocked.** The exact nine-image inventory at

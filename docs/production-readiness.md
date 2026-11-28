@@ -1,5 +1,56 @@
 # Compute Engine release checklist
 
+## Local deployment staging
+
+Use the [environment template](../deploy/production.env.example) and two
+copies of the [image-only override](../deploy/release-images.example.yml)
+for rollout and rollback. Use literal private registry references ending in
+full `@sha256:` digests verified against each signed inventory. Keep the
+environment and overrides outside the checkout. Prepare independent
+32-byte hex values for the PostgreSQL password, API key and dashboard
+cookie, plus separate bcrypt dashboard entries. Use version-pinned Secret
+Manager references and render a root-owned `/run/fraud/production.env`
+with mode 0600 at startup. Use synthetic values for local validation.
+
+After preparing the files, check both effective configurations:
+
+```bash
+export FRAUD_ENV_FILE=/run/fraud/production.env
+stack=(bash deploy/compose.sh -p fraud-production --profile registry --profile monitoring)
+candidate=("${stack[@]}" -f /etc/fraud/release-images.approved.yml)
+rollback=("${stack[@]}" -f /etc/fraud/release-images.previous.yml)
+for override in /etc/fraud/release-images.{approved,previous}.yml; do
+  "${stack[@]}" -f "$override" config --quiet
+  "${stack[@]}" -f "$override" config --images
+done
+```
+
+Compare the reference list to the approved manifests and confirm only the
+proxy publishes TCP 80 and 443. Keep the retraining profile disabled.
+After approval, take the coordinated checkpoint described below. Quiesce
+producers and ingress, drain consumers and the Feast journal, and capture
+volumes, offsets, scores, alerts and the MLflow alias and model digest.
+For a compatible rollback:
+
+```bash
+"${candidate[@]}" stop proxy consumer api dashboard drift
+"${rollback[@]}" up --no-build --wait -d postgres redis kafka mlflow
+# Verify checkpoint and restored stores before resuming writers.
+"${rollback[@]}" up --no-build --wait -d api consumer dashboard proxy
+```
+
+An incompatible state change requires coordinated restore into fresh volumes.
+For the public smoke test, run `deploy/verify.sh` against the approved DNS
+names. Optionally pass a preapproved, unused synthetic transaction JSON
+as the third argument and set `FRAUD_VERIFY_API_KEY_FILE` to a mode-0600
+file. This writes one transaction and verifies replay of the same score
+record. Produce a separate reserved Kafka fixture, then compare broker
+end and committed offsets and verify one PostgreSQL score and its alert
+decision, empty pending and dead-letter state, healthy Redis and the
+expected model. Authenticate to the dashboard and open its case view.
+Confirm matching monitoring incident opening and closure and complete the
+rate-limit and recovery gates before sign-off.
+
 **Verdict: NOT READY.** The Compose overlay is a release candidate. PostgreSQL-backed scoring serializes Feast updates per card and journals pending Redis updates with the score. Kafka retries an interrupted update before committing the offset. The late-event policy rejects events whose timestamp precedes the current entity state. Kafka uses its bounded permanent-error retry and dead-letter flow, while HTTP returns 409. Same-timestamp events still use strictly earlier history.
 
 | Release gate | Evidence or remaining work |

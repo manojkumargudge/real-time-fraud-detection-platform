@@ -199,8 +199,13 @@ gcloud monitoring policies create --project "$P" --policy-from-file=/tmp/fraud-c
 gcloud pubsub subscriptions create fraud-capacity-verifier-1127 --project "$P" \
   --topic=fraud-rehearsal-alerts --expiration-period=1d
 python3 deploy/verify-capacity-notifications.py \
-  --policy-name 'Fraud capacity rehearsal guest fault' --timeout 600
+  --policy-name 'Fraud capacity rehearsal guest fault' --timeout 600 \
+  --not-before "$(date -u +%FT%TZ)" --evidence-file "$HOME/capacity-incident-receipts.json"
 ```
+
+Use one collector for the verification window. Record the UTC start value
+and reuse it with the same evidence file if the collector is interrupted.
+Store the receipt file with the private rehearsal artifacts.
 
 For the agent-enabled path, block and verify access to Compute Engine metadata from workload container networks before starting the application stack. Host-side Ops Agent authentication must continue to work. Use an approved host firewall rule on the Docker forwarding chain and verify from a disposable container on the same network. Grant neither registry-write nor secret permissions to the telemetry identity. Plan the notification test outside the 88 minutes of measured capacity work.
 

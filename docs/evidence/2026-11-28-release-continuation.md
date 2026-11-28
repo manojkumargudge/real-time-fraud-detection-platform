@@ -88,3 +88,56 @@ fixes or explicit release-owner approval for the exact publishable bytes,
 the shared 13 findings hold the release. Keep retrain disabled under its
 existing release policy. [Security checkpoint](../release-image-security.md)
 [Hosted image inventory](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/46105941842)
+
+## Timeout and notification follow-up
+
+The only `release-2` timeout occurred during the spread-1 warmup,
+04:38:23.751–04:39:23.751 UTC. The 15,562 measured requests succeeded and
+had a maximum latency of 146.31 ms. Resource samples recorded zero observed
+container restarts. The first guest probe found Kafka startup lag with a
+healthy HTTP endpoint. Subsequent early samples showed healthy HTTP,
+PostgreSQL and Redis and Kafka lag of one. The database dump, Redis rewrite
+and Evidently job were scheduled five minutes into the workload, outside
+warmup. Those results leave a short-lived dependency, host or transport
+stall possible. The archive lacks an individual timeout timestamp and
+exception class. It establishes neither reproducibility nor environmental
+causation. Preserve the failed run and the unchanged zero-timeout gate.
+
+Cloud Monitoring readback confirmed an enabled policy with both OPENED and
+CLOSED prompts. The dedicated subscription has a 10-second acknowledgment
+deadline and no acknowledged-message retention. The original collector
+used `--auto-ack`, allowing the CLI to discard messages before filtering,
+durable recording or recovery from a subprocess interruption. The missing
+opening has no retained envelope, so the exact historical loss mechanism
+remains unproven. The revised collector persists matching receipts before
+explicit acknowledgment and resumes the same verification window after an
+interruption. An isolated regression exercises a matching opening and
+closure across a simulated interruption and rejects an unrelated incident
+pair. Live Monitoring-to-Pub/Sub delivery still requires a fresh approved
+controlled incident with one collector and a private evidence file.
+
+## Cumulative capacity estimate
+
+Iowa e2-standard-8 on-demand compute is US$0.26804568/hour. In-use standard
+IPv4 is US$0.005/hour before any free allowance. At US$0.27304568/hour,
+294.46 audited or previously documented capacity-host minutes estimate
+US$1.34002. Retaining the US$0.22 prior transfer and telemetry allowance
+leaves US$0.53998 under US$2.10. These are planning values rather than
+billing-ledger balances. Existing disk retention is excluded by approval.
+[Compute pricing](https://cloud.google.com/products/compute/pricing/general-purpose)
+[IPv4 pricing](https://cloud.google.com/vpc/network-pricing)
+
+| Final-image session | Compute and IPv4 | Shortfall against US$0.53998 |
+| --- | ---: | ---: |
+| 176 minutes of measured workload and warmup only | US$0.80093 | US$0.26095 |
+| 210-minute operator window including startup, reconciliation and export | US$0.95566 | US$0.41568 |
+| 240-minute cloud STOP ceiling | US$1.09218 | US$0.55220 |
+
+Reserve a further US$0.02 for transfer and US$0.20 for telemetry at the
+cloud STOP ceiling. The new-session planning ceiling is US$1.31219
+rounded up, yielding a proposed **US$2.88 cumulative cap** before tax and
+retained disks. That represents a US$0.78 increase to the approved cap.
+Confirm accumulated eligible charges, the approved STOP ceiling, trial status,
+remaining applicable credit and expiry before start. Actual runtime, transfer,
+telemetry and taxes determine the invoice. The estimate excludes production
+hosting and release publication.
