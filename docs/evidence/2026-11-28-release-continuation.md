@@ -19,6 +19,13 @@ disposition of unfiltered image findings, matched sustained capacity, live
 alert and recovery verification, and public end-to-end validation are open.
 [Release checklist](../production-readiness.md)
 
+The rebuilt proxy ran as UID and GID 10001 with zero effective capabilities
+and no-new-privileges. Local HTTP, verified TLS and certificate persistence
+across restart passed. Its unfiltered image scan had zero High or Critical
+findings. The CI-aligned Windows unit suite passed 728 tests with four
+environment-dependent skips. The earlier capacity image set used a different
+proxy digest and remains historical for this proxy change.
+
 The requirements matrix records the supporting model, feature-store, dashboard
 and MLOps evidence and the unresolved React and Streamlit specification question.
 [Requirements matrix](../aiml-01-completion.md)

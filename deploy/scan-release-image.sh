@@ -39,6 +39,12 @@ ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$local_ref")
 printf '%s\n' "$kind $ref" > "$out/release-reference.txt"
 docker image inspect "$ref" > "$out/image-inspect.json"
 
+if [[ $kind == caddy ]]; then
+  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+    --entrypoint sh "$ref" -ec 'test "$(id -u)" = 10001; test -w /data; test -w /config; id' \
+    > "$out/proxy-runtime.txt"
+fi
+
 if [[ $kind == retrain ]]; then
   docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
     --entrypoint sh "$ref" -ec '

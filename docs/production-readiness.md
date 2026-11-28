@@ -263,6 +263,13 @@ API and consumer share the serving digest. Check the pinned references with
 The ephemeral CI registry addresses identify evidence and cannot serve a
 deployment. A rebuild needs a new scan if its manifest changes.
 
+The proxy image runs Caddy as UID and GID 10001. The production overlay
+drops its Linux capabilities, prevents privilege escalation and allows
+unprivileged ports within its network namespace. Bootstrap on fresh
+`caddydata` and `caddyconfig` volumes. When using an older volume, verify
+that UID 10001 can read and write its contents on an isolated restore
+before cutover. Keep the pre-migration snapshot for rollback.
+
 Use a separate project with a synthetic-only model fixture and seed for any
 public demonstration. After ingress approval, configure DNS and Caddy HTTPS,
 start the proxy explicitly with `"${stack[@]}" up -d --no-build --wait proxy`,

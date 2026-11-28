@@ -139,6 +139,10 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddydata:/data
       - caddyconfig:/config
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
     ports:
       - "80:80"
       - "443:443"

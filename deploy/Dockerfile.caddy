@@ -1,8 +1,12 @@
-FROM caddy:2.11.9-builder-alpine AS build
+FROM caddy:2.11.9-builder-alpine@sha256:86e132d1d6db8850352b2dbc15f82a4cb25363ac305ee41e11405873e5931f37 AS build
 
 # Caddy PR #8368 removes go-jose v3 and uses x/net v0.62.0.
 RUN xcaddy build 31f9f0cb99491fdd1a27f82793b78d216c5b2a76 --output /usr/bin/caddy
+# Copy through a new inode to discard the capability added by xcaddy.
+RUN install -m 0755 /usr/bin/caddy /tmp/caddy
 
 FROM caddy:2.11.9-alpine@sha256:fc9cbc100585871d18d4e451cca7021785c90a7006087427ae5ceb3e4efe6424
 
-COPY --from=build /usr/bin/caddy /usr/bin/caddy
+COPY --from=build /tmp/caddy /usr/bin/caddy
+RUN mkdir -p /data/caddy /config/caddy && chown -R 10001:10001 /data /config
+USER 10001:10001
