@@ -48,6 +48,16 @@ Thumbs.db
 tmp/
 temp/
 
+# Local demo capture and video production outputs
+/recordings/
+/demo-recordings/
+/recording-tmp/
+*.mp4
+*.mkv
+*.mov
+*.webm
+*.obs
+
 # Local databases
 *.db
 *.sqlite3
