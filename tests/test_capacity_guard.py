@@ -29,9 +29,9 @@ case "$3" in
     case "${*: -1}" in
       *value\(id\)*) echo 938503370005181237;;
       *value\(status\)*) cat "$FAKE_STATE";;
-      *metadata.items*) echo enable-oslogin;;
+      *metadata.items*) echo "$FAKE_METADATA";;
       *instanceTerminationAction*) echo STOP;;
-      *maxRunDuration.seconds*) echo 14400;;
+      *maxRunDuration.seconds*) echo "$FAKE_STOP_SECONDS";;
     esac ;;
   start) echo RUNNING > "$FAKE_STATE";;
   stop) echo TERMINATED > "$FAKE_STATE"; echo stop >> "$FAKE_STOPS";;
@@ -63,8 +63,25 @@ esac
                 "FAKE_STOPS": str(stops),
                 "PATH": f"{root}:{os.environ['PATH']}",
                 "FRAUD_CAPACITY_START_APPROVED": "938503370005181237",
+                "FAKE_STOP_SECONDS": "13800",
+                "FAKE_METADATA": "enable-oslogin",
             }
             state.write_text("TERMINATED\n")
+            for key, value in (
+                ("FAKE_STOP_SECONDS", "14400"),
+                ("FAKE_METADATA", "enable-oslogin;startup-script-url"),
+            ):
+                with self.subTest(key=key):
+                    denied = subprocess.run(
+                        ["bash", str(GUARD), "true"],
+                        env={**env, key: value},
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertNotEqual(denied.returncode, 0)
+                    self.assertEqual(state.read_text().strip(), "TERMINATED")
+                    self.assertFalse(stops.exists())
             for scenario, expected in (
                 ("success", 0),
                 ("failure", 7),

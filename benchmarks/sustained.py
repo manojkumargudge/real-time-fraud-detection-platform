@@ -65,6 +65,7 @@ async def exercise(args: argparse.Namespace) -> None:
                 "phase": sample.phase,
                 "start_unix": started + sample.start_s,
                 "latency_ms": sample.latency_ms,
+                "exception_type": sample.error.partition(":")[0] if sample.status == 0 else None,
             }
             for sample in timed_out
         ]

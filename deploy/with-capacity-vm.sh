@@ -20,14 +20,14 @@ flock -n 9 || { echo 'A capacity operator session is already active.' >&2; exit 
 [[ $(describe 'value(id)') == "$expected_id" ]]
 [[ $(describe 'value(status)') == TERMINATED ]]
 metadata_keys=$(describe 'value(metadata.items[].key)')
-[[ ";$metadata_keys;" != *";startup-script;"* ]] || {
-  echo 'Remove the legacy startup script before starting.' >&2
+[[ ! $metadata_keys =~ (^|[\;[:space:]])startup-script(-url)?($|[\;[:space:]]) ]] || {
+  echo 'Remove instance startup scripts and startup script URLs before starting.' >&2
   exit 1
 }
 [[ $(describe 'value(scheduling.instanceTerminationAction)') == STOP ]]
 seconds=$(describe 'value(scheduling.maxRunDuration.seconds)')
-[[ $seconds =~ ^[0-9]+$ ]] && (( seconds > 0 && seconds <= 14400 )) || {
-  echo 'Configure the four-hour Compute Engine STOP limit before starting.' >&2
+[[ $seconds == 13800 ]] || {
+  echo 'The approved Compute Engine STOP limit is 230 minutes.' >&2
   exit 1
 }
 

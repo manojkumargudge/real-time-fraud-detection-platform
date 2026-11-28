@@ -148,3 +148,37 @@ Confirm accumulated eligible charges, the approved STOP ceiling, trial status,
 remaining applicable credit and expiry before start. Actual runtime, transfer,
 telemetry and taxes determine the invoice. The estimate excludes production
 hosting and release publication.
+
+## Final-image staging after cumulative cap approval
+
+Both GCP VMs were reconfirmed `TERMINATED`. The capacity VM is `e2-standard-8`
+with a 13,800-second STOP schedule. No instance or project startup script
+metadata was present in the readback. The rehearsal ingress rule permits only
+IAP TCP 22. Billing linkage and the INR 450 alert budget were present.
+The US$2.83 cumulative cap was approved separately from Welcome-credit
+verification. The US$1.26668 incremental ceiling remains an estimate, and
+the billing owner confirmed active eligible credit covering at least
+US$1.27, expiry on February 8, 2027, and current billed cost of INR 0.00.
+
+The staged rehearsal manifest preserves the historical `1128c` references
+and replaces Caddy with the locally retained non-root Linux/amd64 build.
+The registry response body hashes to
+`sha256:8ba637eea93f4a170b3cd12099415203127e4d80671356e1797d6d042542f440`.
+Its config and layer digests match the exported Caddy archive, which has
+SHA-256 `0b3ca254d20f879c9b6de9dc2d35f994fc41e0cebb6eb7ac42ef3f5c9e78de4f`.
+The unfiltered archive scan reported zero High or Critical findings.
+The staged manifest SHA-256 is
+`6bb171280f3b62b34a1379efe515d8c77d811a131286db9584347274d60c56e4`.
+Verify every guest registry digest and its retained scan before load.
+The earlier hosted registry references document different image bytes.
+Production publication is still gated on exact retained digests and the
+13 unresolved High findings.
+
+The production planning basis remains an Iowa e2-standard-8 at 730 hours
+per month, 100 GiB of balanced disk and one in-use IPv4 address. The core
+subtotal is US$209.3233464 before tax or credits. The existing modeled
+snapshot, off-VM backup, registry, egress, DNS, secrets and operations
+allowances bring the illustrative total to US$231.0133464 per month.
+Actual usage and account billing determine charges. Production funding
+is separate from the approved temporary rehearsal.
+[Production cost assumptions](../production-readiness.md)

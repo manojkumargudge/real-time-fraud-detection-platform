@@ -37,7 +37,11 @@ planning ceiling to about US$2.02. Obtain approval for a cumulative US$2.10
 (₹194) Welcome-credit cap before the next start. Keep both retained disks
 outside this incremental estimate. [Run history](evidence/2026-11-27-release-continuation.md)
 
-After approval, run these commands from Linux with gcloud, OS Login and IAP rights:
+For the final-image continuation, the owner approved a cumulative US$2.83
+ceiling at the existing 230-minute automatic STOP limit. Start only after
+the owner separately confirms active Welcome credits, sufficient eligible
+coverage and expiry beyond the run. Retain the existing billing plan.
+Read back the safeguards from Linux with gcloud, OS Login and IAP rights:
 
 ```bash
 P=fraud-detection-platform-2026
@@ -46,16 +50,22 @@ VM=fraud-release-capacity-1126
 ID=938503370005181237
 target=("$VM" --project "$P" --zone "$Z")
 test "$(gcloud compute instances describe "${target[@]}" --format='value(id,status)')" = "$(printf '%s\tTERMINATED' "$ID")"
-gcloud compute instances remove-metadata "${target[@]}" --keys=startup-script
-gcloud compute instances set-scheduling "${target[@]}" \
-  --max-run-duration=4h --instance-termination-action=STOP
 gcloud compute instances describe "${target[@]}" \
   --format='yaml(id,status,scheduling.maxRunDuration,scheduling.instanceTerminationAction,metadata.items.key)'
+gcloud compute project-info describe --project "$P" --format='value(commonInstanceMetadata.items[].key)'
 ```
 
-The platform limit was applied and verified on the stopped instance on November 27. Readback returned ID `938503370005181237`, `TERMINATED`, `14400` seconds and `STOP`. The operator guard additionally requires removal of the legacy startup script. It starts the VM, bounds the operator command to 210 minutes, then stops and verifies `TERMINATED` on completion, failure or signal. A workstation outage leaves the platform deadline in force. Evidence export must finish inside the operator window. If direct stop cannot be confirmed, run `gcloud compute instances stop "${target[@]}"` and independently confirm `TERMINATED`. Both disks remain retained. [Compute Engine runtime limits](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime)
+The readback must return ID `938503370005181237`, `TERMINATED`, `13800`
+seconds and `STOP`, with no applicable instance or project startup script
+or script URL. The operator guard bounds the operator command to 210 minutes,
+then stops and verifies `TERMINATED` on completion, failure or signal.
+A workstation outage leaves the platform deadline in force. Evidence export
+must finish inside the operator window. If direct stop cannot be confirmed,
+run `gcloud compute instances stop "${target[@]}"` and independently confirm
+`TERMINATED`. Both disks remain retained.
+[Compute Engine runtime limits](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime)
 
-## Stage and run the two trials
+## Stage and run the four repeats
 
 Before starting, prepare a tar with the repository-relative paths for the new driver, runtime probe, oracle, telemetry, and capacity manifest. Record its SHA-256. The existing host must retain the scanned loopback registry bytes and the checksum-verified seed and model. Use IAP to stage the small tar. Inspect legacy services and timers before continuing. Start only the existing registry if stopped and verified bound to `127.0.0.1:5500`. A missing manifest aborts the run rather than triggering a rebuild. Keep prior trial evidence and volumes intact. Use a unique session ID.
 
