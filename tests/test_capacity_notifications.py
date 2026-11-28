@@ -46,7 +46,7 @@ def test_verifier_records_before_ack_and_resumes_matching_incident(
         ],
     )
 
-    def message(incident_id: str, state: str) -> dict:
+    def message(incident_id: str, state: str) -> dict[str, object]:
         return {
             "ackId": f"{incident_id}-{state}",
             "message": {
@@ -64,9 +64,9 @@ def test_verifier_records_before_ack_and_resumes_matching_incident(
 
     opening = [message("a", "open"), {"ackId": "malformed", "message": []}]
     closure = [message("other", "closed"), message("a", "closed")]
-    acked = []
+    acked: list[str] = []
 
-    def first_run(command: list[str], **_: object) -> subprocess.CompletedProcess:
+    def first_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         if "pull" in command:
             assert "--auto-ack" not in command
             return subprocess.CompletedProcess(command, 0, json.dumps(opening))
@@ -78,7 +78,7 @@ def test_verifier_records_before_ack_and_resumes_matching_incident(
     with pytest.raises(KeyboardInterrupt):
         runpy.run_path(str(_SCRIPT), run_name="__main__")
 
-    def second_run(command: list[str], **_: object) -> subprocess.CompletedProcess:
+    def second_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         if "pull" in command:
             return subprocess.CompletedProcess(command, 0, json.dumps(closure))
         acked.append(command[-1])

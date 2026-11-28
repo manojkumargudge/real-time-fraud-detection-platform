@@ -17,9 +17,10 @@ requires a fresh comparison with the exact bytes retained for publication.
 
 A disposable serving container refreshed signed Trixie and security indexes.
 The representative packages from all seven affected source groups still
-resolved to their installed versions. No stable upgrade cleared these
-findings. The earlier backport and alternate base checks below document the
-supported alternatives already considered. The scanner recorded every row
+resolved to their installed versions. A signed Trixie backports refresh
+offered no candidate for any of the seven representative packages. The
+earlier alternate base checks below document the other options considered.
+The scanner recorded every row
 below as High. Each remains subject to the release-owner policy.
 
 | CVE | Affected installed package group | Reachability and controls |

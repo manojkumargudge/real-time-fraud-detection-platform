@@ -95,8 +95,10 @@ The only `release-2` timeout occurred during the spread-1 warmup,
 04:38:23.751–04:39:23.751 UTC. The 15,562 measured requests succeeded and
 had a maximum latency of 146.31 ms. Resource samples recorded zero observed
 container restarts. The first guest probe found Kafka startup lag with a
-healthy HTTP endpoint. Subsequent early samples showed healthy HTTP,
-PostgreSQL and Redis and Kafka lag of one. The database dump, Redis rewrite
+healthy HTTP endpoint. Cloud Logging confirmed the Kafka-only flag at
+04:38:24.948 UTC and all-zero component flags at 04:38:57.948 and 04:39:31.149
+UTC. Subsequent early samples showed healthy HTTP, PostgreSQL and Redis and
+Kafka lag of one. The database dump, Redis rewrite
 and Evidently job were scheduled five minutes into the workload, outside
 warmup. Those results leave a short-lived dependency, host or transport
 stall possible. The archive lacks an individual timeout timestamp and
@@ -104,7 +106,9 @@ exception class. It establishes neither reproducibility nor environmental
 causation. Preserve the failed run and the unchanged zero-timeout gate.
 
 Cloud Monitoring readback confirmed an enabled policy with both OPENED and
-CLOSED prompts. The dedicated subscription has a 10-second acknowledgment
+CLOSED prompts. The notification-channel log had zero entries between
+03:40 and 04:00 UTC, which leaves an individual publish outcome unverified.
+The dedicated subscription has a 10-second acknowledgment
 deadline and no acknowledged-message retention. The original collector
 used `--auto-ack`, allowing the CLI to discard messages before filtering,
 durable recording or recovery from a subprocess interruption. The missing
@@ -131,12 +135,15 @@ billing-ledger balances. Existing disk retention is excluded by approval.
 | --- | ---: | ---: |
 | 176 minutes of measured workload and warmup only | US$0.80093 | US$0.26095 |
 | 210-minute operator window including startup, reconciliation and export | US$0.95566 | US$0.41568 |
+| 230-minute currently configured cloud STOP | US$1.04668 | US$0.50669 |
 | 240-minute cloud STOP ceiling | US$1.09218 | US$0.55220 |
 
 Reserve a further US$0.02 for transfer and US$0.20 for telemetry at the
 cloud STOP ceiling. The new-session planning ceiling is US$1.31219
 rounded up, yielding a proposed **US$2.88 cumulative cap** before tax and
 retained disks. That represents a US$0.78 increase to the approved cap.
+Keeping the verified 230-minute setting bounds the same estimate to
+US$1.26668 incremental and **US$2.83 cumulative** after rounding upward.
 Confirm accumulated eligible charges, the approved STOP ceiling, trial status,
 remaining applicable credit and expiry before start. Actual runtime, transfer,
 telemetry and taxes determine the invoice. The estimate excludes production
