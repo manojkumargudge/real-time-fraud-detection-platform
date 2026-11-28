@@ -182,3 +182,34 @@ allowances bring the illustrative total to US$231.0133464 per month.
 Actual usage and account billing determine charges. Production funding
 is separate from the approved temporary rehearsal.
 [Production cost assumptions](../production-readiness.md)
+
+### Attempt `release-1128d`
+
+The guest checked all four uploaded artifacts and pulled all nine staged
+references by digest, including the non-root Caddy manifest. The baseline
+image identity matched the prior evidence. Guest maintenance preflight
+stopped the run before workload startup. The guest was on
+`7.0.0-1018-gcp`, with no reboot-required marker and both APT units inactive.
+The unattended-upgrade timer was due at 07:54:47 UTC, about eight minutes
+after preflight and inside the required 184-minute maintenance-free window.
+No capacity repeat or controlled incident started. The operator verified the
+exported preflight archive, which has SHA-256
+`85cea451eec057fa7e734548ca3ba6d779ed5836a3f9de14b8394575ef0d7d8e`.
+The guard stopped the capacity VM, and independent readback confirmed both
+VMs `TERMINATED` and the capacity VM still configured for `13800` seconds
+and automatic `STOP`.
+
+Instance timestamps bracket 5 minutes 17.508 seconds of runtime. At the
+documented compute and IPv4 rates this adds about US$0.02408 to the prior
+estimate. Keeping the same transfer and telemetry reserves, another full
+230-minute bounded attempt takes the cumulative planning total to
+US$2.85078 before tax and retained disks. Round the requested ceiling up
+to US$2.86. Resolve the maintenance-window precondition and confirm credit
+coverage and the new ceiling before the next start.
+
+The owner subsequently confirmed at least US$1.27 of eligible Welcome
+credit remained and approved US$2.86 cumulatively for one retry, with
+the same February 8, 2027 expiry and 230-minute automatic STOP. The next
+session reuses the checksum-verified guest image bytes and permits only a
+bounded wait for scheduled maintenance to finish. It verifies both APT
+unit results, the next timer windows and the reboot marker before workload.
