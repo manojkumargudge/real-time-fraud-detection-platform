@@ -264,3 +264,35 @@ The corrected collector decoded and recorded the opening published at
 09:17:36.021 UTC and confirmed the same incident, policy and instance as
 the closure. The verified receipt is retained privately with SHA-256
 `fd72e73e7c528980edadd1a45b1db4e489dfd94bf06600a1866ac1553d303d89`.
+
+All four repeats completed on the same guest boot. Each repeat reconciled
+27,000 Kafka scores with partition ends and commits both equal to
+`[8547, 10020, 8433]`, zero dead letters, and the same score/alert digest.
+The oracle found zero score differences across the four repeats. Both
+release repeats had zero pending Feast writes and verified 55,439 Redis
+digest rows each. All 16 measured segments passed the zero-error,
+zero-timeout and zero-duplicate checks.
+
+| Gate | Baseline median | Release median | Result |
+| --- | ---: | ---: | --- |
+| One-client throughput | 24.774 rps | 24.258 rps | 97.92% of baseline, pass |
+| Eight-client spread throughput | 21.126 rps | 32.281 rps | 152.80% of baseline, pass |
+| One-client p95 | 50.490 ms | 51.580 ms | 102.16% of baseline, pass |
+
+Release CPU p95 was 61.55% and 61.05%, peak memory was 13.54% and
+13.53%, and peak disk occupancy was 37% in both repeats. The temporary
+guest service runtime was increased by 173 seconds without restarting its
+process to allow the last Kafka stream and audit to finish. The 210-minute
+operator guard and the 230-minute cloud STOP remained in effect. The
+archive exported and matched the guest checksum
+`6bdbb04221461059a2481369e005686b05c8d9b8604d7c22b21ae80717ffa4d8`.
+The original receipt watcher exited without the opening. The corrected
+collector independently verified both states as documented above.
+
+Compute Engine independently reported both VMs `TERMINATED`. The
+capacity VM stopped at 17:13:23 IST after 207 minutes 37.241 seconds of
+runtime. At the verified rates this was approximately US$0.94483 for
+compute and IPv4. The cumulative estimate including the two preflights,
+prior runtime, and the established transfer and telemetry reserves is
+approximately US$2.57 before tax and existing disk retention. The 13
+High findings still hold production release.

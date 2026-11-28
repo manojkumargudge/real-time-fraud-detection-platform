@@ -1,5 +1,13 @@
 # Compute Engine release checklist
 
+The November 28 final-image rehearsal passed all four sustained repeats,
+reconciled 108,000 Kafka scores, and verified live Pub/Sub opening and
+closure for one incident. Both rehearsal VMs are stopped. The private
+capacity result applies to the archived manifest set. The 13 unresolved
+High findings still hold production release. The deployed rate-limit,
+public TLS, and live deployment checks remain pending.
+[Final rehearsal evidence](evidence/2026-11-28-release-continuation.md)
+
 ## Local deployment staging
 
 Use the [environment template](../deploy/production.env.example) and two
