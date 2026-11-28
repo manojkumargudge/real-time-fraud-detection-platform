@@ -1,5 +1,84 @@
 # Release image security checkpoint
 
+## Frozen capacity manifest disposition
+
+This review applies to the enabled Python images in the checksum-verified
+`release-1128f` capacity archive. The retained serving scan is bound to
+its registry manifest through the configuration and ordered root filesystem
+diff IDs. The other three rows match their archived unfiltered inventory
+references. All four report the same 13 High CVEs and zero Critical findings.
+[Frozen capacity evidence](evidence/2026-11-28-release-continuation.md)
+
+| Role | Frozen Linux/amd64 manifest SHA-256 |
+| --- | --- |
+| API and consumer | `f8de563064c255f0558d39f1d753f6fea9341c586ed7cbe3bca26bdf346a95ce` |
+| Dashboard | `a68b21b995a84f3585dda56d95fa2ae460880bebdbf4370aff8d45edb167b5b5` |
+| Drift | `ff23ef4f56956901706d7ad8257566d74bd532354fa461dc9f99df3088781025` |
+| MLflow | `343315a4257603ccd3fdaa37c81a9aaa7ba9895b6d6539d2d5ee75311634b92a` |
+
+Both frozen release repeats recorded UID 10001, zero effective capabilities
+and no-new-privileges for the API, three consumers, dashboard and MLflow.
+The process census showed Uvicorn, Python consumers, Streamlit and MLflow
+Python processes. Observed service listeners were TCP 8000, 8501 and 5000,
+respectively, with no consumer listener, non-DNS UDP listener or published
+port on those containers. Drift ran as a one-off and was outside this
+process and socket census. These snapshots cover their sampling windows.
+The dependency and entrypoint review also considered production Compose and
+the recovery tools. The inventory stays unfiltered.
+
+A fresh signed stable, security and stable-backports refresh in a disposable
+serving container found the same versions and no candidate backports for
+the seven representative source groups. Removal simulations found
+`coreutils` pre-dependencies on `libacl1`, `libssl3t64` and `libsystemd0`
+and an installed `liblastlog2-2` dependency on `libsqlite3-0`. The other
+simulations only removed individual binaries or packages and did not
+qualify an alternative runtime. Removing the `util-linux` or `ncurses-bin`
+binary package alone would leave affected sibling dependencies. Retain
+the supported base and rebuild only in response to a verified fix or a
+separately qualified replacement runtime.
+
+| CVE | Technical disposition | Evidence and residual exposure |
+| --- | --- | --- |
+| CVE-2026-76642 | Mitigated with residual risk | `mount` is installed. The application process inventory and commands show no privileged mount hook. Capability drop and no-new-privileges constrain container use. Host-side maintenance falls outside this evidence. |
+| CVE-2026-78408 | Mitigated with residual risk | `nsenter` is installed. No configured application subprocess enters namespaces or manages host cgroups. Keep the runtime unprivileged and preserve namespace isolation. |
+| CVE-2026-78409 | Mitigated with residual risk | Compose mounts are configured by the host operator. No detached-tree mount path was observed in the application processes. Host tooling remains separately reviewable. |
+| CVE-2026-78410 | Mitigated with residual risk | The release services drop mount privileges, and the Compose bind mounts are operator-controlled. Privileged staging and filesystem ownership remain outside the container snapshot. |
+| CVE-2026-54369 | Unresolved | The shared `libacl1` package remains present. Least privilege constrains the application processes. Privileged staging and restore operations still need an ACL call-path review. |
+| CVE-2025-69720 | Unresolved | The ncurses inventory includes `infocmp`. No normal service command or sampled process invoked it. A snapshot leaves terminal and operator-driven invocation paths unverified. |
+| CVE-2026-119373 | Mitigated with residual risk | The SQLite build includes FTS5. Both live MLflow schema censuses found 150 objects and zero virtual tables. The exposure changes if a restore or migration introduces an FTS5 database. |
+| CVE-2026-119374 | Mitigated with residual risk | The same schema census found no FTS5 index. Trusted volume and restore inputs remain essential because the affected SQLite feature stays compiled in. |
+| CVE-2026-119379 | Unresolved | SQLite has `ENABLE_SESSION`. No changeset importer was identified in the application, registry API wiring or coordinated restore. Native callers and any newly introduced importer remain outside this check. |
+| CVE-2026-107494 | Mitigated with residual risk | The Python service sockets were TCP-only in both samples. Public TLS belongs to Caddy. No configured Python QUIC client was identified. The drift one-off and unsampled outbound behavior remain outside the socket evidence. |
+| CVE-2026-124709 | Mitigated with residual risk | None of the sampled Python services exposed a QUIC listener. OpenSSL remains installed and the disposition depends on preserving the current protocol and ingress configuration. |
+| CVE-2026-16742 | Not applicable to the audited application service | The affected component is `systemd-homed`. The container inventory has the shared libraries, and the command and image evidence show no homed service. The guest OS is a separate assessment. |
+| CVE-2026-9538 | Not applicable to the enabled application profile | Archive::Tar could not be imported by the enabled image probes. The optional retraining image and operator archive tools are outside this disposition. |
+
+There are zero verified package fixes in the frozen images. These are
+technical findings with scoped evidence. All 13 scanner entries remain in
+the inventory and on release hold pending the release owner's disposition.
+
+### MLflow SQLite exposure
+
+MLflow uses `/app/state/mlflow.db` via SQLAlchemy on a private registry
+network. The API and consumer use PostgreSQL, and the dashboard reads
+PostgreSQL. Backend store state and served artifacts live in separate paths
+under the MLflow volume. The registry host allowlist validates the Host
+header. Network access and operator permissions remain the actual write
+boundary. The retraining profile is disabled for the release.
+
+SQLite's FTS5, session and extension-loading build options are available in
+the runtime. Feature availability and reachability are separate. The
+frozen schema contains no virtual tables, and the existing restore path
+retrieves a coordinated trusted volume instead of accepting an arbitrary
+SQLite file through the registry. Restrict access to the private service,
+verify the checkpoint provenance and checksum before restore, and repeat
+the schema probe after migrations or restores. The recovery probe reads the
+database in read-only mode with `trusted_schema` disabled for its own
+connection and compares schema hashes before and after restore. Moving
+MLflow to PostgreSQL would change runtime and state management and would
+need migration, backup and recovery qualification. It would leave SQLite
+package findings in images that still ship the library.
+
 ## November 28 review of the enabled Python images
 
 The unfiltered Linux/amd64 inventory on `d140326` has identical High and

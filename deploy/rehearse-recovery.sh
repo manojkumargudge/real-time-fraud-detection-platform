@@ -179,6 +179,7 @@ done
 [[ $ready == true ]]
 attest_ingress "$source_project"
 attest_proxy_restart "$source_project"
+(source deploy/check-python-runtime.sh stack "$source_project") > "$evidence/source-python-runtime.jsonl"
 stack "$source_project" stop proxy consumer api dashboard
 # Only the stateless API is brought up for the read-only audit after quiescing writers.
 stack "$source_project" up -d --no-deps --no-build --wait api
@@ -225,6 +226,9 @@ services:
 YAML
 stack "$restore_project" -f "$work/restored-model.yml" up -d --no-build --wait --wait-timeout 200
 attest_ingress "$restore_project"
+(source deploy/check-python-runtime.sh stack "$restore_project") > "$evidence/restored-python-runtime.jsonl"
+cmp <(jq -Rr 'fromjson? | select(.role == "mlflow") | .schema_sha256' "$evidence/source-python-runtime.jsonl") \
+    <(jq -Rr 'fromjson? | select(.role == "mlflow") | .schema_sha256' "$evidence/restored-python-runtime.jsonl")
 capture "$restore_project" restored
 matches_checkpoint restored
 printf 'restore_rto_seconds=%s\nquiesced_fixture_rpo_committed_transactions=0\n' "$(( $(date +%s) - restore_start ))" >> "$evidence/timings.txt"

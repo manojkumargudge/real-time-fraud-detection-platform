@@ -6,6 +6,7 @@ on:
       - .github/workflows/release-recovery.yml
       - deploy/rehearse-recovery.sh
       - deploy/recovery-evidence.py
+      - deploy/check-python-runtime.sh
   workflow_dispatch:
 permissions:
   contents: read
