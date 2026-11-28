@@ -174,6 +174,15 @@ The earlier hosted registry references document different image bytes.
 Production publication is still gated on exact retained digests and the
 13 unresolved High findings.
 
+The retained serving registry manifest and configuration hashes were
+checked locally. Its ordered root filesystem diff IDs match the unfiltered
+serving scan with 13 High findings. The staged dashboard, drift and MLflow
+digests match their archived 13-High scans. The retained Kafka, PostgreSQL
+and Redis digests each have zero High and Critical findings in their
+archived scans. Synthetic Compose renders for both the staged and prior
+fixture manifests produced nine digest-pinned services with the proxy as
+the sole published ingress. These checks preserve the current release hold.
+
 The production planning basis remains an Iowa e2-standard-8 at 730 hours
 per month, 100 GiB of balanced disk and one in-use IPv4 address. The core
 subtotal is US$209.3233464 before tax or credits. The existing modeled
@@ -213,3 +222,28 @@ the same February 8, 2027 expiry and 230-minute automatic STOP. The next
 session reuses the checksum-verified guest image bytes and permits only a
 bounded wait for scheduled maintenance to finish. It verifies both APT
 unit results, the next timer windows and the reboot marker before workload.
+
+### Attempt `release-1128e`
+
+The cached digests passed guest preflight again. At 07:56:39 UTC, the
+unattended-upgrade timer fired and temporarily reported no next event while
+its oneshot service was starting. The preflight exited rather than treating
+that transition as stable. A subsequent readback showed the upgrade service
+inactive with result `success`. No sustained repeat or controlled incident
+started. The archive contains the guest preflight log and was verified at
+SHA-256 `1fab5f59e8b12a3aef1fdc65ad4688821f6565d369e04fb3835b56b952678ec0`.
+
+The revised maintenance checker waits through systemd's activating state
+and transient timer rescheduling. It requires both maintenance units to be
+inactive with successful results, a full clean timer window, and no pending
+reboot. The mock regression exercised the exact activation and missing timer
+transition. Security timers remained enabled. Both VMs returned to
+`TERMINATED` with the capacity VM still configured for automatic STOP after
+13,800 seconds.
+
+This attempt ran for 8 minutes 15.811 seconds, adding approximately
+US$0.03761 at the compute and IPv4 planning rates. The cumulative planning
+total with another 230-minute bounded attempt and the existing reserves
+is approximately US$2.88839. A US$2.90 ceiling adds a small Operations
+API timing reserve. A further start requires fresh owner authorization and
+eligible credit confirmation.

@@ -9,12 +9,58 @@ import unittest
 from pathlib import Path
 
 GUARD = Path(__file__).resolve().parents[1] / "deploy" / "with-capacity-vm.sh"
+MAINTENANCE = GUARD.with_name("check-capacity-maintenance.sh")
 
 
 @unittest.skipUnless(
     sys.platform.startswith("linux") and shutil.which("flock"), "Linux VM guard utilities"
 )
 class TestCapacityGuard(unittest.TestCase):
+    def test_waits_through_oneshot_activation_and_timer_reschedule(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            systemctl = directory / "systemctl"
+            systemctl.write_text(
+                """#!/bin/bash
+case "$3" in
+  *NextElapseUSecRealtime*)
+    if [[ ! -e $MARKER && $2 == apt-daily-upgrade.timer ]]; then
+      echo n/a
+    else
+      date -u -d 'tomorrow' '+%Y-%m-%d %H:%M:%S UTC'
+    fi ;;
+  *ActiveState*)
+    if [[ ! -e $MARKER && $2 == apt-daily-upgrade.service ]]; then
+      echo activating
+    else
+      echo inactive
+    fi ;;
+  *Result*) echo success;;
+esac
+"""
+            )
+            sleep = directory / "sleep"
+            sleep.write_text('#!/bin/bash\ntouch "$MARKER"\n')
+            dpkg = directory / "dpkg-query"
+            dpkg.write_text("#!/bin/bash\nexit 0\n")
+            for executable in (systemctl, sleep, dpkg):
+                executable.chmod(0o700)
+            marker = directory / "finished"
+            env = {
+                **os.environ,
+                "MARKER": str(marker),
+                "PATH": f"{root}:{os.environ['PATH']}",
+            }
+            result = subprocess.run(
+                ["bash", str(MAINTENANCE), "5"],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(marker.exists())
+
     def test_stops_after_completion_failure_timeout_and_interruption(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
