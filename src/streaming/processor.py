@@ -43,7 +43,7 @@ def process_message(value: bytes | None, scorer: Scorer) -> ProcessOutcome:
     try:
         event = decode(value)
     except (ValueError, ValidationError) as exc:
-        error = str(exc).splitlines()[0][:300]
+        error = type(exc).__name__
         logger.warning("skipping invalid message error=%s", error)
         return ProcessOutcome(status="invalid", error=error, cause=exc)
     result = scorer.score_event(event)

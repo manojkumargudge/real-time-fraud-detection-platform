@@ -15,6 +15,7 @@ env/
 !.env.example
 *.pem
 *.key
+/backups/
 
 # Datasets and generated ML artifacts
 data/raw/
@@ -46,6 +47,16 @@ Thumbs.db
 *.log
 tmp/
 temp/
+
+# Local demo capture and video production outputs
+/recordings/
+/demo-recordings/
+/recording-tmp/
+*.mp4
+*.mkv
+*.mov
+*.webm
+*.obs
 
 # Local databases
 *.db

@@ -1,0 +1,5 @@
+ARG KAFKA_BASE=apache/kafka:4.3.2@sha256:8f325fc00143fed78eabe00b033a86747078bb06edc21345d06651f77ae44f30
+FROM ${KAFKA_BASE}
+USER root
+RUN apk upgrade --no-cache
+USER appuser

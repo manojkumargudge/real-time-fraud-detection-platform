@@ -62,22 +62,67 @@ class Settings:
 
     def build_scorer(self) -> Scorer:
         """Checked here, not at construction: the producer reads Settings but never scores."""
-        from src.serving.scorer import Scorer
-
         if self.feature_source == "feast" and not self.feast_redis:
             raise ValueError(
                 "FEATURE_SOURCE=feast (the default) needs FEAST_REDIS=host:port; "
                 "set FEATURE_SOURCE=store to use the event-history path"
             )
         bundle = self.load_bundle()
+        durable = self.build_store()
+        try:
+            return self._open_scorer(bundle, durable)
+        except BaseException:
+            durable.close()
+            raise
+
+    def _open_scorer(self, bundle: ModelBundle, durable: TransactionStore) -> Scorer:
+        from src.serving.scorer import Scorer
+
         feast = None
+        checkpoint = durable.feast_checkpoint() if isinstance(durable, PostgresStore) else None
+        generation = None if checkpoint is None else checkpoint[0]
+        required = os.getenv("FEAST_REQUIRE_CHECKPOINT") == "1"
+        if (required or checkpoint is not None) and (
+            checkpoint is None or self.feature_source != "feast" or not self.feast_redis
+        ):
+            raise ValueError("Scoring requires a promoted PostgreSQL/Redis Feast checkpoint")
         if self.feast_redis:  # imported only when enabled
             from src.features.feast_store import FeastFeatures, open_store
 
-            store = open_store(
-                self.feast_repo_dir, redis=self.feast_redis, config=bundle.history_config
-            )
+            if checkpoint is None:
+                store = open_store(
+                    self.feast_repo_dir, redis=self.feast_redis, config=bundle.history_config
+                )
+            else:
+                from src.features.feast_checkpoint import load_seed
+
+                load_seed(
+                    Path(os.environ["FEAST_SEED_ARTIFACT"]),
+                    checkpoint[1],
+                    bundle,
+                    int(os.environ["FEAST_SEED_CUTOFF"]),
+                )
+                store = open_store(
+                    self.feast_repo_dir / checkpoint[0],
+                    redis=self.feast_redis,
+                    config=bundle.history_config,
+                    project=checkpoint[0],
+                )
             feast = FeastFeatures(store, bundle.history_config)
-        return Scorer(
-            bundle, self.build_store(), feast=feast, read_from_feast=self.feature_source == "feast"
+        production = os.getenv("FRAUD_PRODUCTION") == "1"
+        scorer = Scorer(
+            bundle,
+            durable,
+            feast=feast,
+            read_from_feast=self.feature_source == "feast",
+            reject_late=production,
+            feast_generation=generation,
         )
+        if production or generation is not None:
+            scorer.recover_pending_feast()
+        if generation is not None:
+            from src.features.feast_checkpoint import verify_generation
+
+            assert feast is not None and isinstance(durable, PostgresStore) and self.feast_redis
+            verify_generation(durable, feast, generation, self.feast_redis)
+        return scorer

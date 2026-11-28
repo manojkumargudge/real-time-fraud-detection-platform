@@ -13,8 +13,8 @@ docs/serving.md ("Reliability").
 
 Commit errors: a rebalance rejection is accepted at once (the group moved on). Retriable
 coordinator errors (``NOT_COORDINATOR`` after a broker restart, ...) are retried a few times;
-if the commit still fails the message is left for redelivery and the consumer keeps running.
-Anything else raises.
+production consumers leave the group if the commit remains unconfirmed. Production also
+rejects gaps in the append-only transaction topic before scoring or advancing an offset.
 """
 
 from __future__ import annotations
@@ -77,13 +77,16 @@ def is_retriable_commit_error(err: KafkaError) -> bool:
     return err.code() in RETRIABLE_COMMIT_ERRORS or bool(err.retriable())
 
 
-def build_consumer(settings: Settings) -> Consumer:
+def build_consumer(settings: Settings, *, require_contiguous: bool = False) -> Consumer:
     return Consumer(
         {
             "bootstrap.servers": settings.kafka_bootstrap_servers,
             "group.id": settings.kafka_group_id,
             "enable.auto.commit": False,
-            "auto.offset.reset": "earliest",
+            "enable.auto.offset.store": False,
+            # Production assignment resolves the starting position explicitly.
+            # Retention can move the low watermark after assignment.
+            "auto.offset.reset": "error" if require_contiguous else "earliest",
         }
     )
 
@@ -126,6 +129,10 @@ class _MessageAbandonedError(Exception):
     """Stop requested or the in-flight partition was revoked: leave the message uncommitted."""
 
 
+class OffsetGapError(RuntimeError):
+    """The append-only transaction topic delivered an unexpected offset."""
+
+
 class _Worker:
     """Processes one message at a time with retries; never commits."""
 
@@ -138,18 +145,53 @@ class _Worker:
         stop: threading.Event | None,
         counts: Counter[str],
         heartbeat: Heartbeat | None = None,
+        *,
+        require_contiguous: bool = False,
     ) -> None:
         self.consumer, self.scorer, self.dead_letters = consumer, scorer, dead_letters
         self.policy, self.stop, self.counts = policy, stop, counts
         self.heartbeat = heartbeat or Heartbeat()
         self.revoked: set[tuple[str, int]] = set()  # revoked while the current message ran
+        self.require_contiguous = require_contiguous
+        self.next_offset: dict[tuple[str, int], int] = {}
 
-    def on_assign(self, _consumer: Any, partitions: list[TopicPartition]) -> None:
+    def on_assign(self, consumer: Consumer, partitions: list[TopicPartition]) -> None:
+        if self.require_contiguous:
+            positions = consumer.committed(partitions, timeout=10)
+            for tp in positions:
+                if tp.error is not None:
+                    raise KafkaException(tp.error)
+                low, high = consumer.get_watermark_offsets(tp, timeout=10)
+                if tp.offset < 0:
+                    tp.offset = low
+                if not low <= tp.offset <= high:
+                    raise OffsetGapError(
+                        f"committed offset={tp.offset} outside broker range [{low}, {high}] "
+                        f"for {tp.topic}[{tp.partition}]"
+                    )
+            # Start fetching from the same snapshot used by the gap check. Implicit
+            # assignment would independently resolve the starting position again.
+            consumer.assign(positions)
+            for tp in positions:
+                self.next_offset[tp.topic, tp.partition] = tp.offset
         logger.info("partitions assigned: %s", _partitions(partitions))
 
     def on_revoke(self, _consumer: Any, partitions: list[TopicPartition]) -> None:
-        self.revoked.update((p.topic, p.partition) for p in partitions)
+        for tp in partitions:
+            key = tp.topic, tp.partition
+            self.revoked.add(key)
+            self.next_offset.pop(key, None)
         logger.info("partitions revoked: %s", _partitions(partitions))
+
+    def check_offset(self, msg: Any) -> None:
+        if self.require_contiguous:
+            expected = self.next_offset.get((msg.topic(), msg.partition()))
+            if expected != msg.offset():
+                raise OffsetGapError(f"expected offset={expected}; received {_where(msg)}")
+
+    def advance_offset(self, msg: Any) -> None:
+        if self.require_contiguous:
+            self.next_offset[msg.topic(), msg.partition()] = msg.offset() + 1
 
     def handle(self, msg: Any) -> ProcessOutcome:
         self.revoked.clear()
@@ -176,7 +218,7 @@ class _Worker:
             if outcome.status == "invalid":
                 self._dead_letter(msg, "invalid", attempt, outcome.cause)
             elif outcome.status == "duplicate":
-                logger.info("duplicate id=%s skipped %s", outcome.transaction_id, _where(msg))
+                logger.info("duplicate skipped %s", _where(msg))
             return outcome
 
     def _dead_letter(
@@ -187,9 +229,9 @@ class _Worker:
         while True:
             try:
                 self.dead_letters.send(letter)
-            except DeadLetterError as err:  # DLQ unavailable: retry, never commit before it
+            except DeadLetterError:  # DLQ unavailable: retry, never commit before it
                 failures += 1
-                logger.error("DLQ write failed attempt=%d: %s %s", failures, err, _where(msg))
+                logger.error("DLQ write failed attempt=%d %s", failures, _where(msg))
                 self._backoff(self.policy.delay(failures), msg)
                 continue
             self.counts["dead_lettered"] += 1
@@ -219,9 +261,29 @@ class _Worker:
                 if remaining <= 0:
                     return
                 polled = self.consumer.poll(min(remaining, 1.0))
-                if polled is not None and not polled.error():
-                    # Paused partitions should not deliver; rewind anything that slipped through.
-                    _rewind(self.consumer, polled)
+                if (
+                    self.require_contiguous
+                    and polled is not None
+                    and (error := polled.error()) is not None
+                    and error.code() == KafkaError._AUTO_OFFSET_RESET
+                ):
+                    raise KafkaException(error)
+                if (
+                    polled is not None
+                    and not polled.error()
+                    and (polled.topic(), polled.partition()) not in self.revoked
+                ):
+                    # A buffered record can slip through a pause. If we cannot rewind it,
+                    # leave the group so it is fetched again from the committed offset.
+                    try:
+                        self.consumer.seek(
+                            TopicPartition(polled.topic(), polled.partition(), polled.offset())
+                        )
+                    except KafkaException:
+                        logger.error("could not rewind; leaving the group %s", _where(polled))
+                        raise
+                if tp in self.revoked:
+                    raise _MessageAbandonedError("partition revoked")
         finally:
             self.consumer.resume(self.consumer.assignment())
 
@@ -256,7 +318,10 @@ class _Committer:
                 self.counts["commit_retries"] += 1
                 self.sleep(self.delays[attempt - 2])
             try:
-                self.consumer.commit(message=msg, asynchronous=False)  # after DB write or DLQ ack
+                committed = self.consumer.commit(message=msg, asynchronous=False)
+                for tp in committed or ():
+                    if tp.error is not None:
+                        raise KafkaException(tp.error)
             except KafkaException as exc:
                 err: KafkaError = exc.args[0]
                 if err.code() in REBALANCE_COMMIT_ERRORS:
@@ -310,13 +375,6 @@ class _Committer:
         self.counts.pop("consecutive_commit_failures", None)
 
 
-def _rewind(consumer: Consumer, msg: Any) -> None:
-    try:
-        consumer.seek(TopicPartition(msg.topic(), msg.partition(), msg.offset()))
-    except KafkaException as exc:  # partition no longer assigned: its owner re-reads it
-        logger.warning("could not rewind %s: %s", _where(msg), exc)
-
-
 def _where(msg: Any) -> str:
     return f"topic={msg.topic()} partition={msg.partition()} offset={msg.offset()}"
 
@@ -342,6 +400,7 @@ def run(
     commit_delays: tuple[float, ...] = COMMIT_RETRY_DELAYS,
     stage_timings: bool = False,
     heartbeat: Heartbeat | None = None,
+    require_contiguous: bool = False,
 ) -> Counter[str]:
     """Consume until ``max_messages`` processed, no message for ``idle_timeout`` seconds, or
     ``stop`` is set (checked between messages and during retry waits; an interrupted message
@@ -355,12 +414,26 @@ def run(
     """
     counts: Counter[str] = Counter()
     beat = heartbeat or Heartbeat()
-    worker = _Worker(consumer, scorer, dead_letters, policy or RetryPolicy(), stop, counts, beat)
+    worker = _Worker(
+        consumer,
+        scorer,
+        dead_letters,
+        policy or RetryPolicy(),
+        stop,
+        counts,
+        beat,
+        require_contiguous=require_contiguous,
+    )
     committer = _Committer(consumer, counts, delays=commit_delays)
     processed = 0  # counts also holds "alerts"/"retries", so it cannot be summed for this
-    consumer.subscribe([topic], on_assign=worker.on_assign, on_revoke=worker.on_revoke)
     last_message = time.monotonic()
     try:
+        consumer.subscribe(
+            [topic],
+            on_assign=worker.on_assign,
+            on_revoke=worker.on_revoke,
+            on_lost=worker.on_revoke,
+        )
         while max_messages is None or processed < max_messages:
             beat.beat()
             if stop is not None and stop.is_set():
@@ -382,6 +455,13 @@ def run(
                     continue
                 raise KafkaException(msg.error())
             last_message = time.monotonic()
+            if not any(
+                (tp.topic, tp.partition) == (msg.topic(), msg.partition())
+                for tp in consumer.assignment()
+            ):
+                counts["interrupted"] += 1
+                continue
+            worker.check_offset(msg)
             stages = timing.collect() if stage_timings else None
             try:
                 with timing.stage("process"):
@@ -393,13 +473,19 @@ def run(
             finally:
                 timing.clear()
             committed_at = time.perf_counter()
-            committer.commit(msg)
+            if (msg.topic(), msg.partition()) in worker.revoked:
+                counts["interrupted"] += 1
+                continue
+            if committer.commit(msg):
+                worker.advance_offset(msg)
+            elif require_contiguous:
+                # Rejoin from the last confirmed broker position after an ambiguous commit.
+                break
             if stages is not None:
                 stages["poll"] = poll_ms
                 stages["commit"] = (time.perf_counter() - committed_at) * 1000
                 logger.info(
-                    "stages id=%s status=%s %s",
-                    outcome.transaction_id,
+                    "stages status=%s %s",
                     outcome.status,
                     json.dumps({k: round(v, 3) for k, v in stages.items()}),
                 )
@@ -421,6 +507,7 @@ def main(argv: list[str] | None = None) -> Counter[str]:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = Settings.from_env()
     scorer = settings.build_scorer()
+    require_contiguous = os.environ.get("FRAUD_PRODUCTION") == "1"
 
     # `docker stop` sends SIGTERM; without a handler Python exits at once, skipping
     # consumer.close() (so the group waits for a session timeout before rebalancing).
@@ -434,7 +521,7 @@ def main(argv: list[str] | None = None) -> Counter[str]:
     signal.signal(signal.SIGINT, request_stop)
     try:
         return run(
-            build_consumer(settings),
+            build_consumer(settings, require_contiguous=require_contiguous),
             scorer,
             settings.kafka_topic,
             dead_letters=build_dead_letter_sink(settings),
@@ -442,6 +529,7 @@ def main(argv: list[str] | None = None) -> Counter[str]:
             idle_timeout=args.idle_timeout,
             stop=stop,
             stage_timings=os.environ.get("STAGE_TIMINGS") == "1",
+            require_contiguous=require_contiguous,
             heartbeat=Heartbeat(Path(hb))
             if (hb := os.environ.get("CONSUMER_HEARTBEAT_FILE"))
             else None,

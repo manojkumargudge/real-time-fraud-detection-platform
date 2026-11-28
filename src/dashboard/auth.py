@@ -25,7 +25,7 @@ import bcrypt
 ENV_VAR = "DASHBOARD_USERS"
 NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 MIN_PASSWORD_LENGTH = 10
-_HASH = re.compile(r"^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$")
+_HASH = re.compile(r"^\$2[aby]\$(?:0[4-9]|1[0-6])\$[./A-Za-z0-9]{53}$")
 
 
 class UsersConfigError(ValueError):
@@ -60,6 +60,8 @@ def verify(users: dict[str, str], name: str, password: str) -> bool:
     check, so the response time does not reveal which names exist."""
     stored = users.get(name.strip())
     candidate = password.encode("utf-8")
+    if len(candidate) > 72:
+        return False
     if stored is None:
         bcrypt.checkpw(candidate, _DUMMY_HASH)
         return False
@@ -69,6 +71,8 @@ def verify(users: dict[str, str], name: str, password: str) -> bool:
 def hash_password(password: str, rounds: int = 12) -> str:
     if len(password) < MIN_PASSWORD_LENGTH:
         raise ValueError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
+    if len(password.encode("utf-8")) > 72:
+        raise ValueError("password must be at most 72 UTF-8 bytes")
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=rounds)).decode("ascii")
 
 
@@ -79,7 +83,7 @@ def entry(name: str, password: str, rounds: int = 12) -> str:
     return f"{name}:{hash_password(password, rounds)}"
 
 
-_DUMMY_HASH = bcrypt.hashpw(b"not-a-user-password", bcrypt.gensalt(rounds=4))
+_DUMMY_HASH = bcrypt.hashpw(b"not-a-user-password", bcrypt.gensalt(rounds=12))
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -106,6 +107,21 @@ class TestPostgresStore:
     def test_alert_only_for_alerting_scores(self, pg_store: PostgresStore) -> None:
         pg_store.save(record(1, 100, alert=False))
         pg_store.save(record(2, 101, alert=True))
+        assert pg_store.counts() == {"scored_transactions": 2, "alerts": 1}
+
+    def test_journal_failure_rolls_back_score_and_alert(self, pg_store: PostgresStore) -> None:
+        first = record(1, 100)
+        assert pg_store.save(first, feast_online={})
+        second = record(2, 101, alert=True)
+
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            pg_store.save(second, feast_online={})
+
+        assert pg_store.get(2) is None
+        assert pg_store.counts() == {"scored_transactions": 1, "alerts": 0}
+        assert pg_store.pending_feast("c1") is not None
+        pg_store.finish_feast("c1", 1)
+        assert pg_store.save(second, feast_online={})
         assert pg_store.counts() == {"scored_transactions": 2, "alerts": 1}
 
     def test_card_history_is_strictly_earlier_and_per_card(self, pg_store: PostgresStore) -> None:
@@ -521,13 +537,14 @@ def test_database_outage_is_retried_without_dlq_or_skipped_events(
     produce(kafka_env.topic, [encode(e)[1] for e in evs], [b"k"] * 3)
     store = OutageStore(pg_store, failures=8)  # longer than the 3-retry limit
     counts = consumer_mod.run(
-        kafka_env.consumer(),
+        consumer_mod.build_consumer(kafka_env.settings, require_contiguous=True),
         Scorer(ModelBundle.load(bundle_dir), store),
         kafka_env.topic,
         dead_letters=kafka_env.sink(),
         policy=QUICK,
         max_messages=3,
         idle_timeout=20,
+        require_contiguous=True,
     )
     assert counts["scored"] == 3 and counts["retries"] == 8 and counts["dead_lettered"] == 0
     assert pg_store.counts()["scored_transactions"] == 3
@@ -608,6 +625,339 @@ def test_feast_redis_replay_matches_the_store_path(bundle_dir: Path, tmp_path: P
             assert b.score == pytest.approx(a.score, abs=1e-6)
     finally:
         store.teardown()  # deletes this project's keys from Redis
+
+
+@needs_db
+@needs_redis
+def test_concurrent_feast_scoring_preserves_same_timestamp_updates(
+    bundle_dir: Path, tmp_path: Path, pg_dsn: str
+) -> None:
+    from src.features import feast_store as fs
+    from src.serving.scorer import LateEventError
+
+    assert REDIS
+    bundle = ModelBundle.load(bundle_dir)
+    project = f"test_{uuid.uuid4().hex[:8]}"
+    redis_store = fs.open_store(
+        tmp_path, redis=REDIS, config=bundle.history_config, project=project
+    )
+    stores = [PostgresStore(pg_dsn, pool_size=1) for _ in range(4)]
+    scorers = [
+        Scorer(
+            bundle,
+            store,
+            feast=fs.FeastFeatures(redis_store, bundle.history_config),
+            read_from_feast=True,
+            reject_late=True,
+        )
+        for store in stores
+    ]
+    batch = (1, 2, 3, 1)
+
+    def score(index: int) -> ScoreResponse:
+        txn = TransactionEvent.model_validate(event(TransactionID=batch[index], TransactionDT=100))
+        return scorers[index].score_event(txn)
+
+    try:
+        with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+            results = list(pool.map(score, range(len(batch))))
+        assert sum(result.duplicate for result in results) == 1
+        assert all(result.history_rows == 0 for result in results)
+        later = TransactionEvent.model_validate(event(TransactionID=4, TransactionDT=101))
+        assert scorers[0].score_event(later).history_rows == 3
+        late = TransactionEvent.model_validate(event(TransactionID=5, TransactionDT=100))
+        with pytest.raises(LateEventError):
+            scorers[1].score_event(late)
+        assert stores[0].get(5) is None
+    finally:
+        for store in stores:
+            store.close()
+        redis_store.teardown()
+
+
+@needs_db
+@needs_redis
+@pytest.mark.parametrize("serialize_online_rows", [False, True])
+@pytest.mark.parametrize("failure_stage", ["redis", "journal"])
+def test_feast_update_retries_a_committed_score(
+    bundle_dir: Path,
+    tmp_path: Path,
+    pg_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+    serialize_online_rows: bool,
+    failure_stage: str,
+) -> None:
+    from src.features import feast_store as fs
+    from src.serving.scorer import PendingFeastUpdateError
+
+    assert REDIS
+    bundle = ModelBundle.load(bundle_dir)
+    project = f"test_{uuid.uuid4().hex[:8]}"
+    redis_store = fs.open_store(
+        tmp_path, redis=REDIS, config=bundle.history_config, project=project
+    )
+    feast = fs.FeastFeatures(
+        redis_store, bundle.history_config, serialize_online_rows=serialize_online_rows
+    )
+    provider = redis_store._get_provider()
+    write = provider.online_write_batch
+    interrupted = False
+    pg = PostgresStore(pg_dsn, pool_size=1)
+    retry = PostgresStore(pg_dsn, pool_size=1)
+
+    def fail_second_write(config: Any, view: Any, data: Any, progress: Any) -> None:
+        nonlocal interrupted
+        if view.name == fs.CARD_VIEW and not interrupted:
+            interrupted = True
+            raise ConnectionError("injected Redis write failure after UID update")
+        write(config, view, data, progress)
+
+    def fail_journal_cleanup(card_id: str, transaction_id: int) -> None:
+        raise psycopg.errors.InsufficientPrivilege("injected journal delete failure")
+
+    if failure_stage == "redis":
+        monkeypatch.setattr(provider, "online_write_batch", fail_second_write)
+    else:
+        monkeypatch.setattr(pg, "finish_feast", fail_journal_cleanup)
+    first = TransactionEvent.model_validate(event(TransactionID=1, TransactionDT=100))
+    try:
+        with pytest.raises(PendingFeastUpdateError):
+            Scorer(bundle, pg, feast, read_from_feast=True).score_event(first)
+        saved = pg.get(1)
+        assert saved is not None and saved.card_id is not None
+        assert pg.pending_feast(saved.card_id) is not None
+        with pytest.raises(ValueError, match="Resolve pending feature journal"):
+            fs.durable_feature_events(pg_dsn, before=100)
+        restarted = Scorer(bundle, retry, feast, read_from_feast=True)
+        if failure_stage == "journal":
+            restarted.recover_pending_feast()
+            assert retry.pending_feast(saved.card_id) is None
+        assert restarted.score_event(first).duplicate is True
+        assert retry.pending_feast(saved.card_id) is None
+        later = TransactionEvent.model_validate(event(TransactionID=2, TransactionDT=101))
+        result = restarted.score_event(later)
+        assert result.history_rows == 1
+        assert result.history_features["card_addr1_changed"] == 0
+        assert retry.counts()["scored_transactions"] == 2
+    finally:
+        retry.close()
+        pg.close()
+        redis_store.teardown()
+
+
+@needs_db
+@needs_redis
+def test_missing_feast_history_blocks_scoring_until_restored(
+    bundle_dir: Path, tmp_path: Path, pg_store: PostgresStore, pg_dsn: str
+) -> None:
+    from redis import Redis
+
+    from src.features import feast_store as fs
+    from src.serving.scorer import FeastHistoryUnavailableError
+
+    assert REDIS
+    bundle = ModelBundle.load(bundle_dir)
+    project = f"test_{uuid.uuid4().hex[:12]}"
+    store = fs.open_store(tmp_path, redis=REDIS, config=bundle.history_config, project=project)
+    feast = fs.FeastFeatures(store, bundle.history_config)
+    scorer = Scorer(bundle, pg_store, feast, read_from_feast=True)
+    first = TransactionEvent.model_validate(event(TransactionID=1, TransactionDT=100))
+    second = TransactionEvent.model_validate(event(TransactionID=2, TransactionDT=101))
+    try:
+        scorer.score_event(first)
+        saved = pg_store.get(1)
+        assert saved is not None and saved.card_id is not None and saved.uid is not None
+        with Redis.from_url(f"redis://{REDIS}") as client:
+            keys = list(client.scan_iter(match=f"*{project}".encode()))
+            assert len(keys) == 2
+            client.delete(*keys)
+
+        with pytest.raises(FeastHistoryUnavailableError):
+            scorer.score_event(second)
+        assert pg_store.get(2) is None
+        assert pg_store.pending_feast_cards() == []
+
+        with pytest.raises(ValueError, match="seed cutoff overlaps"):
+            fs.durable_feature_events(pg_dsn, before=101)
+        recovered = fs.durable_feature_events(pg_dsn, before=100)
+        assert len(recovered) == 1
+        assert fs.materialize_initial_state(store, tmp_path, recovered, bundle.history_config) == (
+            1,
+            1,
+        )
+        assert scorer.score_event(second).history_rows == 1
+    finally:
+        store.teardown()
+
+
+@needs_redis
+@pytest.mark.parametrize("ttl", [None, 60])
+def test_direct_feast_serialization_matches_redis_bytes(tmp_path: Path, ttl: int | None) -> None:
+    from redis import Redis
+
+    from src.features import feast_store as fs
+    from src.features.history import HistoryConfig
+
+    assert REDIS
+    client = Redis.from_url(f"redis://{REDIS}")
+    config = HistoryConfig()
+    stores = []
+    try:
+        for direct in (False, True):
+            project = f"test_{uuid.uuid4().hex[:12]}"
+            store = fs.open_store(tmp_path / project, redis=REDIS, config=config, project=project)
+            store.config.online_store.key_ttl_seconds = ttl
+            stores.append(
+                (project.encode(), fs.FeastFeatures(store, config, serialize_online_rows=direct))
+            )
+
+        def snapshot(project: bytes) -> dict[bytes, Any]:
+            keys = list(client.scan_iter(match=b"*" + project))
+            assert keys
+            for key in keys:
+                remaining = client.pttl(key)
+                assert isinstance(remaining, int)
+                if ttl is None:
+                    assert remaining == -1
+                else:
+                    assert 0 < remaining <= ttl * 1000
+            # The namespace suffix is the sole expected difference in the raw Redis keys.
+            return {key[: -len(project)]: client.hgetall(key) for key in keys}
+
+        for tid, dt, uid, address in (
+            (1, 100, "uid-null", None),
+            (2, 100, "uid-null", None),
+            (3, 101, "uid-address", 315),
+            (4, 102, "uid-null", None),
+        ):
+            transaction = event(TransactionID=tid, TransactionDT=dt, addr1=address)
+            for namespace, feast in stores:
+                _, before = feast.read(transaction, "card", uid)
+                feast.push(transaction, "card", uid, before)
+                after = snapshot(namespace)
+                feast.push(transaction, "card", uid, before)
+                assert snapshot(namespace) == after
+                _, online = feast.read(transaction, "card", uid)
+                assert online["card_last_ts"] == dt
+                assert online["uid_last_ts"] == dt
+            assert snapshot(stores[0][0]) == snapshot(stores[1][0])
+        assert len(snapshot(stores[0][0])) == 3
+    finally:
+        for _, feast in stores:
+            feast.store.teardown()
+        client.close()
+
+
+@needs_db
+@needs_redis
+def test_checkpoint_fences_redis_rollback_and_promotes_verified_rebuild(
+    bundle_dir: Path,
+    tmp_path: Path,
+    pg_dsn: str,
+    pg_store: PostgresStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    import json
+
+    from redis import Redis
+
+    from src.features import feast_checkpoint as checkpoint
+    from src.features import feast_store as fs
+    from src.serving.config import Settings
+    from src.serving.online_features import entity_keys, online_model_row
+    from src.serving.scorer import FeastHistoryUnavailableError
+
+    assert REDIS
+    bundle = ModelBundle.load(bundle_dir)
+    seed_event, first, second = [
+        TransactionEvent.model_validate(event(TransactionID=i, TransactionDT=99 + i))
+        for i in (1, 2, 3)
+    ]
+    card, uid = entity_keys(seed_event.to_record())
+    seed = tmp_path / "seed.json"
+    contents = json.dumps(
+        {
+            "metadata": checkpoint.seed_metadata(bundle, 101),
+            "events": [[seed_event.to_record(), card, uid]],
+        }
+    ).encode()
+    digest = hashlib.sha256(contents).hexdigest()
+    repo = tmp_path / "feast"
+    settings = Settings(bundle_dir, pg_dsn, "", "", "", feast_redis=REDIS, feast_repo_dir=repo)
+    monkeypatch.setenv("FEAST_REQUIRE_CHECKPOINT", "1")
+    monkeypatch.setenv("FEAST_SEED_ARTIFACT", str(seed))
+    monkeypatch.setenv("FEAST_SEED_CUTOFF", "101")
+
+    def promote() -> str:
+        return checkpoint.promote(pg_store, pg_dsn, REDIS, repo, bundle, 101, seed, digest)
+
+    with pytest.raises(ValueError, match="promoted"):
+        settings.build_scorer()
+    with pytest.raises(FileNotFoundError):
+        promote()
+    seed.write_bytes(contents + b"corrupt")
+    with pytest.raises(ValueError, match="checksum"):
+        promote()
+    seed.write_bytes(contents)
+    generation = promote()
+    seed.unlink()
+    with pytest.raises(FileNotFoundError):
+        settings.build_scorer()
+    seed.write_bytes(contents)
+    with Redis.from_url(f"redis://{REDIS}") as client:
+        keys = list(client.scan_iter(match=f"*{generation}"))
+        assert len(keys) == 2
+        unexpected = f"unexpected-{generation}"
+        client.set(unexpected, "stale")
+        with pytest.raises(ConnectionError, match="unexpected feature keys"):
+            settings.build_scorer()
+        client.delete(unexpected)
+        seed_cache = [(key, client.dump(key)) for key in keys]
+        scorer = settings.build_scorer()
+        try:
+            observed = scorer.score_event(first)
+            expected_row = online_model_row(
+                first.to_record(), [seed_event.to_record()], bundle.history_config
+            )
+            assert observed.history_rows == 1
+            assert observed.score == float(bundle.predict(expected_row)[0])
+            client.set(keys[0], "invalid-redis-type")
+            with pytest.raises(FeastHistoryUnavailableError, match="Cannot read verified"):
+                scorer.score_event(second)
+            for key, saved in seed_cache:
+                assert isinstance(saved, bytes)
+                client.restore(key, 0, saved, replace=True)
+            with pytest.raises(FeastHistoryUnavailableError, match="differs"):
+                scorer.score_event(second)
+            assert pg_store.get(second.TransactionID) is None
+            client.delete(keys[0])
+            with pytest.raises(ConnectionError, match="does not match"):
+                settings.build_scorer()
+            with monkeypatch.context() as failure:
+                failure.setattr(fs.FeastFeatures, "entity_digest", lambda *args: None)
+                with pytest.raises(ConnectionError, match="failed validation"):
+                    promote()
+                assert pg_store.feast_checkpoint() == (generation, digest)
+            assert promote() != generation
+            with pytest.raises(FeastHistoryUnavailableError, match="Restart"):
+                scorer.score_event(second)
+        finally:
+            scorer.store.close()
+    restarted = settings.build_scorer()
+    try:
+        observed = restarted.score_event(second)
+        expected_row = online_model_row(
+            second.to_record(), [seed_event.to_record(), first.to_record()], bundle.history_config
+        )
+        from src.serving.online_features import history_feature_values
+
+        assert observed.history_features == history_feature_values(
+            expected_row, bundle.history_config
+        )
+        assert observed.score == float(bundle.predict(expected_row)[0])
+    finally:
+        restarted.store.close()
 
 
 @needs_db
@@ -1308,7 +1658,14 @@ class TestDashboardPages:
             assert pg_store.save(record(8_000 + i, (100 + i) * 86_400, alert=True))
         with psycopg.connect(pg_dsn, autocommit=True) as conn:
             before = _tables(conn)
-            assert before == ["alerts", "case_reviews", "scored_transactions"]
+            assert before == [
+                "alerts",
+                "case_reviews",
+                "feast_checkpoint",
+                "feast_entity_digests",
+                "pending_feast_updates",
+                "scored_transactions",
+            ]
             state = data.schema_state(conn)
             alert_id = _alert_ids(conn)[8_000]
         assert state.missing == () and state.absent == {"fraud_rings", "drift_reports"}

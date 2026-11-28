@@ -1,0 +1,6 @@
+# Private MLflow registry service. Keep this aligned with requirements.txt.
+mlflow==3.17.2
+fastapi==0.143.0
+starlette==1.7.0
+pydantic==2.14.1
+cryptography==50.0.2

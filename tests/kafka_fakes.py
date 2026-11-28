@@ -69,7 +69,7 @@ class FakeConsumer:
         self.queue = list(self.all)
         self.assigned = {(topic, 0)}
         self.paused: set[tuple[str, int]] = set()
-        self.committed: list[FakeMessage] = []
+        self.committed_messages: list[FakeMessage] = []
         self.seeks: list[tuple[str, int, int]] = []
         self.pause_calls = 0
         self.closed = False
@@ -80,14 +80,29 @@ class FakeConsumer:
         self.poll_hook: Callable[[FakeConsumer], None] | None = None
         self.on_assign: Callable[..., None] | None = None
         self.on_revoke: Callable[..., None] | None = None
+        self.on_lost: Callable[..., None] | None = None
+        self.start_offset = 0
+        self.watermarks = (0, len(self.all))
+        self.assigned_positions: list[TopicPartition] = []
 
     def subscribe(
         self,
         topics: list[str],
         on_assign: Callable[..., None] | None = None,
         on_revoke: Callable[..., None] | None = None,
+        on_lost: Callable[..., None] | None = None,
     ) -> None:
         self.topics, self.on_assign, self.on_revoke = topics, on_assign, on_revoke
+        self.on_lost = on_lost
+
+    def committed(self, partitions: list[TopicPartition], timeout: float) -> list[TopicPartition]:
+        return [TopicPartition(p.topic, p.partition, self.start_offset) for p in partitions]
+
+    def get_watermark_offsets(self, partition: TopicPartition, timeout: float) -> tuple[int, int]:
+        return self.watermarks
+
+    def assign(self, partitions: list[TopicPartition]) -> None:
+        self.assigned_positions = partitions
 
     def assignment(self) -> list[TopicPartition]:
         return [TopicPartition(t, p) for t, p in sorted(self.assigned)]
@@ -131,7 +146,7 @@ class FakeConsumer:
         if self.commit_errors:
             err = self.commit_errors.pop(0)
             raise KafkaException(err if isinstance(err, KafkaError) else KafkaError(err))
-        self.committed.append(message)
+        self.committed_messages.append(message)
 
     def close(self) -> None:
         self.closed = True

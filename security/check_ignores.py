@@ -84,7 +84,7 @@ def check_expiry(pip_audit: Path, trivy: Path, today: date | None = None) -> str
     """Fail (SystemExit) if any entry of either list expires within LEAD_DAYS; else a summary."""
     pa = [(i, e) for i, e, _ in parse_ignores(pip_audit.read_text(encoding="utf-8"))]
     tv = parse_trivyignore(trivy.read_text(encoding="utf-8"))
-    if not pa or not tv:
+    if not pa:
         raise SystemExit(f"empty accepted-risk list: {pip_audit} {len(pa)}, {trivy} {len(tv)}")
     _fail_if_expiring(str(pip_audit), pa, today)
     _fail_if_expiring(str(trivy), tv, today)

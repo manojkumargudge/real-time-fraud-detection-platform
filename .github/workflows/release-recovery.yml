@@ -1,0 +1,55 @@
+name: Coordinated release recovery
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release-recovery.yml
+      - deploy/rehearse-recovery.sh
+      - deploy/recovery-evidence.py
+      - deploy/check-python-runtime.sh
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Generate a synthetic release fixture
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from src.data.load import load_ieee_cis
+          from src.models.train import save_bundle, train_baseline
+          from tests.test_models import FAST, synthetic_split
+
+          root = Path(os.environ['RUNNER_TEMP'])
+          frame = load_ieee_cis(synthetic_split(root / 'recovery-data'), usecols=[])
+          model, metadata = train_baseline(frame, FAST)
+          save_bundle(model, {**metadata, 'threshold': 0.0}, Path('artifacts/baseline'))
+          PY
+      - name: Recover into distinct volumes and roll back an unhealthy upgrade
+        run: bash deploy/rehearse-recovery.sh "$RUNNER_TEMP/recovery-evidence"
+      - name: Verify Redis bytes against the pre-upgrade synthetic fixture
+        run: |
+          jq -e '.redis_sha256 == "6760c6935ac1fc6bce53cfc974f7f400eed232366bf1a2cc32415084266512ab"' \
+            "$RUNNER_TEMP/recovery-evidence/evidence/rolled-back-stream.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coordinated-recovery-evidence
+          path: ${{ runner.temp }}/recovery-evidence/evidence

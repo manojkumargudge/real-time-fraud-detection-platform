@@ -15,6 +15,9 @@ import json
 import logging
 import re
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -123,6 +126,22 @@ CREATE TABLE IF NOT EXISTS scored_transactions (
     scored_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_scored_card_dt ON scored_transactions (card_id, transaction_dt);
+CREATE TABLE IF NOT EXISTS pending_feast_updates (
+    card_id TEXT PRIMARY KEY,
+    transaction_id BIGINT NOT NULL REFERENCES scored_transactions (transaction_id),
+    online JSONB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS feast_checkpoint (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    generation TEXT NOT NULL,
+    seed_sha256 TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS feast_entity_digests (
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('uid', 'card')),
+    entity_key TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    PRIMARY KEY (entity_type, entity_key)
+);
 CREATE TABLE IF NOT EXISTS alerts (
     alert_id BIGSERIAL PRIMARY KEY,
     transaction_id BIGINT NOT NULL UNIQUE REFERENCES scored_transactions (transaction_id),
@@ -151,7 +170,7 @@ BEGIN
         CHECK (status IN ('open', 'investigating', 'confirmed_fraud', 'false_positive', 'closed'));
     END IF;
 END $$;
--- Analyst decisions, append-only (feeds retraining: latest labelled review per transaction).
+-- Analyst decisions, append-only. The current retraining path uses dataset labels.
 CREATE TABLE IF NOT EXISTS case_reviews (
     id BIGSERIAL PRIMARY KEY,
     alert_id BIGINT NOT NULL REFERENCES alerts (alert_id),
@@ -223,6 +242,9 @@ class PostgresStore:
 
     def __init__(self, dsn: str, *, init_schema: bool = True, pool_size: int | None = None) -> None:
         self._dsn = dsn
+        self._scoring_connection: ContextVar[psycopg.Connection[DictRow] | None] = ContextVar(
+            "scoring_connection", default=None
+        )
         self.pool_size = pool_size if pool_size is not None else pool_size_from_env()
         # min_size 1: a consumer (one thread) keeps one connection; the API grows to pool_size
         # under concurrent requests. check_connection replaces connections the server closed.
@@ -240,8 +262,40 @@ class PostgresStore:
             with self._pool.connection() as conn, conn.transaction():
                 conn.execute(DDL)
 
-    def get(self, transaction_id: int) -> ScoredRecord | None:
+    @contextmanager
+    def serialize_card(self, card_id: str) -> Iterator[None]:
+        """Hold one database session lock across scoring, commit, and the Feast write."""
         with self._pool.connection() as conn:
+            try:
+                conn.execute("SELECT pg_advisory_lock_shared(74913, 0)")
+                conn.execute("SELECT pg_advisory_lock(74912, hashtext(%s))", (card_id,))
+            except BaseException:
+                conn.close()
+                raise
+            token = self._scoring_connection.set(conn)
+            try:
+                yield
+            finally:
+                self._scoring_connection.reset(token)
+                try:
+                    conn.execute("SELECT pg_advisory_unlock(74912, hashtext(%s))", (card_id,))
+                    conn.execute("SELECT pg_advisory_unlock_shared(74913, 0)")
+                except psycopg.Error:
+                    # A connection returned to the pool must never retain a session lock.
+                    conn.close()
+                    raise
+
+    @contextmanager
+    def _connection(self) -> Iterator[psycopg.Connection[DictRow]]:
+        locked = self._scoring_connection.get()
+        if locked is not None:
+            yield locked
+        else:
+            with self._pool.connection() as conn:
+                yield conn
+
+    def get(self, transaction_id: int) -> ScoredRecord | None:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT transaction_id, transaction_dt, card_id, uid, event, score, "
                 "threshold, is_alert, model_version FROM scored_transactions "
@@ -251,7 +305,7 @@ class PostgresStore:
         return None if row is None else ScoredRecord(**row)
 
     def card_history(self, card_id: str, before_dt: int) -> list[dict[str, Any]]:
-        with self._pool.connection() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT event FROM scored_transactions "
                 "WHERE card_id = %s AND transaction_dt < %s ORDER BY transaction_dt, "
@@ -260,14 +314,32 @@ class PostgresStore:
             ).fetchall()
         return [r["event"] for r in rows]
 
-    def save(self, record: ScoredRecord) -> bool:
-        # One transaction: the scored row and its alert, or neither.
-        with self._pool.connection() as conn, conn.transaction():
+    def save(self, record: ScoredRecord, *, feast_online: dict[str, Any] | None = None) -> bool:
+        # One atomic statement avoids separate BEGIN, INSERT and COMMIT round trips.
+        # The alert and journal inserts run only when this request wins deduplication.
+        with self._connection() as conn:
             inserted = conn.execute(
-                "INSERT INTO scored_transactions (transaction_id, transaction_dt, card_id, "
-                "uid, event, score, threshold, is_alert, model_version) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (transaction_id) DO NOTHING RETURNING transaction_id",
+                """
+                WITH scored AS (
+                    INSERT INTO scored_transactions (
+                        transaction_id, transaction_dt, card_id, uid, event, score,
+                        threshold, is_alert, model_version
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (transaction_id) DO NOTHING
+                    RETURNING transaction_id, card_id, score, is_alert
+                ), alerted AS (
+                    INSERT INTO alerts (transaction_id, score)
+                    SELECT transaction_id, score FROM scored WHERE is_alert
+                    ON CONFLICT (transaction_id) DO NOTHING
+                ), journal_input AS (
+                    SELECT %s::jsonb AS online
+                ), journaled AS (
+                    INSERT INTO pending_feast_updates (card_id, transaction_id, online)
+                    SELECT card_id, transaction_id, online FROM scored CROSS JOIN journal_input
+                    WHERE online IS NOT NULL
+                )
+                SELECT transaction_id FROM scored
+                """,
                 (
                     record.transaction_id,
                     record.transaction_dt,
@@ -278,15 +350,85 @@ class PostgresStore:
                     record.threshold,
                     record.is_alert,
                     record.model_version,
+                    None if feast_online is None else json.dumps(feast_online),
                 ),
             ).fetchone()
-            if inserted and record.is_alert:
-                conn.execute(
-                    "INSERT INTO alerts (transaction_id, score) VALUES (%s, %s) "
-                    "ON CONFLICT (transaction_id) DO NOTHING",
-                    (record.transaction_id, record.score),
-                )
         return inserted is not None
+
+    def pending_feast(self, card_id: str) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            return conn.execute(
+                "SELECT uid, event, online, transaction_id FROM pending_feast_updates "
+                "JOIN scored_transactions USING (transaction_id) "
+                "WHERE pending_feast_updates.card_id = %s",
+                (card_id,),
+            ).fetchone()
+
+    def pending_feast_cards(self) -> list[str]:
+        with self._connection() as conn:
+            rows = conn.execute("SELECT card_id FROM pending_feast_updates ORDER BY card_id")
+            return [row["card_id"] for row in rows]
+
+    def has_scored_entity(self, card_id: str, uid: str, *, any_uid: bool) -> bool:
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM scored_transactions WHERE card_id = %s AND uid IS NOT NULL "
+                "AND (%s OR uid = %s) LIMIT 1",
+                (card_id, any_uid, uid),
+            ).fetchone()
+            return row is not None
+
+    def feast_checkpoint(self) -> tuple[str, str] | None:
+        with self._connection() as conn:
+            row = conn.execute("SELECT generation, seed_sha256 FROM feast_checkpoint").fetchone()
+            return None if row is None else (row["generation"], row["seed_sha256"])
+
+    @contextmanager
+    def feast_maintenance(self) -> Iterator[psycopg.Connection[DictRow]]:
+        """Exclude per-card writers until validation or promotion commits."""
+        with self._pool.connection() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(74913, 0)")
+            yield conn
+
+    def feast_digests(self, card_id: str, uid: str) -> tuple[str | None, str | None]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT entity_type, digest FROM feast_entity_digests "
+                "WHERE (entity_type, entity_key) IN (('uid', %s), ('card', %s))",
+                (uid, card_id),
+            )
+            expected = {row["entity_type"]: row["digest"] for row in rows}
+            return expected.get("uid"), expected.get("card")
+
+    def finish_feast(
+        self,
+        card_id: str,
+        transaction_id: int,
+        *,
+        digests: list[tuple[str, str, str]] | None = None,
+    ) -> None:
+        with self._connection() as conn:
+            if digests is not None:
+                with conn.transaction():
+                    deleted = conn.execute(
+                        "DELETE FROM pending_feast_updates "
+                        "WHERE card_id = %s AND transaction_id = %s",
+                        (card_id, transaction_id),
+                    )
+                    if deleted.rowcount != 1:
+                        raise RuntimeError("Pending feature update disappeared")
+                    with conn.cursor() as cursor:
+                        cursor.executemany(
+                            "INSERT INTO feast_entity_digests VALUES (%s, %s, %s) "
+                            "ON CONFLICT (entity_type, entity_key) "
+                            "DO UPDATE SET digest = EXCLUDED.digest",
+                            digests,
+                        )
+                return
+            conn.execute(
+                "DELETE FROM pending_feast_updates WHERE card_id = %s AND transaction_id = %s",
+                (card_id, transaction_id),
+            )
 
     def ping(self) -> bool:
         try:
@@ -294,7 +436,7 @@ class PostgresStore:
                 conn.execute("SELECT 1").fetchone()
             return True
         except (psycopg.Error, PoolTimeout):
-            logger.exception("postgres ping failed")
+            logger.warning("postgres ping failed")
             return False
 
     def counts(self) -> dict[str, int]:

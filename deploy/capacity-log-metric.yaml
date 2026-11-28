@@ -1,0 +1,10 @@
+name: fraud_capacity_guest_fault
+description: Synthetic rehearsal guest health, with an explicit zero on recovery.
+filter: 'resource.type="gce_instance" AND resource.labels.instance_id="938503370005181237" AND jsonPayload.probe="fraud_capacity"'
+valueExtractor: EXTRACT(jsonPayload.fault)
+metricDescriptor:
+  metricKind: DELTA
+  valueType: DISTRIBUTION
+bucketOptions:
+  explicitBuckets:
+    bounds: [0.25, 0.75, 1.25]

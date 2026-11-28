@@ -17,6 +17,11 @@ spec:
       labels: {app: dashboard}
     spec:
       enableServiceLinks: false
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
       initContainers:
         - name: wait-for-postgres
           image: fraud-dashboard:k8s-local

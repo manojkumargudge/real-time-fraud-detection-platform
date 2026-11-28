@@ -11,13 +11,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import psycopg
 import pytest
-from confluent_kafka import KafkaError, KafkaException
+from confluent_kafka import KafkaError, KafkaException, TopicPartition
 from confluent_kafka.admin import ConfigResource, NewTopic
 from pydantic import ValidationError
 
+from src.serving.config import Settings
 from src.serving.model import ModelBundle
 from src.serving.schema import ScoreResponse, TransactionEvent
 from src.serving.scorer import Scorer
@@ -32,7 +34,7 @@ from src.streaming.reliability import (
     ensure_dlq_topic,
     sanitize_error,
 )
-from tests.kafka_fakes import NO_WAIT, FakeConsumer, FakeDeadLetterSink, FakeMessage
+from tests.kafka_fakes import NO_WAIT, FakeConsumer, FakeDeadLetterSink, FakeError, FakeMessage
 from tests.test_serving import event
 
 CARD = 4_111_111_111  # a value that must never reach DLQ metadata or logs
@@ -81,7 +83,122 @@ def run(
 
 
 def offsets(fake: FakeConsumer) -> list[int]:
-    return [m.offset() for m in fake.committed]
+    return [m.offset() for m in fake.committed_messages]
+
+
+@pytest.mark.parametrize("require_contiguous,reset", [(True, "error"), (False, "earliest")])
+def test_consumer_disables_automatic_reset_in_production(
+    monkeypatch: pytest.MonkeyPatch, require_contiguous: bool, reset: str
+) -> None:
+    factory = Mock()
+    monkeypatch.setattr(consumer_mod, "Consumer", factory)
+    settings = Settings(Path("."), None, "localhost:9092", "t", "test")
+    consumer_mod.build_consumer(settings, require_contiguous=require_contiguous)
+    assert factory.call_args.args[0]["auto.offset.reset"] == reset
+
+
+def test_offset_reset_during_retry_leaves_group_without_committing() -> None:
+    fake = FakeConsumer(values(10, 11))
+    fake.queue.insert(1, FakeMessage(None, FakeError(KafkaError._AUTO_OFFSET_RESET)))
+    scorer = FlakyScorer(psycopg.OperationalError("database unavailable"))
+    dlq = FakeDeadLetterSink()
+
+    with pytest.raises(KafkaException) as raised:
+        run(fake, scorer, dlq, policy=RetryPolicy(base_delay=0.1), require_contiguous=True)
+
+    assert raised.value.args[0].code() == KafkaError._AUTO_OFFSET_RESET
+    assert fake.closed and scorer.calls == 1
+    assert offsets(fake) == [] and dlq.sent == []
+
+
+def test_production_stops_at_gap_after_successful_commit_retry() -> None:
+    fake, scorer, dlq = FakeConsumer(values(10, 11, 12, 13)), FlakyScorer(), FakeDeadLetterSink()
+    fake.commit_errors = [KafkaError.NOT_COORDINATOR, KafkaError.COORDINATOR_LOAD_IN_PROGRESS]
+    fake.queue = [fake.all[0], fake.all[3]]
+
+    with pytest.raises(consumer_mod.OffsetGapError, match="expected offset=1"):
+        run(fake, scorer, dlq, commit_delays=(0.0, 0.0), require_contiguous=True)
+
+    assert offsets(fake) == [0] and fake.commit_calls == 3
+    assert scorer.scored == [10] and dlq.sent == [] and fake.closed
+
+    resumed = FakeConsumer(values(10, 11, 12, 13))
+    resumed.start_offset = 1
+    resumed.queue = resumed.all[1:]
+    run(resumed, scorer, dlq, require_contiguous=True)
+    assert offsets(resumed) == [1, 2, 3] and scorer.scored == [10, 11, 12, 13]
+
+
+def test_production_checks_first_delivery_against_committed_position() -> None:
+    fake = FakeConsumer(values(10, 11))
+    fake.queue = fake.all[1:]
+    with pytest.raises(consumer_mod.OffsetGapError, match="expected offset=0"):
+        run(fake, FlakyScorer(), FakeDeadLetterSink(), require_contiguous=True)
+    assert fake.committed_messages == [] and fake.closed
+
+
+def test_production_assigns_the_resolved_start_for_a_new_group() -> None:
+    fake = FakeConsumer(values(10, 11))
+    fake.start_offset = -1001
+    fake.watermarks = (1, 2)
+    fake.queue = fake.all[1:]
+    run(fake, FlakyScorer(), FakeDeadLetterSink(), require_contiguous=True)
+    assert [tp.offset for tp in fake.assigned_positions] == [1]
+    assert offsets(fake) == [1]
+
+
+@pytest.mark.parametrize("watermarks", [(2, 3), (0, 0)])
+def test_production_refuses_to_reset_an_out_of_range_commit(
+    watermarks: tuple[int, int],
+) -> None:
+    fake, scorer = FakeConsumer(values(10, 11)), FlakyScorer()
+    fake.start_offset = 1
+    fake.watermarks = watermarks
+    with pytest.raises(consumer_mod.OffsetGapError, match="outside broker range"):
+        run(fake, scorer, FakeDeadLetterSink(), require_contiguous=True)
+    assert not fake.assigned_positions and not fake.committed_messages
+    assert scorer.calls == 0 and fake.closed
+
+
+@pytest.mark.parametrize("failure", [KafkaError.NOT_COORDINATOR, KafkaError.ILLEGAL_GENERATION])
+def test_production_leaves_group_on_unconfirmed_commit(failure: int) -> None:
+    fake, scorer = FakeConsumer(values(10, 11)), FlakyScorer()
+    fake.commit_errors = [failure]
+    run(fake, scorer, FakeDeadLetterSink(), commit_delays=(), require_contiguous=True)
+    assert fake.committed_messages == [] and fake.closed and scorer.scored == [10]
+
+
+def test_failed_rewind_during_retry_leaves_group_before_advancing() -> None:
+    class FailedSeekConsumer(FakeConsumer):
+        def seek(self, tp: TopicPartition) -> None:
+            raise KafkaException(KafkaError(KafkaError._STATE))
+
+    fake = FailedSeekConsumer(values(10, 11))
+    fake.ignore_pause = True
+    scorer = FlakyScorer(psycopg.OperationalError("database unavailable"))
+
+    with pytest.raises(KafkaException, match="_STATE"):
+        run(
+            fake,
+            scorer,
+            FakeDeadLetterSink(),
+            policy=RetryPolicy(base_delay=0.1),
+            require_contiguous=True,
+        )
+
+    assert fake.closed and not fake.committed_messages and not scorer.scored
+    assert not fake.queue
+
+    resumed = FakeConsumer(values(10, 11))
+    run(resumed, scorer, FakeDeadLetterSink(), require_contiguous=True)
+    assert offsets(resumed) == [0, 1] and scorer.scored == [10, 11]
+
+
+def test_revoked_worker_does_not_commit_completed_dlq_outcome() -> None:
+    fake = FakeConsumer([b"{invalid"])
+    dlq = FakeDeadLetterSink(on_attempt=lambda _: fake.revoke())
+    counts = run(fake, FlakyScorer(), dlq, require_contiguous=True)
+    assert len(dlq.sent) == 1 and fake.committed_messages == [] and counts["interrupted"] == 1
 
 
 class TestRetryPolicy:
@@ -246,7 +363,7 @@ class TestConsumerReliability:
             FakeDeadLetterSink(),
             stop=stop,
         )
-        assert first.committed == [] and first.closed
+        assert first.committed_messages == [] and first.closed
 
         # Restart: the uncommitted message is redelivered and stored exactly once.
         scorer = Scorer(bundle, store)
@@ -268,7 +385,7 @@ class TestConsumerReliability:
         )
         fake = FakeConsumer([b"{poison"])
         counts = run(fake, FlakyScorer(), dlq, stop=stop)
-        assert fake.committed == [] and dlq.sent == [] and counts["interrupted"] == 1
+        assert fake.committed_messages == [] and dlq.sent == [] and counts["interrupted"] == 1
 
     def test_rebalance_during_a_retry_abandons_the_message_uncommitted(self) -> None:
         fake, dlq = FakeConsumer(values(1)), FakeDeadLetterSink()
@@ -277,7 +394,7 @@ class TestConsumerReliability:
         counts = run(
             fake, FlakyScorer(*(psycopg.OperationalError() for _ in range(99))), dlq, policy=policy
         )
-        assert fake.committed == [] and dlq.sent == [] and counts["interrupted"] == 1
+        assert fake.committed_messages == [] and dlq.sent == [] and counts["interrupted"] == 1
 
     def test_messages_delivered_while_paused_are_rewound_not_lost(self) -> None:
         fake, dlq = FakeConsumer(values(1, 2)), FakeDeadLetterSink()
@@ -411,7 +528,7 @@ class TestCommitter:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         fake, dlq = FakeConsumer(values(1, 2)), FakeDeadLetterSink()
-        fake.poll_hook = lambda c: c.revoke() if c.committed and c.assigned else None
+        fake.poll_hook = lambda c: c.revoke() if c.committed_messages and c.assigned else None
         with caplog.at_level("INFO", logger="src.streaming.consumer"):
             run(fake, FlakyScorer(), dlq)
         assert "partitions assigned: t[0]" in caplog.text
@@ -424,7 +541,7 @@ class TestCommitter:
         with caplog.at_level("INFO", logger="src.streaming.consumer"):
             counts = run(fake, Scorer(bundle, InMemoryStore()), dlq)
         assert counts["duplicate"] == 1
-        assert "duplicate id=3 skipped topic=t partition=0 offset=1" in caplog.text
+        assert "duplicate skipped topic=t partition=0 offset=1" in caplog.text
 
     def test_duplicates_and_conflicting_ids_never_add_or_overwrite_records(
         self, bundle: ModelBundle

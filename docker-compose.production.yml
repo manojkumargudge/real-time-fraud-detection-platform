@@ -1,0 +1,163 @@
+# Layer over docker-compose.yml with Compose 2.24.4 or later.
+name: fraud-production
+
+services:
+  kafka:
+    image: fraud-kafka:4.3.2-alpine-patched
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.kafka
+    ports: !reset []
+    environment:
+      KAFKA_OPTS: "-XX:-UseBASE64Intrinsics"
+    healthcheck:
+      timeout: 30s
+      start_period: 60s
+  postgres:
+    image: fraud-postgres:16.16-alpine3.24-patched
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.postgres
+    ports: !reset []
+  redis:
+    image: fraud-redis:7.4.12-alpine3.22-patched
+    build:
+      context: deploy
+      dockerfile: Dockerfile.redis
+    ports: !reset []
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always"]
+  api:
+    ports: !reset []
+    command: ["uvicorn", "src.serving.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]
+    environment:
+      FRAUD_PRODUCTION: "1"
+      FEAST_REQUIRE_CHECKPOINT: "1"
+      FEAST_SEED_ARTIFACT: /app/artifacts/feature-seed/seed.json
+      FEAST_SEED_CUTOFF: "${FEAST_SEED_CUTOFF:-12192900}"
+      API_REQUESTS_PER_MINUTE: ${API_REQUESTS_PER_MINUTE:-600}
+    volumes:
+      - ./artifacts/feature-seed:/app/artifacts/feature-seed:ro
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      timeout: 8s
+      start_period: 60s
+  consumer:
+    environment:
+      FRAUD_PRODUCTION: "1"
+      FEAST_REQUIRE_CHECKPOINT: "1"
+      FEAST_SEED_ARTIFACT: /app/artifacts/feature-seed/seed.json
+      FEAST_SEED_CUTOFF: "${FEAST_SEED_CUTOFF:-12192900}"
+    volumes:
+      - ./artifacts/feature-seed:/app/artifacts/feature-seed:ro
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+  dashboard:
+    ports: !reset []
+    environment:
+      STREAMLIT_SERVER_COOKIE_SECRET: ${DASHBOARD_COOKIE_SECRET:?set DASHBOARD_COOKIE_SECRET}
+      STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION: "true"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+  mlflow:
+    profiles: ["registry"]
+    networks: [registry-private]
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements-registry.txt
+    command:
+      - mlflow
+      - server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --workers
+      - "1"
+      - --allowed-hosts
+      - mlflow:5000,localhost:5000
+      - --backend-store-uri
+      - sqlite:////app/state/mlflow.db
+      - --artifacts-destination
+      - /app/state/artifacts
+      - --serve-artifacts
+    volumes:
+      - mlflowdata:/app/state
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+  drift:
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+  retrain:
+    profiles: ["retraining"]
+    networks: [default, registry-private]
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements-retrain.txt
+        EXTRA_APT_PACKAGES: git
+    working_dir: /workspace
+    entrypoint: ["python", "-m", "src.monitoring.run_drift", "--reports-dir", "/app/reports/drift"]
+    environment:
+      DATABASE_URL: postgresql://fraud:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/fraud
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /workspace
+      GIT_OPTIONAL_LOCKS: "0"
+      EVIDENTLY_DISABLE_TELEMETRY: "1"
+      DO_NOT_TRACK: "1"
+    volumes:
+      - .:/workspace:ro
+      - ./reports/drift:/app/reports/drift
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+  proxy:
+    image: fraud-caddy:31f9f0c-alpine
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.caddy
+    environment:
+      API_HOSTNAME: ${API_HOSTNAME:?set API_HOSTNAME}
+      DASHBOARD_HOSTNAME: ${DASHBOARD_HOSTNAME:?set DASHBOARD_HOSTNAME}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      api:
+        condition: service_healthy
+      dashboard:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mlflowdata:
+  caddydata:
+  caddyconfig:
+
+networks:
+  registry-private:
+    internal: true

@@ -1,6 +1,6 @@
-# Debian 12 (bookworm) slim. Security: a current base tag plus `apt-get upgrade` at build time
-# picks up Debian security fixes (Trivy on the old 3.11.9 base: 128 HIGH/CRITICAL OS findings).
-FROM python:3.11.16-slim-bookworm
+# Debian 13 includes fixes for SQLite and zlib that Bookworm does not ship.
+# Resolve the built image by digest and scan its full resolved package inventory.
+FROM python:3.11.16-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
@@ -26,7 +26,25 @@ COPY src/ src/
 COPY configs/drift.toml configs/drift.toml
 # Dashboard settings (toolbar in viewer mode); unused by the API and consumers.
 COPY .streamlit/config.toml .streamlit/config.toml
-RUN useradd --create-home --uid 10001 app
+ARG EXTRA_APT_PACKAGES=""
+RUN if [ -n "${EXTRA_APT_PACKAGES}" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends ${EXTRA_APT_PACKAGES} \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi \
+    && useradd --create-home --uid 10001 app \
+    && install -d -o app -g app /app/state
+
+# Git's GnuTLS transport is only installed by the opt-in retraining build.
+# Use the signed Trixie backport and its dependencies for the two curl fixes.
+RUN if [ "${EXTRA_APT_PACKAGES}" = git ]; then \
+      printf '%s\n' 'deb http://deb.debian.org/debian trixie-backports main' \
+        > /etc/apt/sources.list.d/retrain-backports.list \
+      && apt-get update \
+      && apt-get -t trixie-backports install -y --no-install-recommends --no-remove \
+        libcurl3t64-gnutls=8.21.0-2~bpo13+1 \
+      && rm /etc/apt/sources.list.d/retrain-backports.list \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 USER app
 
 # Model artifacts are mounted at runtime (never baked into the image or committed).

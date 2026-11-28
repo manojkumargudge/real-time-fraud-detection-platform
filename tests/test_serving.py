@@ -6,6 +6,7 @@ import shutil
 import signal
 import threading
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, cast
 
@@ -42,6 +43,38 @@ from tests.kafka_fakes import NO_WAIT, FakeConsumer, FakeDeadLetterSink, FakeErr
 NAMES = HistoryConfig().feature_names()
 PARITY_EVENTS = 800
 REAL_PARITY_EVENTS = 300
+
+
+def test_production_api_protects_metadata_and_limits_concurrent_scores(
+    scorer: Scorer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("API_REQUESTS_PER_MINUTE", "1")
+    key = "test-only-production-key-at-least-32-characters"
+    headers = {API_KEY_HEADER: key}
+    with TestClient(create_app(scorer, api_key=key, production=True)) as client:
+        assert client.get("/health").json() == {"status": "ok"}
+        assert client.get("/openapi.json").status_code == 404
+        assert client.get("/docs").status_code == 404
+        assert client.get("/model").status_code == 401
+        assert client.get("/model", headers=headers).status_code == 200
+        assert client.post("/score", json=event()).status_code == 401
+
+        def score(tid: int) -> int:
+            response = client.post("/score", json=event(TransactionID=tid), headers=headers)
+            return int(response.status_code)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            assert sorted(pool.map(score, range(10, 14))) == [200, 429, 429, 429]
+
+
+def test_production_api_redacts_validation_input(scorer: Scorer) -> None:
+    key = "test-only-production-key-at-least-32-characters"
+    with TestClient(create_app(scorer, api_key=key, production=True)) as client:
+        response = client.post(
+            "/score", json=event(TransactionAmt=-333333), headers={API_KEY_HEADER: key}
+        )
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Invalid transaction"}
 
 
 def event(**overrides: Any) -> dict[str, Any]:
@@ -606,7 +639,7 @@ class TestConsumerLoop:
         dlq = FakeDeadLetterSink()
         counts = consumer_mod.run(fake, scorer, "t", dead_letters=dlq, max_messages=4)
         assert counts["scored"] == 2 and counts["duplicate"] == 1 and counts["invalid"] == 1
-        assert len(fake.committed) == 4 and fake.closed and len(memory_store(scorer)) == 2
+        assert len(fake.committed_messages) == 4 and fake.closed and len(memory_store(scorer)) == 2
         assert [d.value for d in dlq.sent] == [b"junk"]  # the poison message, dead-lettered
 
     def test_no_commit_while_the_database_is_down(self, scorer: Scorer) -> None:
@@ -630,7 +663,7 @@ class TestConsumerLoop:
         assert (
             len(calls) == 6 and counts["retries"] == 6 and counts["interrupted"] == 1
         )  # 6th: wait cut
-        assert fake.committed == [] and dlq.sent == [] and fake.closed
+        assert fake.committed_messages == [] and dlq.sent == [] and fake.closed
 
     def test_missing_topic_is_waited_out_not_fatal(self, scorer: Scorer) -> None:
         from confluent_kafka import KafkaError
@@ -643,7 +676,7 @@ class TestConsumerLoop:
         counts = consumer_mod.run(
             fake, scorer, "t", dead_letters=FakeDeadLetterSink(), max_messages=1
         )
-        assert counts["scored"] == 1 and len(fake.committed) == 1
+        assert counts["scored"] == 1 and len(fake.committed_messages) == 1
 
     def test_other_broker_errors_are_fatal(self, scorer: Scorer) -> None:
         from confluent_kafka import KafkaError, KafkaException
@@ -652,7 +685,7 @@ class TestConsumerLoop:
         fake.queue = [FakeMessage(None, FakeError(KafkaError._TRANSPORT))]
         with pytest.raises(KafkaException):
             consumer_mod.run(fake, scorer, "t", dead_letters=FakeDeadLetterSink(), max_messages=1)
-        assert fake.committed == [] and fake.closed
+        assert fake.committed_messages == [] and fake.closed
 
     @pytest.mark.parametrize("enabled", [False, True])
     def test_stage_timings_are_logged_only_when_enabled(
@@ -671,11 +704,12 @@ class TestConsumerLoop:
         lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("stages ")]
         assert len(lines) == (2 if enabled else 0)
         if enabled:
-            stages = json.loads(lines[0].split(" ", 3)[3])
+            prefix = "stages status=scored "
+            assert lines[0].startswith(prefix)
+            stages = json.loads(lines[0].removeprefix(prefix))
             assert {"poll", "process", "commit", "dedupe_get", "entity_keys", "predict"} <= set(
                 stages
             )
-            assert lines[0].startswith("stages id=1 status=scored ")
 
     def test_idle_timeout_stops(self, scorer: Scorer) -> None:
         counts = consumer_mod.run(
@@ -695,7 +729,7 @@ class TestConsumerLoop:
             max_messages=4,
         )
         assert counts["scored"] == 4 and counts["alerts"] == 4
-        assert len(fake.committed) == 4 and fake.queue == []
+        assert len(fake.committed_messages) == 4 and fake.queue == []
 
     def test_main_turns_sigterm_into_a_graceful_stop(
         self, bundle_dir: Path, monkeypatch: pytest.MonkeyPatch
@@ -710,7 +744,13 @@ class TestConsumerLoop:
         monkeypatch.setenv("MODEL_DIR", str(bundle_dir))
         monkeypatch.delenv("DATABASE_URL", raising=False)
         monkeypatch.setattr(Settings, "build_store", lambda _self: store)
-        monkeypatch.setattr(consumer_mod, "build_consumer", lambda _s: FakeConsumer([]))
+        monkeypatch.delenv("FRAUD_PRODUCTION", raising=False)
+
+        def fake_build_consumer(_settings: Settings, *, require_contiguous: bool) -> FakeConsumer:
+            assert not require_contiguous
+            return FakeConsumer([])
+
+        monkeypatch.setattr(consumer_mod, "build_consumer", fake_build_consumer)
         monkeypatch.setattr(consumer_mod, "build_dead_letter_sink", lambda _s: FakeDeadLetterSink())
 
         def fake_run(*_args: Any, stop: threading.Event, **_kwargs: Any) -> Counter[str]:
@@ -728,7 +768,7 @@ class TestConsumerLoop:
         stop.set()
         fake = FakeConsumer([encode(event())[1]])
         counts = consumer_mod.run(fake, scorer, "t", dead_letters=FakeDeadLetterSink(), stop=stop)
-        assert sum(counts.values()) == 0 and fake.committed == [] and fake.closed
+        assert sum(counts.values()) == 0 and fake.committed_messages == [] and fake.closed
         assert len(fake.queue) == 1  # nothing consumed, so nothing lost
 
 

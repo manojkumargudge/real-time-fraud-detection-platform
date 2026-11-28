@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from src.dashboard import data
 from src.dashboard.db import Database
 
 READ_TTL_S = 15  # reads may be this stale; a write clears the cache
+SIGN_IN_IDLE_S = 30 * 60
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # Below this many reviewed alerts the precision is not shown: with n < 30 a single review moves
 # it by more than 3 points, so the number would mostly be noise.
@@ -287,6 +289,11 @@ def configure_logging() -> None:
 
 def analyst_name() -> str:
     """The signed-in user (``sign_in_gate``); recorded as ``analyst`` on every review."""
+    if (
+        time.monotonic() - st.session_state.get("sign_in_activity", -SIGN_IN_IDLE_S)
+        >= SIGN_IN_IDLE_S
+    ):
+        return ""
     return str(st.session_state.get("analyst", "")).strip()
 
 
@@ -297,8 +304,9 @@ def _sign_in(users: dict[str, str]) -> None:
     password = str(st.session_state.get("sign_in_password", ""))
     if auth.verify(users, name, password):
         st.session_state["analyst"] = name
+        st.session_state["sign_in_activity"] = time.monotonic()
         st.session_state.pop("sign_in_error", None)
-        logging.getLogger(__name__).info("dashboard sign-in user=%s", name)
+        logging.getLogger(__name__).info("dashboard sign-in succeeded")
     else:
         st.session_state["sign_in_error"] = "Unknown user or wrong password."
         # No typed name in the log: a password typed into the username box would end up there.
@@ -307,7 +315,8 @@ def _sign_in(users: dict[str, str]) -> None:
 
 
 def _sign_out() -> None:
-    st.session_state.pop("analyst", None)
+    for field in ("analyst", "sign_in_activity", "alert_id"):
+        st.session_state.pop(field, None)
 
 
 def sign_in_gate() -> bool:
@@ -315,7 +324,10 @@ def sign_in_gate() -> bool:
     after rendering the sign-in form; the caller stops the run."""
     from src.dashboard import auth
 
+    if "analyst" in st.session_state and not analyst_name():
+        _sign_out()
     if analyst_name():
+        st.session_state["sign_in_activity"] = time.monotonic()
         with st.sidebar:
             st.write(f"Signed in as **{analyst_name()}**")
             st.button("Sign out", key="sign_out", on_click=_sign_out)

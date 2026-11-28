@@ -235,6 +235,14 @@ are kept.
   0.2 s, 0.5 s and 1 s. If it still fails, a warning is logged, it counts as `commit_rejected`
   and the consumer carries on: the offset stays uncommitted, a later commit on the partition
   or a redelivery covers it, and the primary key deduplicates (at-least-once).
+- Production consumers (`FRAUD_PRODUCTION=1`) leave the group when a commit remains
+  unconfirmed. For the append-only, non-transactional transaction topic, each assignment starts
+  from the broker's committed offset or its earliest retained offset for a new group. A delivery
+  jumping past the expected offset stops the consumer before scoring or committing it. Automatic
+  offset reset is disabled. If retention advances past the resolved offset during fetching, the
+  consumer leaves the group, including during processing retry waits. A revoked
+  or lost assignment cannot commit an in-flight result. Escalate a persistent offset gap and
+  reconcile Kafka transaction IDs with PostgreSQL before restarting any affected deployment.
 - If commits keep failing for more than 30 s in a row, an ERROR is logged (at most once per
   30 s) with `consecutive_commit_failures`; the consumer does not exit. The first successful
   commit logs "offset commits recovered" and resets the streak.

@@ -70,6 +70,56 @@ transaction, so it had no pre-stream history at all (0 of 710 cards).
 
 Redis uses an append-only file (volume `redisdata`), so the state survives restarts.
 
+### Rebuilding online state after Redis loss
+
+Production Compose requires a promoted checkpoint. PostgreSQL holds its generation,
+seed checksum and expected digest for each card and user row. Startup verifies the
+seed artifact and every committed row. A writer validates all fields it reads before
+feature calculation and checks both Redis writes before it advances the checkpoint
+and clears the journal in one SQL transaction. A Redis snapshot that rolls back just
+one row or just one field therefore cannot silently enter inference.
+
+Create the immutable seed from the authorized training inputs, then retain the
+artifact and its independently recorded SHA-256 alongside the exact model bundle.
+
+```bash
+mkdir -p artifacts/feature-seed
+python -m src.features.feast_checkpoint seed artifacts/feature-seed/seed.json \
+  --model-dir artifacts/baseline --raw-dir data/raw/ieee-cis --before 12192900
+FEAST_SEED_SHA256="$VERIFIED_SEED_SHA256" \
+  python -m src.features.feast_checkpoint promote artifacts/feature-seed/seed.json \
+  --model-dir artifacts/baseline --repo-dir artifacts/feast --before 12192900
+```
+
+Supply `DATABASE_URL` and `FEAST_REDIS` via the operator environment. Run promotion
+against the intended recovery stores and restart the API and consumers after it succeeds.
+Stop legacy release writers before the initial migration. Promotion holds an exclusive
+PostgreSQL advisory lock, builds a fresh Redis namespace, folds each durable score
+event once (including committed events still in the journal), and validates the new
+rows. One PostgreSQL transaction switches the active namespace, replaces its expected
+digests and clears the included journal. Failed builds leave the previous generation
+selected. Running scorers reject the new generation until restarted. Abandoned
+namespaces are retained for inspection.
+
+The older cache-only rebuild below remains available for isolated comparisons.
+
+Quiesce the API and consumers. Use the champion bundle, the original trusted seed dataset
+and cutoff, and a consistent PostgreSQL checkpoint that has a drained feature journal.
+The rebuild reads the scores from PostgreSQL in a read-only snapshot and folds each
+transaction into the original seed history once. It requires an empty Redis instance and
+a new Feast repository directory.
+
+```bash
+FEAST_REDIS=127.0.0.1:36379 python -m src.features.feast_store rebuild \
+  --repo-dir artifacts/feast-recovery --model-dir artifacts/baseline \
+  --raw-dir data/raw/ieee-cis --before validation
+```
+
+Supply `DATABASE_URL` through the runtime environment. Verify feature values for known
+transactions and confirm the Redis snapshot persists across restart before switching
+scoring to the rebuilt cache. If the PostgreSQL journal has pending entries, first use
+a coordinated checkpoint and replay to obtain a consistent drained state.
+
 ## Training from the Feast offline store
 
 Champion v2 was trained on the pandas matrix (`build_model_frame(df, "baseline")`, split at
@@ -134,16 +184,18 @@ changing device/address; SQLite and Redis) and live data (700 real events read b
 2. **Late events** (`TransactionDT` older than the entity's latest timestamp). The history path
    still sees exactly the strictly earlier events. The state cannot: the count and amount mean
    include events that came after it, `seconds_since_prev` can be missing, card flags compare
-   with values seen after it, and its own update is approximate. `test_late_event_is_approximate`
-   pins this behaviour.
-3. **Concurrent writes.** Known limitation: the API and the consumer each read-modify-write the
-   whole state, so two events for one entity at the same moment can lose one update; fix would
-   be an atomic per-entity update (a Redis Lua script or `WATCH`/`MULTI` transaction keyed by
-   entity, or routing every write through the consumer, which handles a partition serially).
-4. **Failed pushes.** Known limitation: a push that fails after the event is saved is only
-   logged (`feast state update failed ...`) and the state stays stale; fix would be an
-   automatic catch-up (record the last applied `TransactionID` per entity and replay the
-   missed events from `scored_transactions` or the Kafka topic).
+   with values seen after it, and its own update is approximate in the demo configuration.
+   With `FRAUD_PRODUCTION=1`, the scorer rejects late events before prediction or persistence.
+3. **Concurrent writes.** PostgreSQL-backed scorers take a per-card advisory session lock
+   across the feature read, score persistence and Feast update. Every UID belongs to one card,
+   so the lock covers both state views across API and consumer processes. Maintenance jobs
+   that write Feast state must run with live writers stopped.
+4. **Failed pushes.** PostgreSQL commits the score, alert and pending Feast update together.
+   A retry, duplicate or next event for the card replays the pending update under the same
+   lock. It uses the saved previous state and the same write timestamps for idempotent replay
+   even when only one state view was written. A failing update blocks further scoring for
+   that card and the Kafka retry holds the partition. The production Redis uses synchronous AOF
+   persistence. Complete loss of the Redis volume still requires coordinated recovery.
 5. **Float rounding**: amount sums are accumulated incrementally instead of with the batch
    prefix sums; differences are at float64 rounding level and disappear in the float32 model
    input (tests use `rtol=1e-6`).

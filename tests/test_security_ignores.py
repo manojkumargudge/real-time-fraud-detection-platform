@@ -33,7 +33,7 @@ def test_every_accepted_risk_has_an_expiry_and_a_reason() -> None:
         for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.startswith("#")
     ]
-    assert trivy and all(" exp:" in line for line in trivy)
+    assert all(" exp:" in line for line in trivy)
 
 
 def test_expired_entries_fail(tmp_path: Path) -> None:

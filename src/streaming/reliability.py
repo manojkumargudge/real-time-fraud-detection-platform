@@ -28,6 +28,8 @@ import psycopg
 from confluent_kafka import KafkaError, KafkaException, Producer
 from confluent_kafka.admin import AdminClient, ConfigResource, NewTopic
 from pydantic import ValidationError
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,8 @@ TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
     psycopg.InterfaceError,
     ConnectionError,
     TimeoutError,
+    RedisConnectionError,
+    RedisTimeoutError,
 )
 
 

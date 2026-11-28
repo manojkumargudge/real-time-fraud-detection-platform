@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+kind=${1:?image role required}
+out=${2:?report directory required}
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+local_ref="127.0.0.1:5500/fraud-release/$kind:$(git rev-parse --short HEAD)"
+requirements=
+extra=()
+case "$kind" in
+  serving) requirements=requirements-serving.txt ;;
+  dashboard) requirements=requirements-dashboard.txt ;;
+  mlflow) requirements=requirements-registry.txt ;;
+  drift) requirements=requirements-monitoring.txt ;;
+  retrain) requirements=requirements-retrain.txt; extra=(--build-arg EXTRA_APT_PACKAGES=git) ;;
+  kafka|postgres|redis|caddy) ;;
+  kafka-next)
+    extra=(--build-arg KAFKA_BASE=apache/kafka:4.3.2@sha256:8f325fc00143fed78eabe00b033a86747078bb06edc21345d06651f77ae44f30)
+    ;;
+  *) exit 2 ;;
+esac
+
+docker run -d --name release-inventory-registry -p 127.0.0.1:5500:5000 registry:2 >/dev/null
+if [[ $kind == kafka-next ]]; then
+  docker build --platform linux/amd64 --pull -f deploy/Dockerfile.kafka "${extra[@]}" -t "$local_ref" .
+elif [[ $kind == redis ]]; then
+  docker build --platform linux/amd64 --pull -f deploy/Dockerfile.redis -t "$local_ref" deploy
+elif [[ -z $requirements ]]; then
+  docker build --platform linux/amd64 --pull -f "deploy/Dockerfile.$kind" -t "$local_ref" .
+else
+  docker build --platform linux/amd64 --pull --build-arg "REQUIREMENTS=$requirements" "${extra[@]}" -t "$local_ref" .
+fi
+docker push "$local_ref"
+ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$local_ref")
+
+[[ $ref =~ @sha256:[a-f0-9]{64}$ ]]
+[[ $(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$ref") == linux/amd64 ]]
+printf '%s\n' "$kind $ref" > "$out/release-reference.txt"
+docker image inspect "$ref" > "$out/image-inspect.json"
+
+if [[ $kind == caddy ]]; then
+  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+    --entrypoint sh "$ref" -ec 'test "$(id -u)" = 10001; test -w /data; test -w /config; id' \
+    > "$out/proxy-runtime.txt"
+fi
+
+if [[ $kind == retrain ]]; then
+  docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true \
+    --entrypoint sh "$ref" -ec '
+      test "$(dpkg-query -W -f "\${Version}" libcurl4-gnutls)" = 8.21.0-2~bpo13+1
+      git --version
+      curl_library=$(ldd /usr/lib/git-core/git-remote-http | awk "/libcurl-gnutls[.]so/ {print \$3}")
+      test -f "$curl_library"
+      curl_owner=$(dpkg-query --search "$(readlink -f "$curl_library")")
+      printf "%s\n" "$curl_owner"
+      case "$curl_owner" in libcurl4-gnutls:*) ;; *) exit 1 ;; esac
+      python -c "import feast, mlflow, numpy, pyarrow, xgboost"
+    ' > "$out/retrain-backport-smoke.txt"
+fi
+
+if [[ -n $requirements ]]; then
+  docker run --rm -i --network none --cap-drop ALL --security-opt no-new-privileges:true \
+    --entrypoint sh "$ref" -s > "$out/python-runtime.txt" <<'SH'
+set -eu
+id
+for binary in mount nsenter infocmp systemd-homed perl git curl; do
+  printf '%s: ' "$binary"
+  command -v "$binary" || printf 'not in PATH\n'
+done
+printf 'Installed sensitive executable paths:\n'
+find /usr /opt -xdev \( -name systemd-homed -o -name infocmp -o -name nsenter \) -print
+printf 'Setuid or setgid executable paths:\n'
+find /usr /opt -xdev -type f \( -perm -4000 -o -perm -2000 \) -print
+perl -MArchive::Tar -e 'print "Archive::Tar $Archive::Tar::VERSION\n"' 2>/dev/null \
+  || printf 'Archive::Tar import unavailable\n'
+python - <<'PY'
+import pyexpat
+import sqlite3
+import ssl
+import subprocess
+import _sqlite3
+import _ssl
+
+print(ssl.OPENSSL_VERSION)
+print(pyexpat.EXPAT_VERSION)
+print("SQLite", sqlite3.sqlite_version)
+with sqlite3.connect(":memory:") as db:
+    print("SQLite compile options", ", ".join(row[0] for row in db.execute("PRAGMA compile_options")))
+with open("/proc/self/status", encoding="utf-8") as status:
+    for line in status:
+        if line.startswith(("CapEff:", "NoNewPrivs:")):
+            print(line.strip())
+for module in (_sqlite3, _ssl, pyexpat):
+    print(module.__file__, flush=True)
+    subprocess.run(["ldd", module.__file__], check=True)
+PY
+SH
+fi
+
+# Preserve all high and critical findings, including unfixed and locally excepted entries.
+# A scanner failure fails this job. A successful inventory still needs human disposition.
+for attempt in 1 2; do
+  if docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+      -v "$out:/out" -v release-inventory-trivy:/root/.cache/trivy \
+      aquasec/trivy:0.75.0 image --image-src docker --platform linux/amd64 \
+      --scanners vuln --list-all-pkgs --ignorefile /dev/null --timeout 16m \
+      --format json --output /out/trivy.json "$ref"; then
+    jq -e '.Results | length > 0' "$out/trivy.json" >/dev/null
+    jq -r '[.Results[] | (.Vulnerabilities // [])[] | select(.Severity == "HIGH" or .Severity == "CRITICAL")] | sort_by(.Severity, .PkgName, .VulnerabilityID) | .[] | [.Severity, .PkgName, .InstalledVersion, .FixedVersion, .VulnerabilityID] | @tsv' "$out/trivy.json" > "$out/high-critical.tsv"
+    exit 0
+  fi
+  if [[ $attempt == 1 ]]; then sleep 10; fi
+done
+exit 1

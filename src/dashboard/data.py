@@ -172,7 +172,7 @@ def overview(conn: psycopg.Connection[Any]) -> dict[str, Any]:
         "JOIN scored_transactions s USING (transaction_id) GROUP BY 1 ORDER BY 1",
         (SECONDS_PER_DAY,),
     ).fetchall()
-    labels = latest_labels(conn)  # the same definition retraining uses
+    labels = latest_labels(conn)  # analyst review metrics use the latest review per transaction
     reviewed = len(labels)
     fraud = sum(1 for row in labels if row.label == "fraud")
     newest = conn.execute(

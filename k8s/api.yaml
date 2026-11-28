@@ -12,11 +12,17 @@ spec:
     metadata:
       labels: {app: api}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
       enableServiceLinks: false
       initContainers:
         # The API exits at startup without PostgreSQL (and Feast needs Redis); wait instead of
         # crash-looping.
         - name: wait-for-postgres
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
           image: fraud-serving:k8s-local
           imagePullPolicy: IfNotPresent
           command:
@@ -42,6 +48,7 @@ spec:
             limits: {cpu: 100m, memory: 64Mi}
       containers:
         - name: api
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
           image: fraud-serving:k8s-local
           imagePullPolicy: IfNotPresent
           ports:

@@ -9,7 +9,7 @@ and containerized deployment.
 - Python, Pandas, XGBoost, PyTorch Geometric
 - Apache Kafka, Feast, MLflow
 - FastAPI, PostgreSQL
-- Evidently AI, React
+- Evidently AI, Streamlit
 - Docker Compose, Kubernetes/Minikube
 - pytest
 
@@ -132,8 +132,8 @@ matters (files, numbers, running services) before relying on it.
   Numbers in "2026-10-29" notes below were updated where marked; the back-filled MLflow report
   run still holds the old report (history).
 - Tests: 607 unit passed + 1 skipped locally; CI 582 passed + 11 skipped, 41 integration (run #83).
-- Demo stack left running for recording; state and recording steps:
-  backups/state-2026-11-02-final.txt. FraudDrift-Retrain stays disabled until after recording.
+- The demo stack was left running and scheduled retraining remained disabled.
+  See [demo verification](docs/demo.md) for the walkthrough.
 
 ### 2026-10-30 end of day
 - **Feature freeze** again after this day (user decision 2026-10-30). `main` = merge of PR #32

@@ -21,15 +21,18 @@ dropped.
 CLI (cold start): ``python -m src.features.feast_store materialize [--before DT]`` builds the
 starting state of every entity from the offline batch data -- all IEEE-CIS transactions with
 ``TransactionDT`` earlier than the first streamed event -- and loads it into the online store
-(``FEAST_REDIS``). See docs/feature_store.md.
+(``FEAST_REDIS``). The ``rebuild`` command also folds durable scored events into a fresh Redis
+instance. See docs/feature_store.md.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -185,6 +188,18 @@ def card_fields(columns: Sequence[str]) -> list[tuple[str, str]]:
             (f"card_last_tid_{_col(c)}", "int"),
         ]
     return out
+
+
+def online_digest(row: dict[str, Any], fields: list[tuple[str, str]]) -> str | None:
+    """Hash values as read by inference, including nulls and the logical write version."""
+    if all(row.get(name) is None for name, _ in fields):
+        return None
+    values = [
+        (name, list(value) if kind == "int_list" and value is not None else value)
+        for name, kind in fields
+        for value in (row.get(name),)
+    ]
+    return hashlib.sha256(json.dumps(values, allow_nan=False).encode()).hexdigest()
 
 
 def definitions(config: HistoryConfig | None = None) -> list[Any]:
@@ -428,6 +443,8 @@ class FeastFeatures:
     # rebuild every feature view from the registry on each call (~22 FeatureView.from_proto with
     # runtime type checks, ~30 ms per read); same keys, values and store (tested equal).
     direct_online: bool = True
+    # Use Feast's value conversion and Redis writer without a one-row DataFrame.
+    serialize_online_rows: bool = True
     _views: dict[str, Any] | None = field(default=None, init=False, repr=False)
 
     def _state_views(self) -> dict[str, Any]:
@@ -447,6 +464,8 @@ class FeastFeatures:
         for view_name, join_key in ((UID_VIEW, USER_ID), (CARD_VIEW, CARD_ID)):
             view = self._state_views()[view_name]
             names = [r.split(":", 1)[1] for r in refs if r.startswith(f"{view_name}:")]
+            if not names:
+                continue
             key = EntityKey(
                 join_keys=[join_key], entity_values=[Value(string_val=entity[join_key])]
             )
@@ -457,8 +476,21 @@ class FeastFeatures:
                 flat[n] = feast_value_type_to_python_type(data[n]) if data and n in data else None
         return flat
 
+    def entity_digest(self, entity_type: str, key: str) -> str | None:
+        if entity_type == "uid":
+            entity, view, fields = USER_ID, UID_VIEW, uid_fields()
+        else:
+            entity, view, fields = CARD_ID, CARD_VIEW, card_fields(self.config.change_columns)
+        row = self._read_direct({entity: key}, [f"{view}:{name}" for name, _ in fields])
+        return online_digest(row, fields)
+
     def read(
-        self, event: dict[str, Any], card: str | None, uid: str | None
+        self,
+        event: dict[str, Any],
+        card: str | None,
+        uid: str | None,
+        *,
+        validate: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[dict[str, float], dict[str, Any]]:
         """``(features, raw_online_row)`` for one event (one online round trip)."""
         row = request_row(event, card, uid, self.config.change_columns)
@@ -473,6 +505,8 @@ class FeastFeatures:
             else:
                 resp = self.store.get_online_features(features=refs, entity_rows=[entity])
                 flat = {k: v[0] for k, v in resp.to_dict().items()}
+        if validate is not None:
+            validate(flat)
         if self.use_odfv:
             feats = {
                 n: (float("nan") if flat[n] is None else float(flat[n]))
@@ -489,44 +523,70 @@ class FeastFeatures:
                 )
         return feats, flat
 
-    def push(
-        self, event: dict[str, Any], card: str | None, uid: str | None, online: dict[str, Any]
-    ) -> None:
-        """Apply ``event`` to the state read with it and write both entities back.
-
-        Known limitation: read-modify-write, so concurrent events for one entity can lose an
-        update; fix would be an atomic per-entity update (Redis Lua/``WATCH``) or a single writer.
-        Known limitation: a failed push is only logged by the caller; fix would be a catch-up that
-        replays missed events from ``scored_transactions`` per entity.
-        """
-        if uid is None or card is None:
-            return
-        from feast.data_source import PushMode
-
+    def next_rows(
+        self, event: dict[str, Any], card: str, uid: str, online: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         cols = self.config.change_columns
         t, tid = int(event[TIME]), int(event["TransactionID"])
         u = apply_uid(uid_from_row(online), t, float(event[AMOUNT]), self.config)
         c = apply_card(card_from_row(online, cols), t, tid, event_values(event, cols), cols)
+        return (
+            uid_row(uid, u, _next_write(online.get(UID_WRITE_TS), t)),
+            card_row(card, c, cols, _next_write(online.get(CARD_WRITE_TS), t)),
+        )
+
+    def push(
+        self, event: dict[str, Any], card: str | None, uid: str | None, online: dict[str, Any]
+    ) -> None:
+        """Apply the journal's state transition. Retries write identical values and versions."""
+        if uid is None or card is None:
+            return
+        from feast.data_source import PushMode
+        from feast.infra.online_stores.redis import RedisOnlineStoreConfig
+
+        user_state, card_state = self.next_rows(event, card, uid, online)
         for view_name, view_push, ts_field, row in (
-            (
-                UID_VIEW,
-                UID_PUSH,
-                UID_WRITE_TS,
-                uid_row(uid, u, _next_write(online.get(UID_WRITE_TS), t)),
-            ),
-            (
-                CARD_VIEW,
-                CARD_PUSH,
-                CARD_WRITE_TS,
-                card_row(card, c, cols, _next_write(online.get(CARD_WRITE_TS), t)),
-            ),
+            (UID_VIEW, UID_PUSH, UID_WRITE_TS, user_state),
+            (CARD_VIEW, CARD_PUSH, CARD_WRITE_TS, card_state),
         ):
             stamp = {EVENT_TIMESTAMP: to_datetime(row[ts_field]), CREATED: datetime.now(UTC)}
-            df = pd.DataFrame([row | stamp])
-            if self.direct_online:  # what push -> write_to_online_store runs for this view
-                self.store._get_provider().ingest_df(self._state_views()[view_name], df)
+            if self.direct_online:
+                provider = self.store._get_provider()
+                view = self._state_views()[view_name]
+                if self.serialize_online_rows and isinstance(
+                    self.store.config.online_store, RedisOnlineStoreConfig
+                ):
+                    _write_redis_row(provider, self.store.config, view, row, stamp)
+                else:
+                    provider.ingest_df(view, pd.DataFrame([row | stamp]))
             else:
-                self.store.push(view_push, df, to=PushMode.ONLINE)
+                self.store.push(view_push, pd.DataFrame([row | stamp]), to=PushMode.ONLINE)
+
+
+def _write_redis_row(
+    provider: Any, config: Any, view: Any, row: dict[str, Any], stamp: dict[str, datetime]
+) -> None:
+    """Convert one state row using Feast's schema and retain its online-store write path."""
+    from feast.protos.feast.types.EntityKey_pb2 import EntityKey
+    from feast.type_map import python_values_to_proto_values
+
+    with stage("feast_row_conversion"):
+        key = EntityKey(
+            join_keys=[field.name for field in view.entity_columns],
+            entity_values=[
+                python_values_to_proto_values([row[field.name]], field.dtype.to_value_type())[0]
+                for field in view.entity_columns
+            ],
+        )
+        values = {
+            field.name: python_values_to_proto_values(
+                [row[field.name]], field.dtype.to_value_type()
+            )[0]
+            for field in view.features
+        }
+    provider.online_write_batch(
+        config, view, [(key, values, stamp[EVENT_TIMESTAMP], stamp[CREATED])], progress=None
+    )
 
 
 def _next_write(previous: Any, t: int) -> int:
@@ -565,6 +625,26 @@ def first_streamed_dt(dsn: str) -> int | None:
     return None if row is None or row[0] is None else int(row[0])
 
 
+def durable_feature_events(
+    dsn: str, before: int, *, include_pending: bool = False
+) -> list[EntityEvent]:
+    """Read a consistent, drained PostgreSQL snapshot without modifying it."""
+    import psycopg
+
+    with psycopg.connect(dsn) as conn:
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        if (
+            not include_pending
+            and conn.execute("SELECT 1 FROM pending_feast_updates LIMIT 1").fetchone() is not None
+        ):
+            raise ValueError("Resolve pending feature journal rows before rebuilding")
+        rows = conn.execute("SELECT event, card_id, uid FROM scored_transactions").fetchall()
+    events = [EntityEvent(event, card, uid) for event, card, uid in rows]
+    if any(event.event[TIME] < before for event in events):
+        raise ValueError("The seed cutoff overlaps durable scores")
+    return events
+
+
 def materialize_initial_state(
     store: Any, repo_dir: Path, events: list[EntityEvent], config: HistoryConfig
 ) -> tuple[int, int]:
@@ -578,9 +658,10 @@ def materialize_initial_state(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["materialize"])
+    parser.add_argument("command", choices=["materialize", "rebuild"])
     parser.add_argument("--repo-dir", type=Path, default=DEFAULT_DIR)
     parser.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW_DIR)
+    parser.add_argument("--model-dir", type=Path, help="Required for rebuild")
     parser.add_argument(
         "--before",
         default=None,
@@ -593,13 +674,24 @@ def main(argv: list[str] | None = None) -> None:
     redis = os.environ.get("FEAST_REDIS")
     if not redis:
         raise SystemExit("set FEAST_REDIS (online store host:port)")
+    rebuild = args.command == "rebuild"
+    dsn = os.environ.get("DATABASE_URL")
+    if rebuild:
+        if not dsn or args.before is None or args.model_dir is None:
+            parser.error("rebuild requires DATABASE_URL, --before and --model-dir")
+        if args.repo_dir.exists():
+            parser.error("rebuild requires a new --repo-dir")
+        from redis import Redis
+
+        with Redis.from_url(f"redis://{redis}") as client:
+            if client.dbsize() != 0:
+                parser.error("rebuild requires an empty Redis instance")
     df = load_ieee_cis(args.raw_dir, usecols=[])
     if args.before == "validation":
         before = validation_start(df[TIME])
     elif args.before is not None:
         before = int(args.before)
     else:
-        dsn = os.environ.get("DATABASE_URL")
         if not dsn:
             raise SystemExit("pass --before or set DATABASE_URL to find the first streamed event")
         first = first_streamed_dt(dsn)
@@ -607,13 +699,22 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit("no scored events yet: pass --before explicitly")
         before = first
     config = HistoryConfig()
+    recovered: list[EntityEvent] = []
+    if rebuild:
+        from src.serving.model import ModelBundle
+
+        assert dsn is not None
+        config = ModelBundle.load(args.model_dir).history_config
+        recovered = durable_feature_events(dsn, before)
     events = pre_stream_events(df, before, config)
+    events.extend(recovered)
     store = open_store(args.repo_dir, redis=redis, config=config)
     uids, cards = materialize_initial_state(store, args.repo_dir, events, config)
     logger.info(
-        "materialized pre-stream state before=%d events=%d uids=%d cards=%d",
+        "materialized state seed_before=%d events=%d recovered=%d uids=%d cards=%d",
         before,
         len(events),
+        len(recovered),
         uids,
         cards,
     )

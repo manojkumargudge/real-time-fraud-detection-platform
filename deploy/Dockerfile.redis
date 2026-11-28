@@ -1,0 +1,4 @@
+FROM redis:7.4.12-alpine3.22@sha256:e4ee3e03ce8f75471f40937a7c6b2b0e500390b6812fcdf5cb32c01295ded446
+
+# Retain the Redis version and apply Alpine's OpenSSL fix for CVE-2026-124709.
+RUN apk add --no-cache --upgrade 'libcrypto3>=3.5.9-r2' 'libssl3>=3.5.9-r2'

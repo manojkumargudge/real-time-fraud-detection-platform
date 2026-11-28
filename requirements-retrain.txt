@@ -1,0 +1,4 @@
+-r requirements-monitoring.txt
+# Keep these MLflow pins aligned with requirements-registry.txt and requirements.txt.
+mlflow==3.17.2
+cryptography==50.0.2
