@@ -48,6 +48,18 @@ no verified fixed candidates. Mitigations are conditional on the reviewed
 Compose controls and trusted operator inputs. Release requires verified
 fixed bytes or explicit policy disposition by the release owner.
 
+At the final capacity retry, all 13 individual Debian tracker pages still
+listed the stable Trixie package versions as vulnerable. This agrees with
+the signed APT candidate checks above. Keep the final image manifest fixed
+for the comparison while tracking supported updates separately.
+[SQLite](https://security-tracker.debian.org/tracker/CVE-2026-119373)
+[OpenSSL](https://security-tracker.debian.org/tracker/CVE-2026-107494)
+[util-linux](https://security-tracker.debian.org/tracker/CVE-2026-78408)
+[systemd](https://security-tracker.debian.org/tracker/CVE-2026-16742)
+[ACL](https://security-tracker.debian.org/tracker/CVE-2026-54369)
+[ncurses](https://security-tracker.debian.org/tracker/CVE-2025-69720)
+[Perl](https://security-tracker.debian.org/tracker/CVE-2026-9538)
+
 ## Release-owner decision for the audited candidate
 
 **Recommendation: keep release blocked.** The exact nine-image inventory at
