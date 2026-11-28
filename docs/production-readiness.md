@@ -456,6 +456,43 @@ The recovery workflow uses a small synthetic cohort, a private loopback HTTPS pr
 
 ### Budget and approval commands
 
+#### Time-limited live verification and portfolio demo
+
+Proposed only. After the capacity, security and release gates pass, obtain
+separate approval for **US$3.25 in eligible Welcome credits** and reconfirm
+Free Trial coverage through teardown. Use a fresh Iowa e2-standard-8 VM
+with 100 GB balanced storage, an ephemeral IPv4 address for outbound
+access, an eight-hour automatic STOP limit, and an IAP-only firewall.
+Use approved digests and synthetic data. Demo access is private through
+IAP and the portfolio artifact is a sanitized recording and evidence bundle.
+Reserve any public DNS and external TLS validation for its own approved
+window with a confirmed hostname and cost. Private TLS does not satisfy
+the public cutover gate.
+
+| Component | Planning basis | USD |
+| --- | --- | ---: |
+| Compute | 8 hours at $0.26804568/hour | 2.14437 |
+| Ephemeral IPv4 | 8 hours at $0.005/hour | 0.04000 |
+| Balanced disk | 100 GB, $10/month, retained at most 24 hours of a 730-hour month | 0.32877 |
+| Artifact Registry | 10 GiB at $0.10/GiB-month, at most 24 hours, no free allowance assumed | 0.03288 |
+| Internet transfer | Up to 1 GiB at the planning rate of $0.12/GiB | 0.12000 |
+| Temporary logs, backups, secrets, and operations | Planning reserve | 0.35000 |
+| **Estimated total** | Before tax and credits, calculated from unrounded items | **3.01601** |
+
+Verify IAP-only exposure, application health, authenticated scoring and
+replay, Kafka and PostgreSQL reconciliation, dashboard sign-in, monitored
+incident opening and closure, and rollback. Save sanitized artifacts before
+stopping the VM. Confirm `TERMINATED` and release temporary resources within
+24 hours. The STOP policy bounds VM runtime. Disks and registry storage
+require explicit cleanup. Keep the existing rehearsal disks out of the
+temporary inventory and leave the billing plan unchanged.
+[Compute pricing](https://cloud.google.com/products/compute/pricing/general-purpose)
+[Disk pricing](https://cloud.google.com/compute/disks-image-pricing)
+[Network pricing](https://cloud.google.com/vpc/network-pricing)
+[Registry pricing](https://cloud.google.com/artifact-registry/pricing)
+
+#### Continuous-hosting reference
+
 Monthly planning estimate for Iowa and 730 powered-on hours, before credits and tax:
 
 | Item | Assumption | 4 vCPU | 8 vCPU |
