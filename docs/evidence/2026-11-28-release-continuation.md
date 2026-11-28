@@ -247,3 +247,20 @@ total with another 230-minute bounded attempt and the existing reserves
 is approximately US$2.88839. A US$2.90 ceiling adds a small Operations
 API timing reserve. A further start requires fresh owner authorization and
 eligible credit confirmation.
+
+### Attempt `release-1128f`
+
+The owner approved a US$2.90 cumulative cap and confirmed at least US$1.27
+of eligible Welcome credit through the rehearsal. The 230-minute automatic
+STOP safeguard remained in force. Both APT units were inactive with successful
+results, the maintenance timers passed the window check, and no reboot was
+pending. The initial baseline repeat reconciled 27,000 Kafka scores with all
+partition commits equal to their ends and zero dead letters.
+
+The live monitoring notification closed at 09:24:07.419 UTC. The original
+collector rejected the opening because GCP rendered that envelope with the
+URL-safe base64 alphabet. The original message was still unacknowledged.
+The corrected collector decoded and recorded the opening published at
+09:17:36.021 UTC and confirmed the same incident, policy and instance as
+the closure. The verified receipt is retained privately with SHA-256
+`fd72e73e7c528980edadd1a45b1db4e489dfd94bf06600a1866ac1553d303d89`.

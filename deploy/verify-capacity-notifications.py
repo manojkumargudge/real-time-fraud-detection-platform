@@ -26,7 +26,7 @@ def incident_from(message: dict) -> dict:
             payload = json.loads(payload)
         except json.JSONDecodeError:
             try:
-                decoded = base64.b64decode("".join(payload.split()), validate=True)
+                decoded = base64.b64decode("".join(payload.split()), altchars=b"-_", validate=True)
                 payload = json.loads(decoded)
             except ValueError:
                 return {}

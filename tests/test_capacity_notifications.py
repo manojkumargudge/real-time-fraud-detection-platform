@@ -23,6 +23,14 @@ def test_decodes_structured_json_and_wrapped_base64_incidents() -> None:
         assert _INCIDENT_FROM({"message": {"data": data}}) == incident
 
 
+def test_decodes_pubsub_url_safe_base64_opening() -> None:
+    incident = {"incident_id": "test", "state": "open", "summary": "\uffff" * 6}
+    payload = json.dumps({"incident": incident}, ensure_ascii=False).encode()
+    encoded = base64.urlsafe_b64encode(payload).decode()
+    assert "_" in encoded or "-" in encoded
+    assert _INCIDENT_FROM({"message": {"data": encoded}}) == incident
+
+
 @pytest.mark.parametrize("data", [None, "not a Pub/Sub incident!", "eA==", '{"incident": []}', []])
 def test_unrelated_or_malformed_payload_does_not_stop_collection(data: object) -> None:
     assert _INCIDENT_FROM({"message": {"data": data}}) == {}
