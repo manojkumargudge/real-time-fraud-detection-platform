@@ -77,14 +77,16 @@ def is_retriable_commit_error(err: KafkaError) -> bool:
     return err.code() in RETRIABLE_COMMIT_ERRORS or bool(err.retriable())
 
 
-def build_consumer(settings: Settings) -> Consumer:
+def build_consumer(settings: Settings, *, require_contiguous: bool = False) -> Consumer:
     return Consumer(
         {
             "bootstrap.servers": settings.kafka_bootstrap_servers,
             "group.id": settings.kafka_group_id,
             "enable.auto.commit": False,
             "enable.auto.offset.store": False,
-            "auto.offset.reset": "earliest",
+            # Production assignment resolves the starting position explicitly.
+            # Retention can move the low watermark after assignment.
+            "auto.offset.reset": "error" if require_contiguous else "earliest",
         }
     )
 
@@ -259,6 +261,13 @@ class _Worker:
                 if remaining <= 0:
                     return
                 polled = self.consumer.poll(min(remaining, 1.0))
+                if (
+                    self.require_contiguous
+                    and polled is not None
+                    and (error := polled.error()) is not None
+                    and error.code() == KafkaError._AUTO_OFFSET_RESET
+                ):
+                    raise KafkaException(error)
                 if (
                     polled is not None
                     and not polled.error()
@@ -498,6 +507,7 @@ def main(argv: list[str] | None = None) -> Counter[str]:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = Settings.from_env()
     scorer = settings.build_scorer()
+    require_contiguous = os.environ.get("FRAUD_PRODUCTION") == "1"
 
     # `docker stop` sends SIGTERM; without a handler Python exits at once, skipping
     # consumer.close() (so the group waits for a session timeout before rebalancing).
@@ -511,7 +521,7 @@ def main(argv: list[str] | None = None) -> Counter[str]:
     signal.signal(signal.SIGINT, request_stop)
     try:
         return run(
-            build_consumer(settings),
+            build_consumer(settings, require_contiguous=require_contiguous),
             scorer,
             settings.kafka_topic,
             dead_letters=build_dead_letter_sink(settings),
@@ -519,7 +529,7 @@ def main(argv: list[str] | None = None) -> Counter[str]:
             idle_timeout=args.idle_timeout,
             stop=stop,
             stage_timings=os.environ.get("STAGE_TIMINGS") == "1",
-            require_contiguous=os.environ.get("FRAUD_PRODUCTION") == "1",
+            require_contiguous=require_contiguous,
             heartbeat=Heartbeat(Path(hb))
             if (hb := os.environ.get("CONSUMER_HEARTBEAT_FILE"))
             else None,

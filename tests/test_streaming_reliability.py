@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import psycopg
 import pytest
@@ -18,6 +19,7 @@ from confluent_kafka import KafkaError, KafkaException, TopicPartition
 from confluent_kafka.admin import ConfigResource, NewTopic
 from pydantic import ValidationError
 
+from src.serving.config import Settings
 from src.serving.model import ModelBundle
 from src.serving.schema import ScoreResponse, TransactionEvent
 from src.serving.scorer import Scorer
@@ -32,7 +34,7 @@ from src.streaming.reliability import (
     ensure_dlq_topic,
     sanitize_error,
 )
-from tests.kafka_fakes import NO_WAIT, FakeConsumer, FakeDeadLetterSink, FakeMessage
+from tests.kafka_fakes import NO_WAIT, FakeConsumer, FakeDeadLetterSink, FakeError, FakeMessage
 from tests.test_serving import event
 
 CARD = 4_111_111_111  # a value that must never reach DLQ metadata or logs
@@ -82,6 +84,31 @@ def run(
 
 def offsets(fake: FakeConsumer) -> list[int]:
     return [m.offset() for m in fake.committed_messages]
+
+
+@pytest.mark.parametrize("require_contiguous,reset", [(True, "error"), (False, "earliest")])
+def test_consumer_disables_automatic_reset_in_production(
+    monkeypatch: pytest.MonkeyPatch, require_contiguous: bool, reset: str
+) -> None:
+    factory = Mock()
+    monkeypatch.setattr(consumer_mod, "Consumer", factory)
+    settings = Settings(Path("."), None, "localhost:9092", "t", "test")
+    consumer_mod.build_consumer(settings, require_contiguous=require_contiguous)
+    assert factory.call_args.args[0]["auto.offset.reset"] == reset
+
+
+def test_offset_reset_during_retry_leaves_group_without_committing() -> None:
+    fake = FakeConsumer(values(10, 11))
+    fake.queue.insert(1, FakeMessage(None, FakeError(KafkaError._AUTO_OFFSET_RESET)))
+    scorer = FlakyScorer(psycopg.OperationalError("database unavailable"))
+    dlq = FakeDeadLetterSink()
+
+    with pytest.raises(KafkaException) as raised:
+        run(fake, scorer, dlq, policy=RetryPolicy(base_delay=0.1), require_contiguous=True)
+
+    assert raised.value.args[0].code() == KafkaError._AUTO_OFFSET_RESET
+    assert fake.closed and scorer.calls == 1
+    assert offsets(fake) == [] and dlq.sent == []
 
 
 def test_production_stops_at_gap_after_successful_commit_retry() -> None:

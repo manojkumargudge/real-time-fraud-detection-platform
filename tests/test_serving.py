@@ -744,7 +744,13 @@ class TestConsumerLoop:
         monkeypatch.setenv("MODEL_DIR", str(bundle_dir))
         monkeypatch.delenv("DATABASE_URL", raising=False)
         monkeypatch.setattr(Settings, "build_store", lambda _self: store)
-        monkeypatch.setattr(consumer_mod, "build_consumer", lambda _s: FakeConsumer([]))
+        monkeypatch.delenv("FRAUD_PRODUCTION", raising=False)
+
+        def fake_build_consumer(_settings: Settings, *, require_contiguous: bool) -> FakeConsumer:
+            assert not require_contiguous
+            return FakeConsumer([])
+
+        monkeypatch.setattr(consumer_mod, "build_consumer", fake_build_consumer)
         monkeypatch.setattr(consumer_mod, "build_dead_letter_sink", lambda _s: FakeDeadLetterSink())
 
         def fake_run(*_args: Any, stop: threading.Event, **_kwargs: Any) -> Counter[str]:

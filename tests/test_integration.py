@@ -537,7 +537,7 @@ def test_database_outage_is_retried_without_dlq_or_skipped_events(
     produce(kafka_env.topic, [encode(e)[1] for e in evs], [b"k"] * 3)
     store = OutageStore(pg_store, failures=8)  # longer than the 3-retry limit
     counts = consumer_mod.run(
-        kafka_env.consumer(),
+        consumer_mod.build_consumer(kafka_env.settings, require_contiguous=True),
         Scorer(ModelBundle.load(bundle_dir), store),
         kafka_env.topic,
         dead_letters=kafka_env.sink(),
