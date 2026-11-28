@@ -2,6 +2,11 @@
 .venv
 data
 artifacts
+backups
+logs
+.aws
+.agents
+.codex
 mlruns
 notebooks
 reports
@@ -14,3 +19,5 @@ tests
 .env.*
 mlflow.db
 mlflow.db.bak-*
+**/*.pem
+**/*.key

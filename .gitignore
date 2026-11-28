@@ -15,6 +15,7 @@ env/
 !.env.example
 *.pem
 *.key
+/backups/
 
 # Datasets and generated ML artifacts
 data/raw/

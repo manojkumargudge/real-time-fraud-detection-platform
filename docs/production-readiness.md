@@ -38,6 +38,10 @@ The [sustained runbook](capacity-rehearsal-approved-run.md) records the next
 required credit envelope. The [CVE matrix](capacity-cve-disposition.md)
 records open security decisions and the two curl scanner discrepancies.
 
+The [November 28 checkpoint](evidence/2026-11-28-release-continuation.md)
+records the production offset reset fix, regression results and remaining
+release gates.
+
 - The later private Linux export includes nine image manifests and a trial host snapshot. It contains no completed workload samples, Kafka audit, oracle output or completion marker. The host snapshot's `nproc` value was 1. The archived driver set `OMP_NUM_THREADS=1` before running `nproc`, so that value cannot establish the VM's effective CPU allocation. The exit point and startup failure, if any, remain unverified.
 - Local Ubuntu WSL2 and its Docker daemon both reported 12 logical CPUs and 10,428,297,216 bytes of memory. The capacity preflight rejected that configuration. A qualifying dedicated Linux host still needs two complete repeats, including active ingestion, checkpoint and drift, with the 70% CPU, memory and disk gates.
 - The read-only frozen-cohort command below verified 16 checksums and independently reproduced 21,665 distinct committed records and 917 oracle alerts. The frozen database had 10,415 missing rows, 3,563 score discrepancies and 37 differing alert decisions. The separate full retained-cohort replay reconciled all 58,468 records and 2,430 alerts with zero unexplained differences. Both results describe different stores. The original evidence remains frozen and the initial delivery-gap root cause remains unproven.

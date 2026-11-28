@@ -20,7 +20,12 @@ uname -r > "$out/kernel.txt"
 cd "$repo"
 printf '%s %s\n' "$baseline_ref" "$baseline" > "$out/baseline-image.txt"
 test -f "$root/bootstrap.complete"
-test -f "$root/images.complete"
+inventory_dir=${FRAUD_CAPACITY_IMAGE_INVENTORY:-"$root/evidence/images"}
+if [[ -n ${FRAUD_CAPACITY_IMAGE_INVENTORY:-} ]]; then
+  test -f "$inventory_dir/images.complete"
+else
+  test -f "$root/images.complete"
+fi
 test -f artifacts/feature-seed/seed.json
 test "$(sha256sum artifacts/baseline/model.json | cut -d ' ' -f1)" = 9fdad27ea3b07d5c29159bae75acc3ecaa7bf671943ab543bf9385145b89ba88
 test "$(sha256sum artifacts/feature-seed/seed.json | cut -d ' ' -f1)" = c044e3a5d1fedeb7cd173d4c165af676dfa7e1e6f895ae3247f5bb34e1a35f8e
@@ -32,8 +37,9 @@ export DASHBOARD_COOKIE_SECRET="$(openssl rand -hex 32)"
 export DASHBOARD_USERS="$(python -c 'import bcrypt; print("analyst:" + bcrypt.hashpw(b"isolated-fixture", bcrypt.gensalt()).decode())')"
 export API_HOSTNAME=api.localhost DASHBOARD_HOSTNAME=dashboard.localhost ACME_EMAIL=rehearsal@example.invalid
 export API_REQUESTS_PER_MINUTE=30000 FEAST_SEED_CUTOFF=12192900
-manifest="$root/evidence/images/release-manifests.txt"
+manifest="$inventory_dir/release-manifests.txt"
 cmp "$manifest" deploy/capacity-manifests.txt
+cp "$manifest" "$out/release-manifests.txt"
 while read -r role image; do
   docker pull --platform linux/amd64 "$image"
   docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image" | grep -Fx "$image"

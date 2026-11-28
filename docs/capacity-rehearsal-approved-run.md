@@ -73,6 +73,15 @@ done
 test ! -f /var/run/reboot-required
 ```
 
+When a release role changes, keep the original guest inventory and approved
+manifest as historical evidence. Stage the reviewed manifest as
+`release-manifests.txt` in a fresh root-owned inventory directory and as
+`deploy/capacity-manifests.txt` in the new guest checkout. Create
+`images.complete` in the new inventory directory once manifest and scan
+verification finish. Set `FRAUD_CAPACITY_IMAGE_INVENTORY` to that directory
+for the driver. The driver compares the two manifest files, verifies each
+pulled digest, and exports the manifest with the results.
+
 Schedule the 176 minutes of workload and the controlled incident in a clean
 maintenance window. An optional `RefuseManualStop=yes` setting applies only
 to the transient rehearsal unit. The Compute Engine STOP and operator guard

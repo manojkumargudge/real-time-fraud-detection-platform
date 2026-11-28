@@ -159,6 +159,13 @@ jobs:
       - name: bandit (application and deployment code, medium severity and above)
         run: bandit -r src deploy -ll -q
 
+      - name: Trivy (secrets in tracked files)
+        run: |
+          scan_source=$(mktemp -d)
+          git archive HEAD | tar -x -C "$scan_source"
+          docker run --rm -v "$scan_source:/scan:ro" aquasec/trivy:0.75.0 fs \
+            --scanners secret --exit-code 1 --format json /scan > "$RUNNER_TEMP/trivy-secrets.json"
+
       - name: Build serving and dashboard images for scanning
         run: |
           docker build -t fraud-serving:scan .
