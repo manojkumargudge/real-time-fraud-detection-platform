@@ -9,7 +9,7 @@ and containerized deployment.
 - Python, Pandas, XGBoost, PyTorch Geometric
 - Apache Kafka, Feast, MLflow
 - FastAPI, PostgreSQL
-- Evidently AI, React
+- Evidently AI, Streamlit
 - Docker Compose, Kubernetes/Minikube
 - pytest
 

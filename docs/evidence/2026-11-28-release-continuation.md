@@ -26,6 +26,11 @@ findings. The CI-aligned Windows unit suite passed 728 tests with four
 environment-dependent skips. The earlier capacity image set used a different
 proxy digest and remains historical for this proxy change.
 
+The Pub/Sub verifier now skips unrelated or malformed payloads and accepts
+wrapped base64 in addition to decoded JSON. Its six focused tests and the
+734-test CI-aligned Windows unit run passed, with four environment-dependent
+skips. Strict mypy passed across 122 files.
+
 The requirements matrix records the supporting model, feature-store, dashboard
-and MLOps evidence and the unresolved React and Streamlit specification question.
+and MLOps evidence. The project owner approved the existing Streamlit dashboard.
 [Requirements matrix](../aiml-01-completion.md)

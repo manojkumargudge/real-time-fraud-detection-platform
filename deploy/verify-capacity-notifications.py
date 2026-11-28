@@ -14,13 +14,20 @@ INSTANCE = "938503370005181237"
 
 
 def incident_from(message: dict) -> dict:
-    payload = message["message"]["data"]
-    if not isinstance(payload, dict):
+    payload = (message.get("message") or {}).get("data")
+    if isinstance(payload, str):
         try:
             payload = json.loads(payload)
         except json.JSONDecodeError:
-            payload = json.loads(base64.b64decode(payload, validate=True))
-    return payload.get("incident", {})
+            try:
+                decoded = base64.b64decode("".join(payload.split()), validate=True)
+                payload = json.loads(decoded)
+            except ValueError:
+                return {}
+    if not isinstance(payload, dict):
+        return {}
+    incident = payload.get("incident")
+    return incident if isinstance(incident, dict) else {}
 
 
 def main() -> None:
@@ -60,6 +67,9 @@ def main() -> None:
         for message in json.loads(raw.stdout):
             if message.get("ackStatus") != "SUCCESS":
                 continue
+            timestamp = message["message"]["publishTime"]
+            if args.not_before and datetime.fromisoformat(timestamp) < args.not_before:
+                continue
             incident = incident_from(message)
             resource = incident.get("resource") or {}
             labels = resource.get("labels") or {}
@@ -71,9 +81,6 @@ def main() -> None:
             incident_id = incident.get("incident_id")
             state = incident.get("state")
             if not incident_id or state not in {"open", "closed"}:
-                continue
-            timestamp = message["message"]["publishTime"]
-            if args.not_before and datetime.fromisoformat(timestamp) < args.not_before:
                 continue
             states = observed.setdefault(incident_id, {})
             if state not in states:
