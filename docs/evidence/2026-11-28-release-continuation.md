@@ -34,3 +34,57 @@ skips. Strict mypy passed across 122 files.
 The requirements matrix records the supporting model, feature-store, dashboard
 and MLOps evidence. The project owner approved the existing Streamlit dashboard.
 [Requirements matrix](../aiml-01-completion.md)
+
+## Checkpoint continuation
+
+Draft PR #49 had 16 passing checks on `9b4b24f`. The PR image publication
+job was skipped by its existing condition. The hosted benchmark's first
+attempt measured a median one-client direct p95 of 15.275 ms against a main
+p95 of 12.445 ms and a 13.690 ms limit. One direct repeat recorded Redis AOF
+fsync spikes of 19 ms and 17 ms and a p95 of 18.24 ms. The other recorded
+1 ms fsync samples and a p95 of 12.31 ms. The timing is consistent with
+storage variability, with no per-request correlation proving the cause.
+The same-commit rerun passed the unchanged limits. Main and direct median
+one-client p95 were 21.715 ms and 17.385 ms. Median throughput was
+66.59 and 68.08 requests/s at one client and 60.20 and 71.60 at eight
+clients. All 18 rows had identical score digests and zero errors or timeouts.
+[Benchmark attempts and artifact](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/46105941880)
+
+The retained `release-1128c-results.tgz` has SHA-256
+`7f1b62d5df9c17e58fc822c939a3ad6647598441674faa8c85d2267d91e286b0`.
+The guest ran kernel `7.0.0-1018-gcp`. `main-1` and `release-1` both
+finished spread-1, spread-4, spread-8 and hot-8. All eight segments had
+zero HTTP errors, timeouts and duplicates. Each repeat reconciled 27,000
+Kafka scores with zero oracle differences and zero dead letters. They
+measured 57.05% and 56.05% CPU p95, respectively. `release-2` completed
+only spread-1, then failed the zero-timeout gate with one warmup timeout.
+Its remaining three segments, final reconciliation and all of `main-2`
+are absent. The failed repeat needs a fresh start. The earlier `1128b`
+archive contains preflight evidence only. The completed `1128c` workloads
+apply to the retained manifest. Its proxy predates the non-root build.
+The matched final-image sustained comparison remains open.
+
+The controlled incident ran from 09:15:20 to 09:18:29 IST. The retained
+Pub/Sub collector recorded `closed` at 09:25:54 IST. The earlier rollback
+rehearsal recorded an `open` under a different policy. Same-incident
+opening and closure delivery remains unverified.
+
+Compute Engine still reports both VMs `TERMINATED`. Cloud audit operations
+show three November 28 starts adding 138.80 minutes from request to stop
+completion. Added to the previously documented 155.66 capacity-host
+minutes, the compute and IPv4 estimate is about US$1.34. With the existing
+US$0.22 transfer and telemetry allowance, up to about US$0.54 remains of
+the cumulative US$2.10 cap, before any additional eligible charges.
+The four-run workload alone requires 176 minutes, about US$0.80 at the
+documented rate. Project billing linkage was confirmed. Current applicable
+Welcome credit was not independently verified. The VM was left stopped.
+
+The hosted Linux/amd64 inventory on `9b4b24f` confirmed zero Critical
+findings and the same 13 High CVEs on serving, dashboard, drift and MLflow.
+The optional retrain image carries nine additional High CVEs. Caddy, Kafka,
+PostgreSQL and Redis had zero High or Critical findings. The per-CVE review
+in the security checkpoint remains the disposition record. Absent verified
+fixes or explicit release-owner approval for the exact publishable bytes,
+the shared 13 findings hold the release. Keep retrain disabled under its
+existing release policy. [Security checkpoint](../release-image-security.md)
+[Hosted image inventory](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/46105941842)

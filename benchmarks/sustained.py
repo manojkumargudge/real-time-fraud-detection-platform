@@ -58,7 +58,16 @@ async def exercise(args: argparse.Namespace) -> None:
         row = summarise(result, args.duration)
         row["measured_start_unix"] = started + args.warmup
         row["measured_end_unix"] = started + args.warmup + args.duration
-        row["timeouts"] = sum("Timeout" in sample.error for sample in result.samples)
+        timed_out = [sample for sample in result.samples if "Timeout" in sample.error]
+        row["timeouts"] = len(timed_out)
+        row["timeout_samples"] = [
+            {
+                "phase": sample.phase,
+                "start_unix": started + sample.start_s,
+                "latency_ms": sample.latency_ms,
+            }
+            for sample in timed_out
+        ]
         rows.append(row)
         print(json.dumps(row, sort_keys=True), flush=True)
     args.output.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")

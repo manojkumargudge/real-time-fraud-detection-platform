@@ -50,6 +50,7 @@ services:
       - $repo/artifacts/baseline:/app/artifacts/baseline:ro
   proxy:
     ports: !override
+      - 127.0.0.1:18080:80
       - 127.0.0.1:18443:443
 YAML
 
@@ -137,6 +138,29 @@ else:
     https://api.localhost:18443/score | jq -e '.transaction_id == 910000001 and .duplicate and .is_alert' >/dev/null
 }
 
+attest_proxy_restart() {
+  local project=$1 redirect
+  stack "$project" exec -T proxy sh -ec '
+    awk "
+      /^(Uid|Gid):/ { if (\$2 == 10001 && \$3 == 10001 && \$4 == 10001 && \$5 == 10001) identities++ }
+      /^Cap(Eff|Bnd):/ { if (\$2 ~ /^0+\$/) capabilities++ }
+      /^NoNewPrivs:/ { hardened = \$2 == 1 }
+      END { exit !(identities == 2 && capabilities == 2 && hardened) }
+    " /proc/1/status
+    grep -E "^(Uid|Gid|CapEff|CapBnd|NoNewPrivs):" /proc/1/status
+  ' > "$evidence/proxy-runtime.txt"
+  redirect=$(curl -sS --max-time 15 --resolve api.localhost:18080:127.0.0.1 \
+    -H 'Host: api.localhost' -o /dev/null -w '%{http_code} %{redirect_url}' \
+    http://api.localhost:18080/health)
+  [[ $redirect == '308 https://api.localhost/health' ]]
+  printf '%s\n' "$redirect" > "$evidence/proxy-http.txt"
+  stack "$project" restart proxy
+  api --fail --retry 5 --retry-connrefused https://api.localhost:18443/health
+  stack "$project" exec -T proxy cat /data/caddy/pki/authorities/local/root.crt |
+    cmp "$work/local-ca.crt" -
+  sha256sum < "$work/local-ca.crt" > "$evidence/proxy-persisted-ca.sha256"
+}
+
 if (( ${#release_override[@]} == 0 )); then
   stack "$source_project" build api kafka postgres redis dashboard mlflow proxy
 fi
@@ -154,6 +178,7 @@ for _ in {1..35}; do
 done
 [[ $ready == true ]]
 attest_ingress "$source_project"
+attest_proxy_restart "$source_project"
 stack "$source_project" stop proxy consumer api dashboard
 # Only the stateless API is brought up for the read-only audit after quiescing writers.
 stack "$source_project" up -d --no-deps --no-build --wait api
