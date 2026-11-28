@@ -13,8 +13,8 @@ is not deployed to real traffic.
 The [Compute Engine release checklist and runbook](docs/production-readiness.md) covers
 the Linux Compose deployment, service exposure, model and registry setup, and release gates.
 Production release is blocked. The latest verified cloud environment was a private
-single-VM rehearsal in `us-central1-a`. Public demo and live API links depend on release
-approval and external TLS and authentication checks.
+single-VM rehearsal in `us-central1-a`. The proposed IAP-only portfolio deployment
+is pending separate approval and live verification. [Restricted deployment controls](docs/production-readiness.md#restricted-portfolio-deployment)
 
 ## Results
 
@@ -29,6 +29,7 @@ approval and external TLS and authentication checks.
 | Load test, `POST /score` (bench copy, one laptop) | 2026-11-15, connection pool (3 runs): one client **15.0-27.9 req/s**, p50 **30-54 ms**; 5 clients 7.6-13.8 req/s, p50 334-605 ms; 0 errors. Unchanged at 5 clients against the single locked connection on 2026-11-11 (12.5-14.3 req/s, [docs/evidence/2026-11-11-load-test/](docs/evidence/2026-11-11-load-test/README.md)): removing the lock did not add throughput. Likely bottleneck (diagnosis, not proven): one uvicorn process doing CPU-bound scoring. Laptop noise is large (one client fell from 27.9 to 15.0 req/s over three runs with no code change). Direct API calls on one API process, not comparable to the 46.83 events/s Kafka streaming figure below | [docs/evidence/2026-11-15-api-pool/](docs/evidence/2026-11-15-api-pool/README.md) |
 | Throughput | **46.83 events/s** on 3 consumers (unthrottled, 1,000-event backlog; scorer p50 48 ms in that run); scorer p50 **41 ms** at a steady 5 events/s. Measured 2026-10-25 on ca57b2c (`consumer-throughput`); not re-measured after the producer idempotence (M1) and connection-pool (S3) changes. A 200-event replay on main b62c29b (2026-11-16) scored bit-identically to the demo ([docs/evidence/2026-11-16-m2/](docs/evidence/2026-11-16-m2/README.md) B1) | [docs/serving.md](docs/serving.md) "Throughput benchmark" |
 | Forensic replay | Reconciled **58,468 distinct transaction scores and 2,430 alerts** against the independent batch oracle, with zero unexplained differences, duplicates, dead letters or residual lag after injected service failures. | [Full retained Kafka cohort](docs/production-readiness.md#full-retained-kafka-cohort) |
+| Final-image GCP capacity | **108,000 Kafka scores** reconciled across four repeats, with matching partition offsets and zero dead letters or oracle differences. Release medians were **24.26 rps** at one client and **32.28 rps** at eight spread clients. One-client p95 was **51.58 ms**. All sustained gates passed. | [November 28 rehearsal evidence](docs/evidence/2026-11-28-release-continuation.md) |
 | Feast training matrix | identical to the pandas matrix v2 was trained on: 472,432 / 472,432 training rows, sha256 `66db4b971d3e…` both sides (validation 118,108 rows, encoded matrix also equal) | [docs/feature_store.md](docs/feature_store.md) "Training from the Feast offline store" |
 | Drift trigger | fired without `--force-retrain` (days 170-181, top-feature rule); challenger kept out by the bootstrap rule: delta +0.0053, 95% CI [-0.0160, +0.0254], lower bound below the 0.01 margin | [docs/evidence/2026-10-27-drift-trigger/README.md](docs/evidence/2026-10-27-drift-trigger/README.md) |
 | Fraud rings (exploratory) | GNN-ranked top-20 rings: 17.23% labelled fraud per transaction vs 3.50% overall as reported, but that reuses labels within a ring; with a strict temporal check (rank on training blocks, rate on validation rows only) 2.22% vs 2.35% in the same rings, on 8 frauds (account graph: 1.42%, 5 frauds), so the ranking shows no lift. Uids with a missing address are excluded, see Known limitations | [docs/gnn.md](docs/gnn.md) "Ring ranking check" |
@@ -46,7 +47,7 @@ flowchart LR
   P[Kafka producer] --> K[[Kafka]] --> C[Consumers x3] --> S[Scorer: Feast read + XGBoost v2]
   S <--> R[(Feast online state, Redis)]
   S --> PG[(PostgreSQL: scores, alerts)] <--> D[Streamlit dashboard]
-  O[(Feast offline store)] --> T[Training] --> M[(MLflow registry, host)]
+  O[(Feast offline store)] --> T[Training] --> M[(MLflow model registry)]
   PG --> DR[Evidently drift job] --> T
 ```
 
@@ -73,8 +74,8 @@ Full diagram, with what runs in Docker Compose, in Minikube and on the host only
 - The checkpoint-enabled hosted benchmark at `333ad04` measured 87.32 requests/s at eight
   clients versus 70.36 on main. p99 fell from 193.88 ms to 132.71 ms. All 4,608 requests
   shared the same score, decision and feature-history digest and completed without
-  errors or timeouts. The four-vCPU full-stack rehearsal reached CPU saturation. The
-  local WSL2 memory limit leaves the dedicated target-host capacity gate open.
+  errors or timeouts. The four-vCPU full-stack rehearsal reached CPU saturation.
+  The later eight-vCPU private rehearsal passed the sustained capacity gates.
   [Hosted measurements](https://github.com/manojkumargudge/real-time-fraud-detection-platform/actions/runs/45755631735)
 
 ### Portfolio evidence
@@ -88,9 +89,9 @@ Full diagram, with what runs in Docker Compose, in Minikube and on the host only
   for a 256-event sample. The coordinated checkpoint restored Kafka offsets,
   PostgreSQL outcomes, Redis and the MLflow champion in 30 seconds on the synthetic
   fixture. [Feature-state runbook](docs/feature_store.md#rebuilding-online-state-after-redis-loss)
-- Prepared a private-backed single-VM design where Caddy owns public TLS and only
-  authenticated application routes are exposed. The release remains blocked on the
-  exact-image security review and sustained host certification.
+- Validated a private single-VM release candidate with sustained load, exact
+  reconciliation, and live Pub/Sub opening and closure for one incident. The 13
+  High findings still hold unrestricted production release.
   [Release and deployment checklist](docs/production-readiness.md)
 
 ## Dashboard

@@ -1,5 +1,61 @@
 # Release image security checkpoint
 
+## Proposed restricted portfolio exception
+
+**Owner approval pending.** This exception applies to one synthetic-data
+demonstration on one e2-standard-8 VM in Iowa. Scope starts at VM start
+and expires at the earlier of eight hours from start or November 30,
+2026, at 20:00 IST. Record the approved start and absolute UTC expiry
+before provisioning, and choose an automatic STOP no later than expiry.
+Stop immediately if an isolation control fails. Remove temporary storage,
+registry copies and credentials within the separate 24-hour teardown limit.
+This exception leaves the unrestricted production release on hold.
+
+The four affected Python images are pinned by the full digests in the
+[frozen capacity disposition](#frozen-capacity-manifest-disposition).
+The remaining enabled digests are:
+
+| Role | Frozen Linux/amd64 manifest SHA-256 |
+| --- | --- |
+| Caddy | `8ba637eea93f4a170b3cd12099415203127e4d80671356e1797d6d042542f440` |
+| Kafka | `4cdd618a39bef86a4149929e0920c1fe4dad7da54a9a1ddfd85f2b3c9351505e` |
+| PostgreSQL | `9b6c495c503287a796d86bbd38c341c62d10cf58ac65348ea3bb2c16ab993176` |
+| Redis | `4e151855f8a6c663f112045070a1166142cded771ed064f418c6f715bd1f7e78` |
+
+All 13 High rows remain in the unfiltered inventory. Eight are mitigated
+with residual risk (76642, 78408, 78409, 78410, 119373, 119374, 107494,
+124709), two have scoped nonapplicability (16742 and 9538), and three
+are unresolved (54369, 69720 and 119379). The inventory, full CVE names,
+evidence and limits are in the frozen disposition and scan archive.
+No fixed status is conferred by this exception.
+
+The residual risk is bounded enough to propose for owner review only if
+the verification gates below pass. IAP admits named operators, and the
+host accepts only IAP SSH. Caddy publishes on loopback and retains API
+and analyst authentication. Use scoped OS Login and service-account
+permissions, non-root application users, dropped capabilities, and
+no-new-privileges. Keep MLflow on its internal network. Disable the
+retraining profile and use a fresh synthetic database, controlled model
+artifacts and checksum-verified restores. Keep operator mount and ACL
+maintenance outside workloads. Accept terminal inputs from trusted
+operators only. Do not add QUIC endpoints to the Python services or
+introduce FTS5 tables or SQLite changeset importers.
+
+The isolation reduces remote access to the affected surfaces. A privileged
+operator mistake, a compromised authorized identity, or an untrusted restore
+can still expose an affected path. Stop on unexpected ingress, changes in
+capabilities or endpoints, lost health or audit evidence, an image mismatch,
+or new applicable security evidence. The owner must explicitly accept the
+remaining risk for this exact environment and window before start.
+
+At the next supported patch, rebuild affected roles from maintained packages
+and record exact digests. Run the unfiltered inventory, full CI, Kafka
+continuity, Feast byte parity, scoring consistency, and coordinated recovery.
+Repeat sustained capacity if the change invalidates the frozen result. Review
+the per-CVE dispositions and require a fresh release decision. The exception
+expires on image, privilege, exposure, dataset or time-scope change.
+[Private deployment controls](production-readiness.md#restricted-portfolio-deployment)
+
 ## Frozen capacity manifest disposition
 
 This review applies to the enabled Python images in the checksum-verified

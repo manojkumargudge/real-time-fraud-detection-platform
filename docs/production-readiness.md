@@ -10,6 +10,70 @@ public TLS, and live deployment checks remain pending.
 
 ## Local deployment staging
 
+### Restricted portfolio deployment
+
+**Pending exception approval and credit confirmation.** Record the owner's
+explicit approval of the [restricted exception](release-image-security.md#proposed-restricted-portfolio-exception),
+the UTC start and expiry, and confirmation of active Welcome credit covering
+the US$3.25 estimated cap through teardown. The cap applies to one private
+session. Keep the existing billing plan and unrestricted production hold.
+
+Before start, identify a byte-preserving source for all eight approved
+images. The frozen rehearsal refs point to a loopback registry on a stopped
+guest. The hosted CI refs identify separate builds. Verify that the intended
+transfer can preserve every digest under the approved cap, including source
+access and any temporary storage. Do not restart the rehearsal VM, copy its
+disk, or substitute rebuilt images on the strength of this plan alone. Verify
+the manifest, approved rollback inputs, and artifact SHA-256 before startup.
+
+Use a fresh e2-standard-8 in Iowa with OS Login and IAP TCP 22 restricted
+to the IAP range. Audit inherited and instance firewall rules. Retain only
+scope-specific access for operators and the runtime identity. Independently
+read back `scheduling.maxRunDuration.seconds=28800` and
+`scheduling.instanceTerminationAction=STOP` before workload start. Start only
+if the full eight hours fits before exception expiry. Record the deadline and
+schedule teardown within 24 hours, since STOP leaves persistent resources.
+
+Use the production, approved image-only and
+[private ingress](../deploy/portfolio-private.yml) overlays in that order.
+Render with `config --quiet` and `config --images` before `pull` and
+`up --no-build`. Verify each enabled image digest and the sole host binding
+`127.0.0.1:18443` to proxy TCP 443. Keep the retraining profile disabled.
+Generate independent API, database and dashboard credentials outside Git.
+Keep Secret Manager access scoped to the required versions, and stage runtime
+values in an owner-readable mode-0600 file. Keep MLflow and storage on private
+networks, and check runtime UID, capabilities, and metadata isolation.
+
+Once verified and running, connect from the laptop with OS Login and IAP:
+
+```bash
+gcloud compute ssh "$DEMO_VM" --project=fraud-detection-platform-2026 \
+  --zone=us-central1-a --tunnel-through-iap \
+  -- -N -L 127.0.0.1:18443:127.0.0.1:18443
+```
+
+Use `https://dashboard.localhost:18443` and `https://api.localhost:18443`.
+Confirm SSH reported no forwarding errors before opening either URL.
+Retrieve the temporary Caddy root certificate through authenticated IAP,
+verify its fingerprint against the instance evidence, and trust it only for
+this demo. Remove temporary trust and credentials after the session. Never
+publish an API key or dashboard password with the demo instructions.
+
+Verify effective ingress from outside the VPC and through the authenticated
+tunnel. Check Compose health before using a fresh synthetic transaction for
+the API score and duplicate, and a separate synthetic Kafka cohort for
+producer acknowledgments, consumer commit offsets and zero unresolved or
+dead-letter events. Reconcile score and alert persistence with the model
+oracle, verify Feast feature retrieval and Redis byte consistency, and
+exercise dashboard sign-in and case review. Compare the MLflow champion
+alias and artifact digest, and run Evidently drift in checks-only mode.
+Verify cloud logs and opening and closure receipts for one controlled
+incident. Exercise backup, restore and rollback using distinct volumes and
+compare the Kafka, PostgreSQL, Redis and registry checksums before cutover.
+Export sanitized evidence, stop the VM, independently verify termination,
+and remove the temporary resources while retaining the existing rehearsal
+disks and evidence. A failed isolation control ends the demonstration.
+
 Use the [environment template](../deploy/production.env.example) and two
 copies of the [image-only override](../deploy/release-images.example.yml)
 for rollout and rollback. Use literal private registry references ending in
