@@ -155,7 +155,7 @@ attest_proxy_restart() {
   [[ $redirect == '308 https://api.localhost/health' ]]
   printf '%s\n' "$redirect" > "$evidence/proxy-http.txt"
   stack "$project" restart proxy
-  api --fail --retry 5 --retry-connrefused https://api.localhost:18443/health
+  api --fail --retry 5 --retry-all-errors https://api.localhost:18443/health
   stack "$project" exec -T proxy cat /data/caddy/pki/authorities/local/root.crt |
     cmp "$work/local-ca.crt" -
   sha256sum < "$work/local-ca.crt" > "$evidence/proxy-persisted-ca.sha256"
