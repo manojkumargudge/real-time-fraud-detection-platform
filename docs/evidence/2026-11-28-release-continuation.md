@@ -293,6 +293,7 @@ Compute Engine independently reported both VMs `TERMINATED`. The
 capacity VM stopped at 17:13:23 IST after 207 minutes 37.241 seconds of
 runtime. At the verified rates this was approximately US$0.94483 for
 compute and IPv4. The cumulative estimate including the two preflights,
-prior runtime, and the established transfer and telemetry reserves is
-approximately US$2.57 before tax and existing disk retention. The 13
+prior runtime, and the transfer and telemetry reserves for both the prior
+and final windows is approximately US$2.79 before tax and existing disk
+retention. The 13
 High findings still hold production release.
